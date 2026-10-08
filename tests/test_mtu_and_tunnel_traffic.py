@@ -63,7 +63,7 @@ class MtuTests(ScriptHarness):
 class PerTunnelTrafficTests(ScriptHarness):
     def setUp(self):
         super().setUp()
-        self.data={'custom-counter':dict(interface='gre-t2',download=2**30,upload=2*2**30,mode='download',limit=4*2**30,blocked=False),
+        self.data={'custom-counter':dict(interface='gre-t2',download=10**9,upload=2*10**9,mode='download',limit=4*10**9,blocked=False),
                    'other-counter':dict(interface='gre-tunnel',download=0,upload=0,mode='both',limit=0,blocked=False)}
         (self.state/'traffic.json').write_text(json.dumps(self.data))
 
@@ -72,8 +72,17 @@ class PerTunnelTrafficTests(ScriptHarness):
 
     def test_show_download_upload_total_and_charged_volume(self):
         result=self.run_shell('traffic_summary custom-counter')
-        for value in ('دانلود: 1.000 GiB','آپلود: 2.000 GiB','مجموع دانلود و آپلود: 3.000 GiB','مصرف محاسبه‌شده برای سقف: 1.000 GiB','سقف مصرف: 4.000 GiB'):
+        for value in ('دانلود: 1.000 GB','آپلود: 2.000 GB','مجموع دانلود و آپلود: 3.000 GB','مصرف محاسبه‌شده برای سقف: 1.000 GB','سقف مصرف: 4.000 GB'):
             self.assertIn(value,result.stdout)
+
+    def test_existing_917gb_limit_is_displayed_without_changing_state(self):
+        self.data['custom-counter']['limit']=917*10**9
+        path=self.state/'traffic.json'
+        path.write_text(json.dumps(self.data))
+        before=path.read_bytes()
+        result=self.run_shell('traffic_summary custom-counter')
+        self.assertIn('سقف مصرف: 917.000 GB',result.stdout)
+        self.assertEqual(path.read_bytes(),before)
 
     def test_selected_traffic_limit_and_reset_do_not_target_other_tunnel(self):
         result=self.run_shell("menu_tunnel_traffic gre-t2 <<<$'2\\n100\\n4\\ny\\n0'",'cli_traffic() { echo "CALL:$*" >> "'+str(self.root/'calls')+'"; }')
@@ -86,7 +95,7 @@ class PerTunnelTrafficTests(ScriptHarness):
     def test_failed_refresh_still_shows_saved_usage(self):
         result=self.run_shell("menu_tunnel_traffic gre-t2 <<<'0'",'cli_traffic() { return 1; }')
         self.assertIn('آخرین مصرف ذخیره‌شده',result.stdout)
-        self.assertIn('3.000 GiB',result.stdout)
+        self.assertIn('3.000 GB',result.stdout)
 
     def test_missing_counter_cancel_does_not_register_or_reset(self):
         (self.state/'traffic.json').write_text('{}')
@@ -100,4 +109,4 @@ class PerTunnelTrafficTests(ScriptHarness):
         lines=result.stdout.splitlines()
         entries=[line for line in lines if line.startswith(tuple(str(n)+')' for n in range(12)))]
         self.assertEqual([int(line.split(')')[0]) for line in entries],list(range(1,12))+[0])
-        self.assertIn('3.000 GiB',result.stdout)
+        self.assertIn('3.000 GB',result.stdout)

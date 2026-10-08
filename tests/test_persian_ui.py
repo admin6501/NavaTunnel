@@ -34,14 +34,14 @@ class PersianInterfaceTests(unittest.TestCase):
 
 class LocalizedTrafficDisplayTests(TrafficHarness):
     def test_card_shows_total_and_quota_direction_without_wide_table(self):
-        self.engine.add(self.data,'sample',peer='192.0.2.3',limit=4*2**30,mode='download')
-        self.data['sample'].update(download=2**30,upload=2*2**30)
+        self.engine.add(self.data,'sample',peer='192.0.2.3',limit=4*10**9,mode='download')
+        self.data['sample'].update(download=10**9,upload=2*10**9)
         out=io.StringIO()
         with redirect_stdout(out): self.engine.show(self.data)
         rendered=out.getvalue()
-        self.assertIn('دانلود: 1.000 GiB',rendered)
-        self.assertIn('مجموع: 3.000 GiB',rendered)
-        self.assertIn('مصرف برای سقف: 1.000 GiB',rendered)
+        self.assertIn('دانلود: 1.000 GB',rendered)
+        self.assertIn('مجموع: 3.000 GB',rendered)
+        self.assertIn('مصرف برای سقف: 1.000 GB',rendered)
         self.assertNotIn('\t',rendered)
 
 class RegisteredTrafficReuseTests(ScriptHarness):

@@ -31,10 +31,10 @@ class MenuTests(ScriptHarness):
         self.assertEqual(result.stdout.strip(),'10.200.0.6 10.200.0.5')
 
     def test_traffic_row_maps_actual_counter_id(self):
-        (self.state/'traffic.json').write_text(json.dumps({'gre-t501':dict(interface='gre-t501',download=2**30,upload=0,limit=0,mode='both')}))
+        (self.state/'traffic.json').write_text(json.dumps({'gre-t501':dict(interface='gre-t501',download=10**9,upload=0,limit=0,mode='both')}))
         result=self.run_shell("menu_select_traffic <<<'1'")
         self.assertEqual(result.stdout.strip(),'gre-t501')
-        self.assertIn('1.00 GiB',result.stderr)
+        self.assertIn('1.00 GB',result.stderr)
 
     def test_traffic_mode_default_and_cancel(self):
         self.assertEqual(self.run_shell("menu_traffic_mode <<<''").stdout.strip(),'both')

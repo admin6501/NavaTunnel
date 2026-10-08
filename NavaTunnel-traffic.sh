@@ -17,12 +17,10 @@ def ipt(*args, check=True):
     return run(['iptables', '-w', '5', '-t', 'mangle', *args], check)
 
 def size(text):
-    m = re.fullmatch(r'(\d+(?:\.\d+)?)\s*(B|KB|MB|GB|TB|KIB|MIB|GIB|TIB)?', text.upper())
+    m = re.fullmatch(r'(\d+(?:\.\d+)?)\s*(GB)?', text.strip().upper())
     if not m:
-        raise ValueError('مقدار نامنفی مثل 100GB، 2.5GiB یا 0 برای نامحدود وارد کنید.')
-    units = {'B':1, 'KB':1000, 'MB':1000**2, 'GB':1000**3, 'TB':1000**4,
-             'KIB':1024, 'MIB':1024**2, 'GIB':1024**3, 'TIB':1024**4}
-    return int(decimal.Decimal(m[1]) * units[m[2] or 'B'])
+        raise ValueError('فقط GB پشتیبانی می‌شود؛ مقدار نامنفی مثل 100GB، 2.5 یا 0 برای نامحدود وارد کنید.')
+    return int(decimal.Decimal(m[1]) * 10**9)
 
 def argument_size(text):
     try:
@@ -171,7 +169,7 @@ def discover(data):
             add(data, path.name, interface=path.name)
 
 def show(data):
-    print('دانلود دریافت و آپلود ارسال همین سرور است؛ حجم‌ها بر حسب GiB نمایش داده می‌شوند.')
+    print('دانلود دریافت و آپلود ارسال همین سرور است؛ حجم‌ها بر حسب GB نمایش داده می‌شوند.')
     if not data:
         print('شمارنده‌ای ثبت نشده است؛ ابتدا تونل‌ها را شناسایی یا یک شمارنده ثبت کنید.')
     labels={}
@@ -180,7 +178,7 @@ def show(data):
         labels={t.get('gre_if'):t.get('name','') for t in registry.get('peers',[])}
     except (OSError,ValueError):
         pass
-    units=lambda value:'%.3f GiB'%(value/2**30)
+    units=lambda value:'%.3f GB'%(value/10**9)
     for name,t in data.items():
         label=labels.get(t.get('interface')) or name
         print('\nتونل: '+label+' | شمارنده: '+name+' | مقصد: '+str(t.get('interface') or t.get('peer')))

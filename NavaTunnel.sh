@@ -1387,7 +1387,7 @@ p=Path(sys.argv[1]); data=json.loads(p.read_text()) if p.exists() else {}
 t=data.get(sys.argv[2])
 if not t: print('شمارنده ترافیک هنوز ثبت نشده است.'); sys.exit(0)
 rx=t.get('download',0); tx=t.get('upload',0); mode=t.get('mode','both'); used=rx if mode=='download' else tx if mode=='upload' else rx+tx
-size=lambda x:'%.3f GiB'%(x/2**30)
+size=lambda x:'%.3f GB'%(x/10**9)
 print('دانلود: '+size(rx)); print('آپلود: '+size(tx)); print('مجموع دانلود و آپلود: '+size(rx+tx))
 print('مصرف محاسبه‌شده برای سقف: '+size(used))
 print('نحوه محاسبه: '+dict(download='دانلود',upload='آپلود',both='هر دو').get(mode,mode))
@@ -1424,7 +1424,7 @@ menu_tunnel_traffic() {
         case "$option" in
             1) ;;
             2)
-                read -r -p 'سقف به GB (مثلاً 100؛ یا 100GiB؛ 0=نامحدود؛ Enter=لغو): ' value || return 0
+                read -r -p 'سقف به GB (مثلاً 100؛ یا 100GB؛ 0=نامحدود؛ Enter=لغو): ' value || return 0
                 [[ -n "$value" ]] || continue
                 [[ "$value" =~ ^[0-9]+([.][0-9]+)?$ && "$value" != 0 ]] && value="${value}GB"
                 cli_traffic limit "$name" "$value" || echo 'تعیین سقف ناموفق بود.' ;;
@@ -6664,9 +6664,9 @@ if registry.exists():
     labels={t.get('gre_if'):t.get('name','') for t in json.loads(registry.read_text()).get('peers',[])}
 for name,t in sorted(data.items()):
     used=t.get('download',0) if t.get('mode')=='download' else t.get('upload',0) if t.get('mode')=='upload' else t.get('download',0)+t.get('upload',0)
-    quota='نامحدود' if not t.get('limit') else '%.2f GiB'%(t['limit']/2**30)
+    quota='نامحدود' if not t.get('limit') else '%.2f GB'%(t['limit']/10**9)
     target=t.get('interface') or t.get('peer',''); label=labels.get(target) or name
-    print('%s\t%s | %s | %.2f GiB / %s | %s | %s'%(name,label,target,used/2**30,quota,dict(download='دانلود',upload='آپلود',both='هر دو').get(t.get('mode','both'),'هر دو'),'مسدود' if t.get('blocked') else 'باز'))
+    print('%s\t%s | %s | %.2f GB / %s | %s | %s'%(name,label,target,used/10**9,quota,dict(download='دانلود',upload='آپلود',both='هر دو').get(t.get('mode','both'),'هر دو'),'مسدود' if t.get('blocked') else 'باز'))
 PYCODE
 ) || return 1
     while IFS=$'\t' read -r id label; do
@@ -6708,7 +6708,7 @@ menu_traffic() {
             1) cli_traffic discover >/dev/null && cli_traffic list ;;
             2)
                 id=$(menu_select_traffic) || continue
-                read -r -p 'سقف مصرف به GB (مثلاً 100؛ یا 100GiB؛ 0=نامحدود؛ Enter=لغو): ' limit || return 0
+                read -r -p 'سقف مصرف به GB (مثلاً 100؛ یا 100GB؛ 0=نامحدود؛ Enter=لغو): ' limit || return 0
                 [[ -n "$limit" ]] || continue
                 [[ "$limit" =~ ^[0-9]+([.][0-9]+)?$ && "$limit" != 0 ]] && limit="${limit}GB"
                 mode=$(menu_traffic_mode) || continue

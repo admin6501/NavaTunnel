@@ -108,9 +108,11 @@ class TrafficTests(TrafficHarness):
 
     def test_units_validation_and_duplicate_endpoints(self):
         self.assertEqual(self.engine.size('1GB'), 10**9)
-        self.assertEqual(self.engine.size('1GiB'), 2**30)
-        self.assertEqual(self.engine.size('2.5MB'), 2500000)
-        for bad in ('-1', 'NaN', '1XB', 'abc'):
+        self.assertEqual(self.engine.size('917'), 917*10**9)
+        self.assertEqual(self.engine.size('0'), 0)
+        self.assertEqual(self.engine.size(' 1gb '), 10**9)
+        self.assertEqual(self.engine.size('2.5GB'), 2500000000)
+        for bad in ('-1', 'NaN', '1XB', 'abc', '1GiB', '2.5MB', '100B', '1TB'):
             with self.assertRaises(ValueError): self.engine.size(bad)
         with self.assertRaises(ValueError): self.engine.add(self.data,'dup',peer='192.0.2.1')
         with self.assertRaises(ValueError): self.engine.add(self.data,'bad;name',peer='192.0.2.3')
@@ -156,7 +158,8 @@ class TrafficCliTests(TrafficHarness):
     def test_cli_limit_mode_reset_and_remove(self):
         d,u=self.engine.chains('one')
         self.fw.bytes[d]=80; self.fw.bytes[u]=60
-        self.invoke('limit','one','100','--mode','download')
+        self.invoke('limit','one','0.0000001GB','--mode','download')
+        self.assertEqual(self.data['one']['limit'],100)
         self.assertFalse(self.data['one']['blocked'])
         self.invoke('mode','one','both')
         self.assertTrue(self.data['one']['blocked'])

@@ -117,7 +117,7 @@ NavaTunnel mtu --interface gre-tunnel --value 1300
 
 Each tunnel's management page shows download, upload, their total, and usage charged against the configured limit. Use **option 7 on Iran** or **option 3 on the foreign server** to manage that connection's traffic without selecting it again or entering a counter ID. Refresh, limit, accounting direction, reset, and unlimited settings are available there. Reset requires confirmation.
 
-**Main menu option 6** lists all counters, discovers existing tunnels, and registers an interface or dedicated peer IP. Usage is displayed in multiline GiB cards for narrow terminals. In menus, `100` means 100GB and `0` means unlimited. A CLI size without a unit means bytes. GB is decimal; GiB is binary.
+**Main menu option 6** lists all counters, discovers existing tunnels, and registers an interface or dedicated peer IP. Usage is displayed in multiline GB cards for narrow terminals. In menus, `100` means 100GB and `0` means unlimited. Menus and CLI accept only GB; a number without a suffix also means GB. One GB equals 1,000,000,000 bytes. GiB and other size units are rejected. Existing limits remain stored in bytes; only their displayed unit changes to GB.
 
 New tunnels are registered automatically using their interface names, such as `gre-tunnel` or `gre-t2`. If a counter is missing, the menu asks before registering it, and counting starts at that moment. If a refresh fails, the last saved usage is shown with a warning. Historical datacenter usage cannot be recovered by the counter.
 
@@ -134,7 +134,7 @@ NavaTunnel traffic limit gre-tunnel 0  # Unlimited; remove quota blocking
 Register an interface or dedicated peer IP:
 
 ```bash
-NavaTunnel traffic add tunnel-a --interface tun0 --limit 100GiB --mode upload
+NavaTunnel traffic add tunnel-a --interface tun0 --limit 100GB --mode upload
 NavaTunnel traffic add frp-a --peer 203.0.113.10 --limit 500GB --mode both
 NavaTunnel traffic remove tunnel-a  # Remove the counter and its blocking rules
 ```
