@@ -1,0 +1,16 @@
+name: Shell checks
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check Bash syntax
+        run: |
+          for script in *.sh; do bash -n "$script"; done
+      - name: Check shell errors
+        run: shellcheck --severity=error *.sh
+      - name: Test peers, CLI regressions and traffic quotas
+        run: python3 -m unittest discover -s tests -v

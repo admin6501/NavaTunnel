@@ -1,0 +1,10 @@
+# فایل‌های موقت پایتون و آزمون‌ها
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+
+# پشتیبان محلی تاریخچه؛ در مخزن عمومی منتشر نشود
+*.bundle
+NavaTunnel-history-reset-plan.json
