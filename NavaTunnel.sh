@@ -2970,9 +2970,18 @@ peer_token() {
     PTS=$(echo "$rec" | python3 -c 'import json,sys; print(" ".join(str(x) for x in json.load(sys.stdin).get("ports",[])))')
     settings=$(peer_connection_settings "$ID") || return 1
     IFS=$'\t' read -r PROTOCOL LOSS <<< "$settings"
-    if is_valid_ip "$LIP" && is_valid_port "$FP" && is_valid_ip "$LGRE" && is_valid_ip "$PGRE"; then
-        echo "BUNDLE:$(bundle_make "$LIP" "$FP" "$LGRE" "$PGRE" "$B_TOK" "$PTS" "" "$LOSS" "$PROTOCOL")"
+    if ! is_valid_ip "$LIP" || ! is_valid_port "$FP" || ! is_valid_ip "$LGRE" || ! is_valid_ip "$PGRE"; then
+        echo 'اطلاعات اتصال این تونل ناقص یا نامعتبر است؛ IP ایران، پورت کنترل و IPهای داخلی را بررسی کنید.' >&2
+        return 1
     fi
+    [[ "$B_TOK" =~ ^[A-Za-z0-9-]{1,128}$ && -n "$PTS" ]] || {
+        echo 'توکن یا پورت‌های سرویس این تونل ناقص یا نامعتبر است.' >&2
+        return 1
+    }
+    local generated
+    generated=$(bundle_make "$LIP" "$FP" "$LGRE" "$PGRE" "$B_TOK" "$PTS" "" "$LOSS" "$PROTOCOL") || return 1
+    bundle_parse "$generated" || { echo 'ساخت کد اتصال معتبر ناموفق بود.' >&2; return 1; }
+    printf 'BUNDLE:%s\n' "$generated"
 }
 
 # write one frps instance: $1=suffix("" for legacy, "-N" for peers) $2=bind_port $3=token
@@ -3906,9 +3915,20 @@ menu_edit_peer() {
                 cli_edit_peer --id "$id" --carrier "$value"
                 echo 'روش انتقال دو سمت باید یکسان باشد؛ تنظیمات سرور خارج را هم به‌روز کنید.' ;;
             5)
-                bundle=$(peer_token "$id" | sed -n 's/^BUNDLE://p')
-                [[ -n "$bundle" ]] && { echo 'روی سرور خارج (بعد از نصب NavaTunnel) اجرا کنید:'; printf 'NavaTunnel setup-foreign --bundle %q\n' "$bundle"; }
-                echo 'این کد شامل توکن اتصال است؛ آن را عمومی منتشر نکنید.' ;;
+                local connection_output
+                if connection_output=$(peer_token "$id"); then
+                    bundle=$(sed -n 's/^BUNDLE://p' <<< "$connection_output")
+                    if [[ -n "$bundle" ]]; then
+                        echo 'روی سرور خارج (بعد از نصب NavaTunnel) اجرا کنید:'
+                        printf 'NavaTunnel setup-foreign --bundle %q\n' "$bundle"
+                        echo 'این کد شامل توکن اتصال است؛ آن را عمومی منتشر نکنید.'
+                    else
+                        echo 'کد اتصال تولید نشد؛ اطلاعات ذخیره‌شده تونل را بررسی کنید.'
+                    fi
+                else
+                    echo 'دریافت کد اتصال ناموفق بود؛ خطای بالا را بررسی کنید.'
+                fi
+                pause_prompt ;;
             6)
                 service=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["frps_svc"])' <<< "$rec")
                 iface=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["gre_if"])' <<< "$rec")
