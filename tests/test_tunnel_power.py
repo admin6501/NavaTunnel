@@ -97,7 +97,7 @@ class TunnelPowerTests(ScriptHarness):
         self.run_shell('cli_tunnel_power stop --id 2',self.stubs)
         result=self.run_shell('setup_gre_iface gre-t2 203.0.113.1 192.0.2.2 10.200.0.6 10.200.0.5',self.stubs)
         self.assertNotEqual(result.returncode,0)
-        self.assertIn('دستی متوقف',result.stderr)
+        self.assertIn('manually stopped',result.stderr)
         self.assertFalse((self.active/'gre-t2.service').exists())
 
     def test_start_does_not_enable_previously_inactive_cover_traffic(self):

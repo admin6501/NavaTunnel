@@ -8,7 +8,7 @@ class ProtocolMenuTests(ScriptHarness):
         for choice,protocol in enumerate(('tcp','kcp','quic','websocket','wss'),1):
             result=self.run_shell("menu_protocol_prompt <<<'%s'"%choice)
             self.assertEqual(result.stdout.strip(),protocol)
-            self.assertIn('خارج',result.stderr)
+            self.assertIn('foreign',result.stderr)
         self.assertEqual(self.run_shell("menu_protocol_prompt quic <<<''").stdout.strip(),'quic')
         for command in ("menu_protocol_prompt <<<'0'",'menu_protocol_prompt </dev/null'):
             self.assertNotEqual(self.run_shell(command).returncode,0)

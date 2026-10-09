@@ -54,18 +54,18 @@ ensure_navatunnel_bin() {
 LOG_DIR="/var/log/navatunnel"
 
 # Mask tokens and sensitive credentials in log strings
-fa_state() {
+display_state() {
     case "${1,,}" in
-        on|enabled|true|active|running|up) echo 'فعال' ;;
-        off|disabled|false|inactive|stopped|down) echo 'غیرفعال' ;;
-        failed|fail|broken) echo 'ناموفق' ;;
-        success|pass|ok|installed) echo 'موفق' ;;
-        warn|warning) echo 'هشدار' ;;
-        low) echo 'کم' ;; mid) echo 'متوسط' ;;
-        error) echo 'خطا' ;; unknown) echo 'نامشخص' ;;
-        auto) echo 'خودکار' ;; manual) echo 'دستی' ;; direct) echo 'GRE مستقیم' ;;
-        fou:*) echo "FOU پورت ${1#fou:}" ;;
-        *) printf '%s\n' "${1:-نامشخص}" ;;
+        on|enabled|true|active|running|up) echo 'Enabled' ;;
+        off|disabled|false|inactive|stopped|down) echo 'Disabled' ;;
+        failed|fail|broken) echo 'Failed' ;;
+        success|pass|ok|installed) echo 'OK' ;;
+        warn|warning) echo 'Warning' ;;
+        low) echo 'Low' ;; mid) echo 'Medium' ;;
+        error) echo 'Error' ;; unknown) echo 'Unknown' ;;
+        auto) echo 'Auto' ;; manual) echo 'Manual' ;; direct) echo 'GRE Direct' ;;
+        fou:*) echo "FOU Port ${1#fou:}" ;;
+        *) printf '%s\n' "${1:-Unknown}" ;;
     esac
 }
 
@@ -110,7 +110,7 @@ backup_configs() {
     done
 
     echo "$bdir" > "${BACKUP_DIR}/latest" 2>/dev/null || true
-    log_msg "installer" "INFO" "پشتیبان تنظیمات ساخته شد در $bdir"
+    log_msg "installer" "INFO" "Backup settings were built in $bdir"
     echo "$bdir"
 }
 
@@ -118,11 +118,11 @@ rollback_configs() {
     local bdir="$1"
     [[ -z "$bdir" && -f "${BACKUP_DIR}/latest" ]] && bdir=$(cat "${BACKUP_DIR}/latest" 2>/dev/null)
     if [[ -z "$bdir" || ! -d "$bdir" ]]; then
-        echo -e "${RED}[!] پوشه پشتیبان معتبر برای بازگردانی پیدا نشد.${NC}"
+        echo -e "${RED}[!] A valid backup folder was not found to restore to.${NC}"
         return 1
     fi
-    echo -e "${YELLOW}[*] در حال بازگردانی تنظیمات از: $bdir ...${NC}"
-    log_msg "installer" "WARN" "شروع بازگردانی از $bdir"
+    echo -e "${YELLOW}[*] Restoring settings from: $bdir ...${NC}"
+    log_msg "installer" "WARN" "Start restoring from $bdir"
 
     [[ -d "$bdir/navatunnel" ]] && cp -rp "$bdir/navatunnel" /etc/ 2>/dev/null || true
     [[ -d "$bdir/gre-panel" ]] && cp -rp "$bdir/gre-panel" /etc/ 2>/dev/null || true
@@ -131,8 +131,8 @@ rollback_configs() {
         cp -p "$bdir/systemd/"* /etc/systemd/system/ 2>/dev/null || true
         systemctl daemon-reload >/dev/null 2>&1 || true
     fi
-    echo -e "${GREEN}[✔️] بازگردانی انجام شد.${NC}"
-    log_msg "installer" "INFO" "بازگردانی با موفقیت انجام شد"
+    echo -e "${GREEN}[✔️] Restore done.${NC}"
+    log_msg "installer" "INFO" "The restore was successful"
 }
 
 # Component States: NOT_INSTALLED, INSTALLED, RUNNING, STOPPED, BROKEN, UNKNOWN
@@ -232,28 +232,28 @@ ensure_dependencies_smart() {
     if [[ ${#missing_pkgs[@]} -eq 0 ]]; then
         mkdir -p /etc/gre-panel
         touch "$DEPS_MARKER" 2>/dev/null || true
-        echo -e "${GREEN}[✔️] همه پیش‌نیازهای سیستم آماده‌اند.${NC}"
+        echo -e "${GREEN}[✔️] All system prerequisites are ready.${NC}"
         return 0
     fi
 
     local uniq_pkgs
     uniq_pkgs=$(printf "%s\n" "${missing_pkgs[@]}" | sort -u | tr '\n' ' ')
-    echo -e "${CYAN}[*] در حال نصب پیش‌نیازهای موجودنبوده: ${uniq_pkgs}...${NC}"
-    log_msg "installer" "INFO" "در حال نصب پیش‌نیازهای موجودنبوده: ${uniq_pkgs}"
+    echo -e "${CYAN}[*] Prerequisites are not being installed: ${uniq_pkgs}...${NC}"
+    log_msg "installer" "INFO" "Prerequisites are not being installed: ${uniq_pkgs}"
 
     if command -v apt-get >/dev/null 2>&1; then
         export DEBIAN_FRONTEND=noninteractive
         (timeout 25 apt-get update -qq || true)
         apt-get install -y -qq --no-install-recommends $uniq_pkgs 2>/dev/null || {
-            echo -e "${YELLOW}[!] نصب با apt-get با خطا روبه‌رو شد: ${uniq_pkgs}. راه‌اندازی ادامه پیدا می‌کند.${NC}"
+            echo -e "${YELLOW}[!] Install with apt-get An error was encountered: ${uniq_pkgs}. Setup continues.${NC}"
         }
     elif command -v yum >/dev/null 2>&1; then
         yum install -y -q $uniq_pkgs || true
     fi
-    [[ "$(get_component_status deps)" == "INSTALLED" ]] || { echo "بعضی پیش‌نیازهای ضروری هنوز نصب نشده‌اند." >&2; return 1; }
+    [[ "$(get_component_status deps)" == "INSTALLED" ]] || { echo "Some prerequisites are not yet installed." >&2; return 1; }
     mkdir -p /etc/gre-panel
     touch "$DEPS_MARKER" 2>/dev/null || true
-    echo -e "${GREEN}[✔️] پیش‌نیازها نصب و وضعیت آن‌ها ذخیره شد.${NC}"
+    echo -e "${GREEN}[✔️] Prerequisites installed and their status saved.${NC}"
 }
 
 is_port_in_use() {
@@ -270,7 +270,7 @@ is_port_in_use() {
 
 diagnose_port_process() {
     local port=$1
-    echo -e "${CYAN}=== بررسی فرایند استفاده‌کننده از پورت :$port ===${NC}"
+    echo -e "${CYAN}=== Check the process using the port :$port ===${NC}"
     if command -v ss >/dev/null 2>&1; then
         ss -tulpn "sport = :$port" 2>/dev/null
     fi
@@ -284,7 +284,7 @@ diagnose_port_process() {
 
 ensure_port_available() {
     local port=$1
-    local purpose=${2:-"پورت ضروری"}
+    local purpose=${2:-"Required port"}
     local is_bundle=${3:-0}
     # $4: if set to "warn-only", non-interactive mode will warn but not fail.
     # Proxy ports on Foreign are declared in frpc config as localPort —
@@ -293,23 +293,23 @@ ensure_port_available() {
     local warn_only=${4:-""}
 
     while is_port_in_use "$port"; do
-        echo -e "${YELLOW}[!] هشدار: ${purpose} ${port} هم‌اکنون توسط فرایند دیگری استفاده می‌شود.${NC}" >&2
+        echo -e "${YELLOW}[!] Warning: ${purpose} ${port} It is currently being used by another process.${NC}" >&2
         log_msg "tunnel" "WARN" "${purpose} ${port} is in use"
         if [[ ! -t 0 ]]; then
             if [[ "$warn_only" == "warn-only" ]]; then echo "$port"; return 0; fi
-            echo "پورت ${port} اشغال است؛ آن را آزاد کنید یا پورت دیگری انتخاب کنید." >&2
+            echo "Port ${port} is occupied; Release it or select another port." >&2
             return 1
         fi
-        echo "گزینه‌ها:" >&2
-        echo "  1) تلاش مجدد پس از توقف فرایند مزاحم" >&2
-        echo "  2) بررسی فرایند" >&2
-        echo "  3) لغو" >&2
+        echo "Options:" >&2
+        echo "  1) Retrying after stopping the annoying process" >&2
+        echo "  2) Process review" >&2
+        echo "  3) Cancel" >&2
         if [[ "$is_bundle" -ne 1 ]]; then
-            echo "  4) انتخاب پورت دیگر" >&2
+            echo "  4) Select another port" >&2
         else
-            echo "  4) انتخاب پورت دیگر به‌جای مقدار کد اتصال" >&2
+            echo "  4) Select another port instead of the connection code value" >&2
         fi
-        read -p "انتخاب گزینه [1-4]: " P_OPT
+        read -p "Select option [1-4]: " P_OPT
         case "$P_OPT" in
             1)
                 continue
@@ -322,11 +322,11 @@ ensure_port_available() {
                 return 1
                 ;;
             4)
-                prompt_port NEW_PORT "مقدار جدید ${purpose}" "$(gen_random_port)" >&2
+                prompt_port NEW_PORT "New value ${purpose}" "$(gen_random_port)" >&2
                 port=$NEW_PORT
                 ;;
             *)
-                echo -e "${RED}[!] گزینه نامعتبر است.${NC}" >&2
+                echo -e "${RED}[!] Invalid option.${NC}" >&2
                 ;;
         esac
     done
@@ -340,7 +340,7 @@ cli_bundle_inspect() {
         if [[ "$1" == --* && $# -lt 2 ]]; then
             case "$1" in
                 --force|--show-token|--encrypt|--compress|--dry-run|--off|--help) ;;
-                *) echo "مقدار این گزینه وارد نشده است: $1" >&2; return 1 ;;
+                *) echo "The value of this option is not entered: $1" >&2; return 1 ;;
             esac
         fi
         case "$1" in
@@ -350,10 +350,10 @@ cli_bundle_inspect() {
         esac
     done
     if [[ -z "$BUNDLE" ]]; then
-        read -p "کد اتصال (hsh1_...) را وارد کنید: " BUNDLE
+        read -p "Connection code (hsh1_...) Enter the: " BUNDLE
     fi
     if ! bundle_parse "$BUNDLE"; then
-        echo -e "${RED}[!] قالب کد اتصال نامعتبر است؛ قالب مورد انتظار: hsh1_<IRAN_PUB>_<FRP_PORT>_<IRAN_GRE>_<FOREIGN_GRE>_<TOKEN>[_<PORTS>][_fou<P1>-<P2>]${NC}"
+        echo -e "${RED}[!] The connection code format is invalid; Expected format: hsh1_<IRAN_PUB>_<FRP_PORT>_<IRAN_GRE>_<FOREIGN_GRE>_<TOKEN>[_<PORTS>][_fou<P1>-<P2>]${NC}"
         return 1
     fi
 
@@ -363,19 +363,19 @@ cli_bundle_inspect() {
     fi
 
     echo -e "\n${CYAN}=============================================================="
-    echo "                 بررسی کد اتصال NavaTunnel"
+    echo "                 Checking the connection code NavaTunnel"
     echo -e "==============================================================${NC}"
-    echo -e "نسخه کد اتصال:        ${GREEN}hsh1${NC}"
-    echo -e "IP عمومی ایران:        ${CYAN}${B_IRAN_PUB}${NC}"
-    echo -e "پورت سرور FRP:       ${CYAN}${B_FRP_PORT}${NC} (serverPort / bindPort)"
-    echo -e "IP داخلی GRE ایران:  ${CYAN}${B_IRAN_GRE}${NC}"
-    echo -e "IP داخلی GRE خارج:        ${CYAN}${B_FOREIGN_GRE}${NC}"
-    echo -e "پورت‌های سرویس:   ${CYAN}${B_PORTS:-بدون پورت؛ تنظیم دستی}${NC}"
-    echo "پروتکل FRP کلاینت خارج: ${B_FRP_TRANSPORT}"
-    echo "جبران افت بسته با KCP/FEC: $(fa_state "$B_LOSS_RECOVERY")"
-    echo -e "پورت‌های UDP برای FOU:         ${CYAN}${B_FOU_P1}, ${B_FOU_P2}${NC}"
-    echo -e "توکن اتصال:            ${YELLOW}${DISP_TOKEN}${NC}"
-    echo -e "مرجع تنظیمات:       ${GREEN}اعمال روی سرور خارج${NC}"
+    echo -e "Connection code version:        ${GREEN}hsh1${NC}"
+    echo -e "Iran public IP:        ${CYAN}${B_IRAN_PUB}${NC}"
+    echo -e "Server port FRP:       ${CYAN}${B_FRP_PORT}${NC} (serverPort / bindPort)"
+    echo -e "Iran GRE IP:  ${CYAN}${B_IRAN_GRE}${NC}"
+    echo -e "Foreign GRE IP:        ${CYAN}${B_FOREIGN_GRE}${NC}"
+    echo -e "Service ports:   ${CYAN}${B_PORTS:-no port; Manual adjustment}${NC}"
+    echo "FRP protocol Foreign client: ${B_FRP_TRANSPORT}"
+    echo "Loss recovery with KCP/FEC: $(display_state "$B_LOSS_RECOVERY")"
+    echo -e "ports UDP for FOU:         ${CYAN}${B_FOU_P1}, ${B_FOU_P2}${NC}"
+    echo -e "Connection token:            ${YELLOW}${DISP_TOKEN}${NC}"
+    echo -e "Reference settings:       ${GREEN}Apply on foreign server${NC}"
     echo -e "${CYAN}==============================================================${NC}\n"
     return 0
 }
@@ -755,10 +755,10 @@ carrier_apply() {
     local SPECIFIC_IF="${2:-}"
     [[ -z "$TARGET" ]] && TARGET="direct"
     if [[ "$TARGET" == wss* ]]; then
-        echo "حامل رله WSS در این نسخه موجود نیست؛ از direct یا fou:PORT استفاده کنید." >&2
+        echo "relay carrier WSS Not available in this version; from direct or fou:PORT use." >&2
         return 1
     fi
-    [[ "$TARGET" == "direct" || "$TARGET" == fou:* ]] || { echo "حامل نامعتبر: $TARGET" >&2; return 1; }
+    [[ "$TARGET" == "direct" || "$TARGET" == fou:* ]] || { echo "Invalid carrier: $TARGET" >&2; return 1; }
     if [[ "$TARGET" == fou:* ]]; then is_valid_port "${TARGET#fou:}" || return 1; fi
     carrier_init_kernel
 
@@ -1017,7 +1017,7 @@ bundle_parse() {
     local CLEANED="" p
     if [[ -n "${f:-}" && "$f" != fou* ]]; then
         for p in $(echo "$f" | tr -- '-,' '  '); do
-            is_valid_port "$p" || { echo "پورت نامعتبر: $p" >&2; return 1; }
+            is_valid_port "$p" || { echo "Invalid port: $p" >&2; return 1; }
             CLEANED="$CLEANED $((10#$p))"
         done
         CLEANED=$(echo "$CLEANED" | xargs)
@@ -1040,23 +1040,23 @@ prompt_ip() { # $1=varname $2=label $3=default (empty = required)
     local __var=$1 __label=$2 __def=$3 __in
     while true; do
         if [[ -n "$__def" ]]; then
-            read -r -p "$__label [پیش‌فرض: $__def]: " __in || return 1
+            read -r -p "$__label [Default: $__def]: " __in || return 1
             __in=${__in:-$__def}
         else
             read -r -p "$__label: " __in || return 1
         fi
         if is_valid_ip "$__in"; then printf -v "$__var" '%s' "$__in"; return 0; fi
-        echo -e "${RED}[!] آدرس IPv4 نامعتبر: '${__in}'. نمونه: 203.0.113.10${NC}"
+        echo -e "${RED}[!] address IPv4 invalid: '${__in}'. sample: 203.0.113.10${NC}"
     done
 }
 
 prompt_port() { # $1=varname $2=label $3=default
     local __var=$1 __label=$2 __def=$3 __in
     while true; do
-        read -r -p "$__label [پیش‌فرض: $__def]: " __in || return 1
+        read -r -p "$__label [Default: $__def]: " __in || return 1
         __in=${__in:-$__def}
         if is_valid_port "$__in"; then printf -v "$__var" '%s' "$((10#$__in))"; return 0; fi
-        echo -e "${RED}[!] پورت نامعتبر: '${__in}'. باید بین 1 و 65535 باشد.${NC}"
+        echo -e "${RED}[!] Invalid port: '${__in}'. must be between 1 and 65535.${NC}"
     done
 }
 
@@ -1065,17 +1065,17 @@ prompt_required() { # $1=varname $2=label — must be non-empty
     while true; do
         read -r -p "$__label: " __in || return 1
         if [[ -n "$__in" ]]; then printf -v "$__var" '%s' "$__in"; return 0; fi
-        echo -e "${RED}[!] این مقدار ضروری است و نمی‌تواند خالی باشد.${NC}"
+        echo -e "${RED}[!] This value is required and cannot be empty.${NC}"
     done
 }
 
 prompt_token() { # $1=varname $2=label $3=default (empty accepts default)
     local __var=$1 __label=$2 __def=$3 __in
     while true; do
-        read -r -p "$__label [Enter برای مقدار پیش‌فرض: $__def]: " __in || return 1
+        read -r -p "$__label [Enter For the default value: $__def]: " __in || return 1
         __in="${__in:-$__def}"
         if [[ "$__in" == *"_"* ]]; then
-            echo -e "${RED}[!] توکن نباید زیرخط (_) داشته باشد؛ قالب کد اتصال را خراب می‌کند.${NC}"
+            echo -e "${RED}[!] The token must not be underlined (_) have; The template breaks the connection code.${NC}"
         else
             printf -v "$__var" '%s' "$__in"
             return 0
@@ -1093,7 +1093,7 @@ prompt_ports() { # $1=varname $2=label — at least one valid port
         done
         __ok=$(echo "$__ok" | xargs)
         if [[ -n "$__ok" && "$__invalid" == 0 ]]; then printf -v "$__var" '%s' "$__ok"; return 0; fi
-        echo -e "${RED}[!] حداقل یک پورت معتبر بین 1 و 65535 وارد کنید.${NC}"
+        echo -e "${RED}[!] At least one valid port between 1 and 65535 enter.${NC}"
     done
 }
 
@@ -1101,10 +1101,10 @@ prompt_ports() { # $1=varname $2=label — at least one valid port
 # the prompts above. Prints a clear error per bad field, returns non-zero.
 validate_setup_common() { # $1=local_pub $2=remote_pub $3=frp_port $4=local_gre
     local ok=1
-    is_valid_ip "$1" || { echo -e "${RED}[!] IP عمومی این سرور نامعتبر است: '$1'${NC}"; ok=0; }
-    is_valid_ip "$2" || { echo -e "${RED}[!] IP عمومی سرور مقابل نامعتبر است: '$2'${NC}"; ok=0; }
-    is_valid_port "$3" || { echo -e "${RED}[!] پورت FRP نامعتبر است: '$3' (باید بین 1 و 65535 باشد)${NC}"; ok=0; }
-    is_valid_ip "$4" || { echo -e "${RED}[!] IP داخلی GRE این سرور نامعتبر است: '$4'${NC}"; ok=0; }
+    is_valid_ip "$1" || { echo -e "${RED}[!] Invalid local public IP: '$1'${NC}"; ok=0; }
+    is_valid_ip "$2" || { echo -e "${RED}[!] Invalid peer public IP: '$2'${NC}"; ok=0; }
+    is_valid_port "$3" || { echo -e "${RED}[!] Invalid FRP port: '$3' (must be between 1 and 65535)${NC}"; ok=0; }
+    is_valid_ip "$4" || { echo -e "${RED}[!] IP Internal GRE This server is invalid: '$4'${NC}"; ok=0; }
     return $((1 - ok))
 }
 
@@ -1118,7 +1118,7 @@ tunnel_present() {
 check_root() {
     [[ "${NAVATUNNEL_NO_ROOT_CHECK:-0}" == "1" ]] && return 0
     if [[ ${EUID:-$(id -u 2>/dev/null || echo 1)} -ne 0 ]]; then
-        echo -e "${RED}[!] اسکریپت را با دسترسی روت یا sudo اجرا کنید.${NC}"
+        echo -e "${RED}[!] Run this script as root or with sudo.${NC}"
         exit 1
     fi
 }
@@ -1136,7 +1136,7 @@ detect_arch() {
             FRP_ARCH="arm"
             ;;
         *)
-            echo -e "${RED}[!] معماری پشتیبانی‌نشده: $ARCH${NC}"
+            echo -e "${RED}[!] Unsupported architecture: $ARCH${NC}"
             exit 1
             ;;
     esac
@@ -1178,7 +1178,7 @@ download_with_fallback() {
 
     # Iran-friendly GitHub proxy mirrors if it is a GitHub URL
     if [[ "$URL" == https://github.com/* || "$URL" == https://raw.githubusercontent.com/* ]]; then
-        echo -e "${YELLOW}[*] دریافت مستقیم ناموفق بود؛ در حال امتحان نشانی جایگزین...${NC}"
+        echo -e "${YELLOW}[*] Direct reception failed; Trying alternate address...${NC}"
         local MIRRORS=(
             "https://ghproxy.net/${URL}"
             "https://gh-proxy.com/${URL}"
@@ -1187,7 +1187,7 @@ download_with_fallback() {
         )
         for M in "${MIRRORS[@]}"; do
             if curl -fsSL --connect-timeout 6 --max-time 20 -o "$DEST" "$M" 2>/dev/null && [[ -s "$DEST" ]]; then
-                echo -e "${GREEN}[✔️] دریافت از نشانی جایگزین موفق بود: ${M%/*}${NC}"
+                echo -e "${GREEN}[✔️] Received from alternate address was successful: ${M%/*}${NC}"
                 return 0
             fi
         done
@@ -1220,7 +1220,7 @@ install_frp_binaries() {
     fi
     detect_arch
     get_latest_frp_version
-    echo -e "${CYAN}[*] در حال دریافت FRP v${FRP_VERSION} (${FRP_ARCH})...${NC}"
+    echo -e "${CYAN}[*] receiving FRP v${FRP_VERSION} (${FRP_ARCH})...${NC}"
 
     mkdir -p "$CONFIG_DIR"
     TMP_DIR=$(mktemp -d)
@@ -1231,7 +1231,7 @@ install_frp_binaries() {
     if ! download_with_fallback "${TMP_DIR}/${TAR_FILE}" "$DOWNLOAD_URL" 30; then
         DOWNLOAD_URL="https://github.com/fatedier/frp/releases/download/v${FRP_VERSION}/${TAR_FILE}"
         if ! download_with_fallback "${TMP_DIR}/${TAR_FILE}" "$DOWNLOAD_URL" 60; then
-            echo -e "${RED}[!] دریافت FRP از گیت‌هاب و نشانی‌های جایگزین ناموفق بود.${NC}"
+            echo -e "${RED}[!] receive FRP from github and alternate urls failed.${NC}"
             rm -rf "$TMP_DIR"
             return 1
         fi
@@ -1247,16 +1247,16 @@ install_frp_binaries() {
 
     rm -rf "$TMP_DIR"
     if [[ "$ROLE" == "server" && ! -x "${INSTALL_DIR}/frps" ]]; then
-        echo -e "${RED}[!] فایل اجرایی frps پس از نصب موجود یا قابل اجرا نیست.${NC}"
+        echo -e "${RED}[!] executable file frps Not available or executable after installation.${NC}"
         return 1
     elif [[ "$ROLE" == "client" && ! -x "${INSTALL_DIR}/frpc" ]]; then
-        echo -e "${RED}[!] فایل اجرایی frpc پس از نصب موجود یا قابل اجرا نیست.${NC}"
+        echo -e "${RED}[!] executable file frpc Not available or executable after installation.${NC}"
         return 1
     elif [[ "$ROLE" == "all" && ( ! -x "${INSTALL_DIR}/frps" || ! -x "${INSTALL_DIR}/frpc" ) ]]; then
-        echo -e "${RED}[!] فایل‌های اجرایی FRP پس از نصب موجود یا قابل اجرا نیستند.${NC}"
+        echo -e "${RED}[!] Executable files FRP Not available or executable after installation.${NC}"
         return 1
     fi
-    echo -e "${GREEN}[✔️] نصب FRP انجام شد در ${INSTALL_DIR}.${NC}"
+    echo -e "${GREEN}[✔️] Install FRP done in ${INSTALL_DIR}.${NC}"
 }
 
 tunnel_mtu_get() {
@@ -1292,7 +1292,7 @@ validate_kcp_mtu() {
     local mtu
     mtu=$(tunnel_mtu_get "$1") || return 1
     if ((mtu<1378)); then
-        echo 'MTU ذخیره‌شده کمتر از 1378 است؛ ابتدا MTU دو سمت را بالا ببرید یا پروتکلی به‌جز KCP انتخاب کنید.' >&2
+        echo 'MTU Saved less than 1378 is First MTU Raise two sides or protocol except KCP choose.' >&2
         return 1
     fi
 }
@@ -1304,10 +1304,10 @@ cli_mtu() {
         case "$1" in --interface) iface=$2;; --value) mtu=$2;; *) return 1;; esac
         shift 2
     done
-    [[ "$iface" =~ ^gre-(tunnel|t[0-9]+)$ ]] || { echo 'نام اینترفیس GRE معتبر نیست.' >&2; return 1; }
-    [[ "$mtu" =~ ^[0-9]{3,4}$ ]] && ((10#$mtu>=576 && 10#$mtu<=1476)) || { echo 'MTU باید بین 576 و 1476 باشد.' >&2; return 1; }
+    [[ "$iface" =~ ^gre-(tunnel|t[0-9]+)$ ]] || { echo 'Interface name GRE not valid.' >&2; return 1; }
+    [[ "$mtu" =~ ^[0-9]{3,4}$ ]] && ((10#$mtu>=576 && 10#$mtu<=1476)) || { echo 'MTU should be between 576 and 1476 be.' >&2; return 1; }
     local protocol old unit="/etc/systemd/system/${iface}.service" temp state old_state old_unit
-    [[ -f "$unit" ]] || { echo 'فایل سرویس این تونل پیدا نشد.' >&2; return 1; }
+    [[ -f "$unit" ]] || { echo 'The service file of this tunnel was not found.' >&2; return 1; }
     protocol=$(python3 - "$PEERS_FILE" "$iface" "${CONFIG_DIR}/frpc.toml" "$TUNNEL_NAME" <<'PYCODE'
 import json,sys,re
 from pathlib import Path
@@ -1320,7 +1320,7 @@ else:
 PYCODE
 ) || return 1
     if [[ "$protocol" == kcp ]] && ((10#$mtu<1378)); then
-        echo 'KCP فعلی به MTU حداقل 1378 نیاز دارد؛ برای MTU کمتر ابتدا پروتکل را تغییر دهید.' >&2; return 1
+        echo 'KCP Current to MTU at least 1378 needs; for MTU Change the protocol first.' >&2; return 1
     fi
     old=$(tunnel_mtu_get "$iface") || return 1
     temp=$(mktemp -d) || return 1
@@ -1337,7 +1337,7 @@ text=u.read_text()
 text=re.sub(r'\bmtu\s+\d+', 'mtu '+value,text)
 hook='ExecStartPost=-/bin/sh -c "if [ -x /usr/local/bin/NavaTunnel ]; then /usr/local/bin/NavaTunnel mtu-apply '+iface+'; fi"\n'
 if 'NavaTunnel mtu-apply '+iface not in text:
-    if '[Install]' not in text: sys.exit('ساختار فایل سرویس معتبر نیست.')
+    if '[Install]' not in text: sys.exit('The service file structure is not valid.')
     text=text.replace('[Install]',hook+'\n[Install]',1)
 for target,content in ((u,text),(p,json.dumps(data,indent=2))):
     out=target.with_suffix('.mtu.tmp'); out.write_text(content); out.chmod(0o600 if target==p else 0o644); os.replace(out,target)
@@ -1345,8 +1345,8 @@ PYCODE
     then
         if systemctl daemon-reload && tunnel_mtu_apply "$iface" "$((10#$mtu))"; then
             rm -rf "$temp"
-            echo "MTU تونل $iface روی $((10#$mtu)) ذخیره و اعمال شد."
-            echo 'همین MTU را روی تونل متناظر در سرور دیگر هم تنظیم کنید.'
+            echo "MTU Tunnel $iface on $((10#$mtu)) Saved and applied."
+            echo 'Thats it MTU set on the corresponding tunnel on the other server.'
             return 0
         fi
     fi
@@ -1355,7 +1355,7 @@ PYCODE
     systemctl daemon-reload >/dev/null 2>&1 || true
     tunnel_mtu_apply "$iface" "$old" >/dev/null 2>&1 || true
     rm -rf "$temp"
-    echo 'تغییر MTU ناموفق بود؛ تنظیم قبلی بازگردانده شد.' >&2
+    echo 'change MTU was unsuccessful; The previous setting is restored.' >&2
     return 1
 }
 
@@ -1363,9 +1363,9 @@ menu_mtu() {
     ui_clear
     local iface=$1 value current
     current=$(tunnel_mtu_get "$iface") || return 1
-    echo "MTU فعلی ذخیره‌شده: $current | اینترفیس: $iface"
-    echo 'مقدار پیش‌فرض 1380 است؛ مقدار دو سمت تونل باید هماهنگ باشد.'
-    read -r -p 'MTU جدید [Enter: لغو]: ' value || return 0
+    echo "MTU Current saved: $current | Interface: $iface"
+    echo 'The default value 1380 is The value of the two sides of the tunnel must be coordinated.'
+    read -r -p 'MTU new [Enter: Cancel]: ' value || return 0
     [[ -n "$value" ]] || return 0
     cli_mtu --interface "$iface" --value "$value"
 }
@@ -1386,15 +1386,15 @@ import json,sys
 from pathlib import Path
 p=Path(sys.argv[1]); data=json.loads(p.read_text()) if p.exists() else {}
 t=data.get(sys.argv[2])
-if not t: print('شمارنده ترافیک هنوز ثبت نشده است.'); sys.exit(0)
+if not t: print('The traffic counter has not yet been registered.'); sys.exit(0)
 rx=t.get('download',0); tx=t.get('upload',0); mode=t.get('mode','both'); used=rx if mode=='download' else tx if mode=='upload' else rx+tx
 size=lambda x:'%.3f GB'%(x/10**9)
-print('دانلود: '+size(rx)); print('آپلود: '+size(tx)); print('مجموع دانلود و آپلود: '+size(rx+tx))
-print('مصرف محاسبه‌شده برای سقف: '+size(used))
-print('نحوه محاسبه: '+dict(download='دانلود',upload='آپلود',both='هر دو').get(mode,mode))
-print('سقف مصرف: '+(size(t['limit']) if t.get('limit') else 'نامحدود'))
-print('وضعیت: '+('مسدود به دلیل سقف مصرف' if t.get('blocked') else 'باز'))
-print('این شمارنده فقط ترافیک IPv4 داخل تونل را می‌شمارد، نه کل مصرف دیتاسنتر.')
+print('Download: '+size(rx)); print('Upload: '+size(tx)); print('Total download and upload: '+size(rx+tx))
+print('Usage toward limit: '+size(used))
+print('Accounting mode: '+dict(download='Download',upload='Upload',both='Both').get(mode,mode))
+print('Traffic limit: '+(size(t['limit']) if t.get('limit') else 'Unlimited'))
+print('Status: '+('Blocked due to usage limit' if t.get('blocked') else 'Open'))
+print('This counter measures only IPv4 traffic inside the tunnel, not total datacenter usage.')
 PYCODE
 }
 
@@ -1403,8 +1403,8 @@ menu_tunnel_traffic() {
     ui_clear
     name=$(traffic_id_for_interface "$iface") || return 1
     if [[ -z "$name" ]]; then
-        echo 'شمارنده این تونل پیدا نشد؛ با ثبت آن، شمارش از همین لحظه شروع می‌شود.'
-        read -r -p 'شمارنده برای همین تونل ثبت شود؟ [y/N]: ' confirm || return 0
+        echo 'The counter of this tunnel was not found; By registering it, the counting starts from this moment.'
+        read -r -p 'Can the counter be registered for this tunnel? [y/N]: ' confirm || return 0
         [[ "$confirm" == y || "$confirm" == Y ]] || return 0
         traffic_register "$iface" --interface "$iface" || return 1
         name=$(traffic_id_for_interface "$iface") || return 1
@@ -1412,32 +1412,32 @@ menu_tunnel_traffic() {
     fi
     while true; do
         ui_clear
-        echo "ترافیک همین تونل: $iface"
+        echo "Traffic for this tunnel: $iface"
         if ! cli_traffic status "$name" >/dev/null; then
-            echo 'به‌روزرسانی شمارنده ناموفق بود؛ آخرین مصرف ذخیره‌شده نمایش داده می‌شود.'
+            echo 'Counter refresh failed; Last saved usage is displayed.'
         fi
         traffic_summary "$name" || return 1
-        echo '1) تازه‌سازی مصرف'
-        echo '2) تعیین سقف مصرف'
-        echo '3) انتخاب دانلود، آپلود یا هر دو'
-        echo '4) ریست مصرف و رفع مسدودی'
-        echo '5) نامحدودکردن مصرف'
-        echo '0) بازگشت'
-        read -r -p 'انتخاب: ' option || return 0
+        echo '1) Refresh usage'
+        echo '2) Set traffic limit'
+        echo '3) Select download, upload or both'
+        echo '4) Reset usage and unblock'
+        echo '5) Remove traffic limit'
+        echo '0) Back'
+        read -r -p 'Select: ' option || return 0
         case "$option" in
             1) ;;
             2)
-                read -r -p 'سقف به GB (مثلاً 100؛ یا 100GB؛ 0=نامحدود؛ Enter=لغو): ' value || return 0
+                read -r -p 'roof to GB (e.g. 100; or 100GB; 0=unlimited; Enter=Cancel): ' value || return 0
                 [[ -n "$value" ]] || continue
                 [[ "$value" =~ ^[0-9]+([.][0-9]+)?$ && "$value" != 0 ]] && value="${value}GB"
-                cli_traffic limit "$name" "$value" || echo 'تعیین سقف ناموفق بود.' ;;
+                cli_traffic limit "$name" "$value" || echo 'Failed to set traffic limit.' ;;
             3) mode=$(menu_traffic_mode) || continue; cli_traffic mode "$name" "$mode" ;;
             4)
-                read -r -p 'مصرف همین تونل صفر و مسدودی رفع شود؟ [y/N]: ' confirm || return 0
+                read -r -p 'Can the consumption of this tunnel be zero and the blockage removed? [y/N]: ' confirm || return 0
                 [[ "$confirm" == y || "$confirm" == Y ]] && cli_traffic reset "$name" ;;
             5) cli_traffic limit "$name" 0 ;;
             0) return 0 ;;
-            *) echo 'گزینه نامعتبر است.' ;;
+            *) echo 'Invalid option.' ;;
         esac
         [[ "$option" == 1 ]] || pause_prompt
     done
@@ -1452,7 +1452,7 @@ setup_gre_systemd() {
 # directly with gre-tN names so every tunnel is the same GRE, just N of them.
 setup_gre_iface() {
     local IFNAME=$1
-    [[ ! -f "${NAVATUNNEL_STATE_DIR}/stopped/${IFNAME}" ]] || { echo 'این تونل دستی متوقف شده است؛ ابتدا گزینه شروع تونل را اجرا کنید.' >&2; return 1; }
+    [[ ! -f "${NAVATUNNEL_STATE_DIR}/stopped/${IFNAME}" ]] || { echo 'This tunnel was manually stopped; start it first.' >&2; return 1; }
     local LOCAL_IP=$2
     local REMOTE_IP=$3
     local GRE_INTERNAL_IP=$4
@@ -1461,7 +1461,7 @@ setup_gre_iface() {
     local GRE_MTU
     GRE_MTU=$(tunnel_mtu_get "$IFNAME") || return 1
 
-    echo -e "${CYAN}[*] در حال تنظیم سرویس دائمی تونل GRE (${IFNAME})...${NC}"
+    echo -e "${CYAN}[*] Setting up permanent tunnel service GRE (${IFNAME})...${NC}"
 
     ensure_navatunnel_bin
 
@@ -1509,7 +1509,7 @@ setup_gre_iface() {
     cat <<EOF > /etc/systemd/system/${IFNAME}.service
 [Unit]
 ConditionPathExists=!${NAVATUNNEL_STATE_DIR}/stopped/${IFNAME}
-Description=اینترفیس تونل GRE
+Description=GRE tunnel interface
 After=network.target
 
 [Service]
@@ -1561,7 +1561,7 @@ EOF
     fi
 
     if [[ "$GRE_STARTED" -ne 1 ]]; then
-        echo -e "${RED}[!] راه‌اندازی اینترفیس GRE ${IFNAME} ناموفق بود؛ بررسی کنید: ip tunnel show; journalctl -u ${IFNAME}.service${NC}"
+        echo -e "${RED}[!] Launch the interface GRE ${IFNAME} was unsuccessful; Check it out: ip tunnel show; journalctl -u ${IFNAME}.service${NC}"
         journalctl -u "${IFNAME}.service" -n 5 --no-pager 2>/dev/null || true
         return 1
     fi
@@ -1586,8 +1586,8 @@ EOF
         iptables -t mangle -A POSTROUTING -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 1340
 
     tunnel_mtu_apply "$IFNAME" "$GRE_MTU" || return 1
-    traffic_register "$IFNAME" --interface "$IFNAME" || echo "[!] راه‌اندازی شمارنده ترافیک ناموفق بود؛ از NavaTunnel traffic add استفاده کنید." >&2
-    echo -e "${GREEN}[✔️] سرویس تونل GRE فعال شد با IP ${CLEAN_GRE_IP} (MTU ${GRE_MTU}).${NC}"
+    traffic_register "$IFNAME" --interface "$IFNAME" || echo "[!] Failed to initialize traffic counter; from NavaTunnel traffic add use." >&2
+    echo -e "${GREEN}[✔️] Tunnel service GRE Activated with IP ${CLEAN_GRE_IP} (MTU ${GRE_MTU}).${NC}"
 }
 
 # ---- Traffic Obfuscation / Chaff Service (idle gap filler) ----
@@ -1603,14 +1603,14 @@ case "$PROFILE" in
  low) MIN_MS=400; MAX_MS=2800; MIN_BYTES=64; MAX_BYTES=1200 ;;
  mid) MIN_MS=150; MAX_MS=1200; MIN_BYTES=200; MAX_BYTES=1280 ;;
  custom) MIN_MS=${3:-}; MAX_MS=${4:-}; MIN_BYTES=${5:-}; MAX_BYTES=${6:-} ;;
- *) echo 'حالت ترافیک پوششی نامعتبر است.' >&2; exit 1 ;;
+ *) echo 'Invalid cover traffic mode.' >&2; exit 1 ;;
 esac
-[[ -n "$PEER_IP" ]] || { echo 'IP داخلی مقابل را وارد کنید.' >&2; exit 1; }
+[[ -n "$PEER_IP" ]] || { echo 'Enter the peer internal IP.' >&2; exit 1; }
 for value in "$MIN_MS" "$MAX_MS" "$MIN_BYTES" "$MAX_BYTES"; do
- [[ "$value" =~ ^[0-9]{1,7}$ ]] || { echo 'محدوده ترافیک پوششی نامعتبر است.' >&2; exit 1; }
+ [[ "$value" =~ ^[0-9]{1,7}$ ]] || { echo 'Invalid cover traffic range.' >&2; exit 1; }
 done
 MIN_MS=$((10#$MIN_MS)); MAX_MS=$((10#$MAX_MS)); MIN_BYTES=$((10#$MIN_BYTES)); MAX_BYTES=$((10#$MAX_BYTES))
-((MIN_MS>=100 && MAX_MS<=3600000 && MIN_MS<=MAX_MS && MIN_BYTES>=8 && MAX_BYTES<=1352 && MIN_BYTES<=MAX_BYTES)) || { echo 'محدوده ترافیک پوششی نامعتبر است.' >&2; exit 1; }
+((MIN_MS>=100 && MAX_MS<=3600000 && MIN_MS<=MAX_MS && MIN_BYTES>=8 && MAX_BYTES<=1352 && MIN_BYTES<=MAX_BYTES)) || { echo 'Invalid cover traffic range.' >&2; exit 1; }
 trap 'exit 0' SIGTERM SIGINT
 while true; do
  ms=$(( MIN_MS + ((RANDOM<<15)|RANDOM) % (MAX_MS-MIN_MS+1) ))
@@ -1642,7 +1642,7 @@ p=json.load(open(sys.argv[1]));v=p.get('chaff_custom',{})
 print(' '.join(str(v.get(k,'')) for k in ('min_ms','max_ms','min_bytes','max_bytes')))
 PYCODE
 ) || return 1
-        [[ "$RANGE_ARGS" =~ ^[0-9]+\ [0-9]+\ [0-9]+\ [0-9]+$ ]] || { echo 'ابتدا تنظیمات سفارشی ترافیک پوششی را ثبت کنید.' >&2; return 1; }
+        [[ "$RANGE_ARGS" =~ ^[0-9]+\ [0-9]+\ [0-9]+\ [0-9]+$ ]] || { echo 'First register the custom overlay traffic settings.' >&2; return 1; }
     fi
     local SVC="gre-chaff"
     local GRE_IF="$TUNNEL_NAME"
@@ -1660,7 +1660,7 @@ PYCODE
     cat <<EOF > "/etc/systemd/system/${SVC}.service"
 [Unit]
 ConditionPathExists=!${NAVATUNNEL_STATE_DIR}/stopped/${GRE_IF}
-Description=سرویس ترافیک پوششی GRE${SUF:+ (peer${SUF#-})}
+Description=Cover traffic service GRE${SUF:+ (peer${SUF#-})}
 After=network.target${AFTER_GRE}
 ${AFTER_GRE:+Wants=${GRE_IF}.service}
 
@@ -1679,12 +1679,12 @@ EOF
     systemctl enable "${SVC}.service" >/dev/null 2>&1
     systemctl restart "${SVC}.service" || return 1
     if [[ ! -f "${NAVATUNNEL_STATE_DIR}/stopped/${GRE_IF}" ]]; then
-        systemctl is-active --quiet "${SVC}.service" || { echo 'سرویس ترافیک پوششی فعال نشد.' >&2; return 1; }
+        systemctl is-active --quiet "${SVC}.service" || { echo 'Cover traffic service was not activated.' >&2; return 1; }
     fi
     if [[ -f "${NAVATUNNEL_STATE_DIR}/stopped/${GRE_IF}" ]]; then
-        echo "تنظیمات ترافیک پوششی $SVC ثبت شد؛ تونل دستی متوقف است و سرویس اجرا نشد."
+        echo "Cover traffic settings saved for $SVC; the manually stopped tunnel remains stopped."
     else
-        echo "سرویس ترافیک پوششی $SVC فعال شد؛ حالت: $PROFILE."
+        echo "Cover traffic service $SVC activated; mode: $PROFILE."
     fi
 }
 
@@ -1755,18 +1755,18 @@ cli_chaff() {
     local ACTION="${1:-status}"
     case "$ACTION" in
         on)
-            echo -e "${CYAN}[*] در حال فعال‌سازی سرویس‌های ترافیک پوششی GRE...${NC}"
+            echo -e "${CYAN}[*] Enabling overlay traffic services GRE...${NC}"
             local profile=${CHAFF_PROFILE:-$(perf_get_chaff)}
             [[ "$profile" != off ]] || profile=low
             CHAFF_PROFILE="$profile" update_chaff_existing_tunnels || return 1
             local found=0 u
             for u in /etc/systemd/system/gre-chaff*.service; do [[ ! -f "$u" ]] || found=1; done
-            ((found)) || { echo 'تونلی برای ترافیک پوششی پیدا نشد.' >&2; return 1; }
+            ((found)) || { echo 'A tunnel for cover traffic was not found.' >&2; return 1; }
             perf_set_val chaff_profile "$profile" 0 || return 1
             ;;
         off)
             perf_set_val chaff_profile off 0 || return 1
-            echo -e "${CYAN}[*] در حال توقف و غیرفعال‌سازی سرویس‌های ترافیک پوششی...${NC}"
+            echo -e "${CYAN}[*] Stopping and disabling overlay traffic services...${NC}"
             local found=0
             for u in /etc/systemd/system/gre-chaff*.service; do
                 [[ -f "$u" ]] || continue
@@ -1775,22 +1775,22 @@ cli_chaff() {
                 bname=$(basename "$u")
                 systemctl stop "$bname" >/dev/null 2>&1
                 systemctl disable "$bname" >/dev/null 2>&1
-                echo -e "${GREEN}[✔️] سرویس ${bname} متوقف و غیرفعال شد.${NC}"
+                echo -e "${GREEN}[✔️] service ${bname} Stopped and disabled.${NC}"
             done
             if [[ "$found" -eq 0 ]]; then
-                echo -e "${YELLOW}[*] سرویس ترافیک پوششی پیدا نشد.${NC}"
+                echo -e "${YELLOW}[*] Cover traffic service not found.${NC}"
             fi
             ;;
         configure) shift; cli_cover_configure chaff "$@" ;;
         status)
-            echo -e "${CYAN}=== وضعیت ترافیک پوششی GRE ===${NC}"
-            echo -e "${YELLOW}ترافیک پوششی فاصله‌های بیکاری را پر می‌کند؛ حجم مصرف زیر بار را پنهان نمی‌کند.${NC}"
+            echo -e "${CYAN}=== Cover traffic status GRE ===${NC}"
+            echo -e "${YELLOW}Cover traffic fills idle gaps; it does not hide traffic volume under load.${NC}"
             python3 - "$PERF_FILE" <<'PYCODE'
 import json,sys
 from pathlib import Path
 p=Path(sys.argv[1]);d=json.loads(p.read_text()) if p.exists() else {}
 v=d.get("chaff_custom",{})
-if v: print("محدوده سفارشی ذخیره‌شده: فاصله %s تا %s میلی‌ثانیه؛ اندازه %s تا %s بایت"%(v.get("min_ms"),v.get("max_ms"),v.get("min_bytes"),v.get("max_bytes")))
+if v: print("Saved custom range: Interval %s until %s millisecond size %s until %s bytes"%(v.get("min_ms"),v.get("max_ms"),v.get("min_bytes"),v.get("max_bytes")))
 PYCODE
             local found=0
             for u in /etc/systemd/system/gre-chaff*.service; do
@@ -1808,17 +1808,17 @@ PYCODE
                 prof=$(echo "$exec_line" | awk '{print $3}')
                 prof=${prof:-low}
                 if [[ "$active" == "active" ]]; then
-                    echo -e "  ${bname}: ${GREEN}فعال${NC} ($(fa_state "${enabled}")) | سرور مقابل: ${CYAN}${peer_ip}${NC} | حالت: ${YELLOW}$(fa_state "${prof}")${NC}"
+                    echo -e "  ${bname}: ${GREEN}Enabled${NC} ($(display_state "${enabled}")) | Peer server: ${CYAN}${peer_ip}${NC} | mode: ${YELLOW}$(display_state "${prof}")${NC}"
                 else
-                    echo -e "  ${bname}: ${RED}${active}${NC} (${enabled}) | سرور مقابل: ${CYAN}${peer_ip}${NC} | حالت: ${YELLOW}${prof}${NC}"
+                    echo -e "  ${bname}: ${RED}${active}${NC} (${enabled}) | Peer server: ${CYAN}${peer_ip}${NC} | mode: ${YELLOW}${prof}${NC}"
                 fi
             done
             if [[ "$found" -eq 0 ]]; then
-                echo -e "${YELLOW}[*] سرویس ترافیک پوششی نصب نشده است.${NC}"
+                echo -e "${YELLOW}[*] Cover traffic service is not installed.${NC}"
             fi
             ;;
         *)
-            echo -e "${RED}[!] روش استفاده: NavaTunnel chaff on|off|status${NC}"
+            echo -e "${RED}[!] Usage: NavaTunnel chaff on|off|status${NC}"
             return 1
             ;;
     esac
@@ -1832,22 +1832,22 @@ import json,re,sys,os,tempfile
 from pathlib import Path
 path=Path(sys.argv[1]);kind=sys.argv[2];args=sys.argv[4:]
 try:
-    if len(args)%2:raise ValueError('برای هر گزینه یک مقدار وارد کنید.')
+    if len(args)%2:raise ValueError('Enter a value for each option.')
     keys=dict(zip(args[::2],args[1::2]))
-    if len(keys)!=len(args)//2:raise ValueError('گزینه تکراری است.')
+    if len(keys)!=len(args)//2:raise ValueError('It is a duplicate option.')
     data=json.loads(path.read_text())
     if kind=='dpi':
-        if set(keys)!={'--rate','--burst'}:raise ValueError('گزینه‌های لازم: --rate و --burst')
+        if set(keys)!={'--rate','--burst'}:raise ValueError('Required options: --rate and --burst')
         rate=keys['--rate'];burst=keys['--burst']
-        if not re.fullmatch(r'[1-9][0-9]{0,5}/(sec|minute|hour)',rate) or not re.fullmatch(r'[1-9][0-9]{0,6}',burst):raise ValueError('نمونه معتبر: --rate 60/sec --burst 120')
+        if not re.fullmatch(r'[1-9][0-9]{0,5}/(sec|minute|hour)',rate) or not re.fullmatch(r'[1-9][0-9]{0,6}',burst):raise ValueError('Valid sample: --rate 60/sec --burst 120')
         data.update(dpi_rate=rate,dpi_burst=int(burst))
     else:
         names=('min_ms','max_ms','min_bytes','max_bytes')
-        if set(keys)!={'--'+n.replace('_','-') for n in names}:raise ValueError('چهار مقدار فاصله و اندازه لازم است.')
+        if set(keys)!={'--'+n.replace('_','-') for n in names}:raise ValueError('Four spacing and size values are required.')
         v={n:int(keys['--'+n.replace('_','-')]) for n in names}
-        if not(100<=v['min_ms']<=v['max_ms']<=3600000 and 8<=v['min_bytes']<=v['max_bytes']<=1352):raise ValueError('فاصله: 100 تا 3600000 میلی‌ثانیه؛ اندازه: 8 تا 1352 بایت؛ حداقل نباید بیشتر از حداکثر باشد.')
+        if not(100<=v['min_ms']<=v['max_ms']<=3600000 and 8<=v['min_bytes']<=v['max_bytes']<=1352):raise ValueError('Interval: 100 until 3600000 millisecond size: 8 until 1352 byte; The minimum should not be greater than the maximum.')
         mtu=Path(sys.argv[3]);mtus=json.loads(mtu.read_text()) if mtu.exists() else {}
-        if mtus and v['max_bytes']>min(map(int,mtus.values()))-28:raise ValueError('اندازه پینگ از MTU یکی از تونل‌ها بیشتر است.')
+        if mtus and v['max_bytes']>min(map(int,mtus.values()))-28:raise ValueError('Ping size from MTU One of the tunnels is more.')
         data['chaff_custom']=v
     fd,tmp=tempfile.mkstemp(dir=path.parent)
     try:
@@ -1857,7 +1857,7 @@ try:
     finally:
         if os.path.exists(tmp):os.unlink(tmp)
 except (ValueError,OSError) as error:
-    print('تنظیمات ثبت نشد: '+str(error),file=sys.stderr);sys.exit(1)
+    print('Settings were not saved: '+str(error),file=sys.stderr);sys.exit(1)
 PYCODE
     [[ $? == 0 ]] || return 1
     if [[ "$kind" == dpi ]]; then
@@ -1865,46 +1865,46 @@ PYCODE
     elif [[ "$(perf_get_chaff)" == custom ]]; then
         CHAFF_PROFILE=custom cli_chaff on || return 1
     fi
-    echo 'تنظیمات ذخیره شد؛ اگر این حالت فعال بود، تنظیمات جدید هم اعمال شدند.'
+    echo 'Settings saved; if this mode was active, the new settings were also applied.'
 }
 
 menu_cover_configure() {
     local kind=$1 rate burst min_ms max_ms min_bytes max_bytes
     ui_clear
     if [[ "$kind" == dpi ]]; then
-        echo 'محدودیت SYN به ازای هر IP و هر پورت است؛ سرعت دانلود را محدود نمی‌کند.'
-        read -r -p 'نرخ (مثلاً 60/sec یا 3600/minute؛ Enter: لغو): ' rate || return 0
+        echo 'Limits TCP SYN packets per source IP and service port; it does not limit download bandwidth.'
+        read -r -p 'Rate (e.g. 60/sec or 3600/minute; Enter: Cancel): ' rate || return 0
         [[ -n "$rate" ]] || return 0
-        read -r -p 'ظرفیت جهش اولیه burst (مثلاً 120): ' burst || return 0
+        read -r -p 'Burst allowance (e.g. 120): ' burst || return 0
         cli_cover_configure dpi --rate "$rate" --burst "$burst"
     else
-        echo 'فاصله بر حسب میلی‌ثانیه و اندازه داده پینگ بر حسب بایت است؛ ترافیک اضافه مصرف می‌کند.'
-        read -r -p 'حداقل فاصله (مثلاً 400؛ Enter: لغو): ' min_ms || return 0
+        echo 'The interval is in milliseconds and the ping data size is in bytes; It consumes extra traffic.'
+        read -r -p 'Minimum interval (ms) (e.g. 400; Enter: Cancel): ' min_ms || return 0
         [[ -n "$min_ms" ]] || return 0
-        read -r -p 'حداکثر فاصله (مثلاً 2800): ' max_ms || return 0
-        read -r -p 'حداقل اندازه (مثلاً 64): ' min_bytes || return 0
-        read -r -p 'حداکثر اندازه (مثلاً 1200): ' max_bytes || return 0
+        read -r -p 'Maximum interval (ms) (e.g. 2800): ' max_ms || return 0
+        read -r -p 'Minimum payload size (bytes) (e.g. 64): ' min_bytes || return 0
+        read -r -p 'Maximum payload size (bytes) (e.g. 1200): ' max_bytes || return 0
         cli_cover_configure chaff --min-ms "$min_ms" --max-ms "$max_ms" --min-bytes "$min_bytes" --max-bytes "$max_bytes" || return 1
-        echo 'برای فعال‌شدن این محدوده، حالت سفارشی را از منوی ترافیک پوششی انتخاب کنید.'
+        echo 'Select custom mode in the cover traffic menu to activate these ranges.'
     fi
 }
 
 menu_chaff() {
     ui_clear
-    echo -e "\n${YELLOW}=== ترافیک پوششی GRE با پینگ تصادفی ===${NC}"
-    echo -e "مصرف اضافه به فاصله و اندازه پینگ بستگی دارد؛ هنگام ترافیک کاربران هم ادامه دارد."
+    echo -e "\n${YELLOW}=== GRE cover traffic with random pings ===${NC}"
+    echo -e "Additional traffic depends on ping interval and size; pings continue during user traffic."
     cli_chaff status
     echo ""
-    echo "  1) فعال‌سازی ترافیک پوششی"
-    echo "  2) غیرفعال‌سازی ترافیک پوششی"
-    echo "  3) نمایش وضعیت"
-    echo '  4) انتخاب حالت کم low'
-    echo '  5) انتخاب حالت متوسط mid'
-    echo '  6) تنظیم فاصله و اندازه سفارشی'
-    echo '  7) فعال‌سازی حالت سفارشی'
-    echo "  0) بازگشت"
+    echo "  1) Enable cover traffic"
+    echo "  2) Disable cover traffic"
+    echo "  3) Show status"
+    echo '  4) Select low profile'
+    echo '  5) Select mid profile'
+    echo '  6) Configure custom ping interval and size'
+    echo '  7) Activate custom mode'
+    echo "  0) Back"
     echo ""
-    read -r -p "انتخاب عمل [0-7]: " CH_OPT || return 0
+    read -r -p "Select action [0-7]: " CH_OPT || return 0
     case "$CH_OPT" in
         1) cli_chaff on ;;
         2) cli_chaff off ;;
@@ -1914,12 +1914,12 @@ menu_chaff() {
         6) menu_cover_configure chaff ;;
         7) cli_perf chaff custom ;;
         0) return 0 ;;
-        *) echo -e "${RED}[!] گزینه نامعتبر است.${NC}"; return 1 ;;
+        *) echo -e "${RED}[!] Invalid option.${NC}"; return 1 ;;
     esac
     pause_prompt
 }
 
-# ---- محافظ DPI: protect reverse proxy ports against scanner floods ----
+# ---- Shield DPI: protect reverse proxy ports against scanner floods ----
 DPI_PORTS_FILE="/etc/gre-panel/dpi-ports.conf"
 
 dpi_collect_reverse_ports() {
@@ -1965,7 +1965,7 @@ except Exception:
         done < <(ss -ltnp 2>/dev/null | grep 'sshd' | awk '{print $4}' | awk -F: '{print $NF}')
     fi
 
-    # Candidate پورت‌های سرویس:
+    # Candidate Service ports:
     # A. peers.json
     if [[ -f "$PEERS_FILE" ]] && command -v python3 >/dev/null 2>&1; then
         while read -r p; do
@@ -2028,28 +2028,28 @@ except Exception:
 
 dpi_shield_on() {
     command -v iptables >/dev/null 2>&1 || {
-        echo -e "${RED}[!] برای محافظ DPI به iptables نیاز است؛ نصب نشده است.${NC}"
+        echo -e "${RED}[!] For the protector DPI to iptables is needed; Not installed.${NC}"
         return 1
     }
 
     local rate burst
     rate=$(perf_get_dpi_rate); burst=$(perf_get_dpi_burst)
-    [[ "$rate" =~ ^[1-9][0-9]{0,5}/(sec|minute|hour)$ && "$burst" =~ ^[1-9][0-9]{0,6}$ ]] || { echo 'نرخ یا burst ذخیره‌شده نامعتبر است.' >&2; return 1; }
+    [[ "$rate" =~ ^[1-9][0-9]{0,5}/(sec|minute|hour)$ && "$burst" =~ ^[1-9][0-9]{0,6}$ ]] || { echo 'rate or burst Invalid save.' >&2; return 1; }
     local REVERSE_PORTS=()
     while read -r p; do
         [[ -n "$p" ]] && REVERSE_PORTS+=("$p")
     done < <(dpi_collect_reverse_ports)
 
     if [[ ${#REVERSE_PORTS[@]} -eq 0 ]]; then
-        echo -e "${YELLOW}[!] پورت سرویس در تنظیمات تونل‌ها یا سرویس FRP پیدا نشد.${NC}"
-        echo -e "${YELLOW}[*] ابتدا تونل و پورت‌های سرویس را تنظیم کنید.${NC}"
+        echo -e "${YELLOW}[!] Service port in tunnels or service settings FRP not found.${NC}"
+        echo -e "${YELLOW}[*] First, set the tunnel and service ports.${NC}"
         return 1
     fi
 
     mkdir -p "$(dirname "$DPI_PORTS_FILE")"
     printf "%s\n" "${REVERSE_PORTS[@]}" > "$DPI_PORTS_FILE"
 
-    echo -e "${CYAN}[*] در حال نصب محافظ DPI برای پورت‌ها: ${REVERSE_PORTS[*]}...${NC}"
+    echo -e "${CYAN}[*] Installing the protector DPI for ports: ${REVERSE_PORTS[*]}...${NC}"
 
     # Idempotent chain setup: flush existing DPI shield chain or create it
     if iptables -L NAVATUNNEL-DPI -n >/dev/null 2>&1; then
@@ -2074,7 +2074,7 @@ dpi_shield_on() {
         if ! iptables -A NAVATUNNEL-DPI -p tcp --dport "$port" --syn -m hashlimit --hashlimit-name "hsh_${port}" --hashlimit-mode srcip --hashlimit-above "$rate" --hashlimit-burst "$burst" -j DROP 2>/dev/null; then
             dpi_shield_off >/dev/null 2>&1 || true
             perf_set_val dpi_enabled false 1 || true
-            echo 'اعمال hashlimit ناموفق بود؛ محافظ غیرفعال ماند.' >&2
+            echo 'apply hashlimit was unsuccessful; The protector remained inactive.' >&2
             return 1
         fi
     done
@@ -2100,7 +2100,7 @@ dpi_shield_on() {
     [[ -x "$NAVATUNNEL_BIN" ]] || { cp "$0" "$NAVATUNNEL_BIN" 2>/dev/null && chmod +x "$NAVATUNNEL_BIN"; } || true
     cat << 'EOF' > /etc/systemd/system/navatunnel-dpi.service
 [Unit]
-Description=محافظ DPI تونل NavaTunnel
+Description=Shield DPI Tunnel NavaTunnel
 DefaultDependencies=no
 After=systemd-modules-load.service local-fs.target
 Before=network-pre.target
@@ -2118,8 +2118,8 @@ EOF
     systemctl daemon-reload
     systemctl enable navatunnel-dpi.service >/dev/null 2>&1 || true
 
-    echo -e "${GREEN}[✔️] محافظ DPI فعال شد: ${#REVERSE_PORTS[@]} پورت محافظت‌شده (${REVERSE_PORTS[*]}).${NC}"
-    echo -e "${GREEN}[✔️] اجرای خودکار محافظ با سرویس navatunnel-dpi.service ذخیره شد.${NC}"
+    echo -e "${GREEN}[✔️] Shield DPI activated: ${#REVERSE_PORTS[@]} Protected port (${REVERSE_PORTS[*]}).${NC}"
+    echo -e "${GREEN}[✔️] Automatic execution of the protector with the service navatunnel-dpi.service saved.${NC}"
 }
 
 dpi_shield_off() {
@@ -2154,24 +2154,24 @@ dpi_shield_off() {
     iptables -F NAVATUNNEL-DPI 2>/dev/null || true
     iptables -X NAVATUNNEL-DPI 2>/dev/null || true
 
-    echo -e "${GREEN}[✔️] محافظ DPI غیرفعال و قواعد آن حذف شد.${NC}"
+    echo -e "${GREEN}[✔️] Shield DPI Disabled and its rules were deleted.${NC}"
 }
 
 dpi_shield_status() {
-    echo "نرخ ذخیره‌شده: $(perf_get_dpi_rate) | burst: $(perf_get_dpi_burst)"
+    echo "Stored rate: $(perf_get_dpi_rate) | burst: $(perf_get_dpi_burst)"
     if iptables -L NAVATUNNEL-DPI -n >/dev/null 2>&1; then
-        echo -e "${GREEN}[✔️] محافظ DPI فعال است.${NC}"
-        echo -e "${CYAN}شمارنده بسته‌ها و قواعد محافظ DPI:${NC}"
+        echo -e "${GREEN}[✔️] Shield DPI is active.${NC}"
+        echo -e "${CYAN}Packet counters and protection rules DPI:${NC}"
         iptables -L NAVATUNNEL-DPI -v -n
         if systemctl is-enabled navatunnel-dpi.service >/dev/null 2>&1; then
-            echo -e "${GREEN}[✔️] اجرای خودکار سرویس محافظ فعال است.${NC}"
+            echo -e "${GREEN}[✔️] Automatic execution of the protection service is enabled.${NC}"
         else
-            echo -e "${YELLOW}[!] اجرای خودکار سرویس محافظ غیرفعال است.${NC}"
+            echo -e "${YELLOW}[!] Automatic start of protection service is disabled.${NC}"
         fi
     else
-        echo -e "${YELLOW}[!] محافظ DPI غیرفعال است؛ زنجیره قواعد موجود نیست.${NC}"
+        echo -e "${YELLOW}[!] Shield DPI is inactive; The chain of rules does not exist.${NC}"
         if systemctl is-enabled navatunnel-dpi.service >/dev/null 2>&1; then
-            echo -e "${YELLOW}[*] سرویس محافظ برای شروع خودکار فعال است.${NC}"
+            echo -e "${YELLOW}[*] The protection service is enabled to start automatically.${NC}"
         fi
     fi
 }
@@ -2192,7 +2192,7 @@ cli_dpi_shield() {
             dpi_shield_status
             ;;
         *)
-            echo -e "${RED}[!] روش استفاده: NavaTunnel dpi-shield on|off|status${NC}"
+            echo -e "${RED}[!] Usage: NavaTunnel dpi-shield on|off|status${NC}"
             return 1
             ;;
     esac
@@ -2200,25 +2200,25 @@ cli_dpi_shield() {
 
 menu_dpi_shield() {
     ui_clear
-    echo -e "\n${YELLOW}=== محافظ DPI و محدودیت اتصال به پورت‌های سرویس ===${NC}"
-    echo -e "با محدودکردن نرخ اتصال، پورت‌های سرویس را در برابر اسکن پرتعداد محافظت می‌کند."
+    echo -e "\n${YELLOW}=== Shield DPI and limit connection to service ports ===${NC}"
+    echo -e "It protects service ports from excessive scanning by limiting the connection rate."
     echo ""
     cli_dpi_shield status
     echo ""
-    echo "  1) فعال‌سازی محافظ DPI"
-    echo "  2) غیرفعال‌سازی محافظ DPI"
-    echo "  3) نمایش وضعیت"
-    echo '  4) تنظیم نرخ و burst سفارشی'
-    echo "  0) بازگشت"
+    echo "  1) Activate the protector DPI"
+    echo "  2) Disable protection DPI"
+    echo "  3) Show status"
+    echo '  4) Configure rate and burst Custom'
+    echo "  0) Back"
     echo ""
-    read -r -p "انتخاب عمل [0-4]: " DPI_OPT || return 0
+    read -r -p "Select action [0-4]: " DPI_OPT || return 0
     case "$DPI_OPT" in
         1) cli_dpi_shield on ;;
         2) cli_dpi_shield off ;;
         3) cli_dpi_shield status ;;
         4) menu_cover_configure dpi ;;
         0) return 0 ;;
-        *) echo -e "${RED}[!] گزینه نامعتبر است.${NC}"; return 1 ;;
+        *) echo -e "${RED}[!] Invalid option.${NC}"; return 1 ;;
     esac
     pause_prompt
 }
@@ -2240,12 +2240,12 @@ perf_apply() {
     done
 
     if [[ "$IS_FOREIGN" -eq 0 && "$IS_IRAN" -eq 0 ]]; then
-        echo -e "${YELLOW}[!] فایل تنظیمات FRP پیدا نشد در ${CONFIG_DIR}.${NC}"
-        echo -e "${YELLOW}[*] پیش از اعمال تنظیمات کارایی، یک تونل بسازید.${NC}"
+        echo -e "${YELLOW}[!] Settings file FRP Not found in ${CONFIG_DIR}.${NC}"
+        echo -e "${YELLOW}[*] Create a tunnel before applying performance settings.${NC}"
         return 1
     fi
 
-    echo -e "${CYAN}[*] در حال اعمال تنظیمات کارایی (enc=${EFF_ENC} comp=${EFF_COMP} tls=${EFF_TLS})...${NC}"
+    echo -e "${CYAN}[*] Applying performance settings (enc=${EFF_ENC} comp=${EFF_COMP} tls=${EFF_TLS})...${NC}"
 
     if [[ "$IS_FOREIGN" -eq 1 ]]; then
         local TOML_FILE="${CONFIG_DIR}/frpc.toml"
@@ -2317,7 +2317,7 @@ with open(path, "w") as f:
         fi
         systemctl daemon-reload >/dev/null 2>&1 || true
         systemctl restart frpc
-        echo -e "${GREEN}[✔️] تنظیمات کلاینت FRP به‌روز و سرویس آن ری‌استارت شد.${NC}"
+        echo -e "${GREEN}[✔️] Client settings FRP Updated and restarted its service.${NC}"
     fi
 
     if [[ "$IS_IRAN" -eq 1 ]]; then
@@ -2384,7 +2384,7 @@ with open(path, "w") as f:
             local sname=$(basename "$s")
             systemctl restart "$sname" >/dev/null 2>&1 || true
         done
-        echo -e "${GREEN}[✔️] تنظیمات سرورهای FRP به‌روز و سرویس‌ها ری‌استارت شدند.${NC}"
+        echo -e "${GREEN}[✔️] Server settings FRP Update and services restarted.${NC}"
     fi
 
     # Also apply chaff profile
@@ -2403,7 +2403,7 @@ with open(path, "w") as f:
         dpi_shield_off >/dev/null 2>&1 || true
     fi
 
-    echo -e "${GREEN}[✔️] تنظیمات کارایی با موفقیت اعمال شد.${NC}"
+    echo -e "${GREEN}[✔️] Performance settings applied successfully.${NC}"
     return 0
 }
 
@@ -2421,21 +2421,21 @@ cli_perf() {
             local DPI_B=$(perf_get_dpi_burst)
 
             echo -e "\n${CYAN}==========================================================${NC}"
-            echo -e "${CYAN}            وضعیت کارایی و ترافیک پوششی              ${NC}"
+            echo -e "${CYAN}            Performance status and coverage traffic              ${NC}"
             echo -e "${CYAN}==========================================================${NC}"
-            echo -e "تنظیمات ذخیره‌شده در /etc/gre-panel/perf.json:"
-            echo -e "  رمزگذاری پروکسی:  $([[ "$ENC" == "1" ]] && echo -e "${GREEN}on${NC}" || echo -e "${YELLOW}off${NC}")"
-            echo -e "  فشرده‌سازی پروکسی: $([[ "$COMP" == "1" ]] && echo -e "${GREEN}on${NC}" || echo -e "${YELLOW}off${NC}")"
-            echo -e "  TLS اجباری:        $([[ "$TLS" == "1" ]] && echo -e "${GREEN}on${NC}" || echo -e "${YELLOW}off${NC}")"
-            echo -e "  حالت ترافیک پوششی:     ${CYAN}$(fa_state "${CHAFF}")${NC}"
-            echo -e "  محافظ DPI:        $([[ "$DPI_EN" == "1" ]] && echo -e "${GREEN}enabled${NC} (${DPI_R}, burst ${DPI_B})" || echo -e "${YELLOW}disabled${NC}")"
+            echo -e "Settings saved in /etc/gre-panel/perf.json:"
+            echo -e "  Proxy encryption:  $([[ "$ENC" == "1" ]] && echo -e "${GREEN}on${NC}" || echo -e "${YELLOW}off${NC}")"
+            echo -e "  Proxy compression: $([[ "$COMP" == "1" ]] && echo -e "${GREEN}on${NC}" || echo -e "${YELLOW}off${NC}")"
+            echo -e "  TLS Required:        $([[ "$TLS" == "1" ]] && echo -e "${GREEN}on${NC}" || echo -e "${YELLOW}off${NC}")"
+            echo -e "  Cover traffic mode:     ${CYAN}$(display_state "${CHAFF}")${NC}"
+            echo -e "  Shield DPI:        $([[ "$DPI_EN" == "1" ]] && echo -e "${GREEN}enabled${NC} (${DPI_R}, burst ${DPI_B})" || echo -e "${YELLOW}disabled${NC}")"
 
             if [[ -n "${PERF_ENC:-}" || -n "${PERF_COMP:-}" || -n "${PERF_TLS:-}" ]]; then
-                echo -e "${YELLOW}[!] تنظیمات محیطی جایگزین فعال‌اند: PERF_ENC=${PERF_ENC:-unset} PERF_COMP=${PERF_COMP:-unset} PERF_TLS=${PERF_TLS:-unset}${NC}"
+                echo -e "${YELLOW}[!] Alternative environment settings are enabled: PERF_ENC=${PERF_ENC:-unset} PERF_COMP=${PERF_COMP:-unset} PERF_TLS=${PERF_TLS:-unset}${NC}"
             fi
 
             echo ""
-            echo -e "تنظیمات فعلی تونل:"
+            echo -e "Current tunnel settings:"
             local MATCH=1
 
             if [[ -f "${CONFIG_DIR}/frpc.toml" ]]; then
@@ -2444,10 +2444,10 @@ cli_perf() {
                 grep -E -q '^[[:space:]]*transport\.useCompression[[:space:]]*=[[:space:]]*true' "${CONFIG_DIR}/frpc.toml" && LIVE_COMP=1
                 grep -E -q '^[[:space:]]*transport\.tls\.disableCustomTLSFirstByte[[:space:]]*=[[:space:]]*true' "${CONFIG_DIR}/frpc.toml" && LIVE_TLS=1
 
-                echo -e "  نقش: کلاینت خارج (frpc)"
-                echo -e "  رمزگذاری پروکسی در تنظیم فعلی:  $([[ "$LIVE_ENC" == "1" ]] && echo "فعال" || echo "غیرفعال") $([[ "$LIVE_ENC" == "$ENC" ]] && echo -e "${GREEN}[هماهنگ]${NC}" || { echo -e "${RED}[ناهماهنگ]${NC}"; MATCH=0; })"
-                echo -e "  فشرده‌سازی پروکسی در تنظیم فعلی: $([[ "$LIVE_COMP" == "1" ]] && echo "فعال" || echo "غیرفعال") $([[ "$LIVE_COMP" == "$COMP" ]] && echo -e "${GREEN}[هماهنگ]${NC}" || { echo -e "${RED}[ناهماهنگ]${NC}"; MATCH=0; })"
-                echo -e "  TLS اجباری در تنظیم فعلی:        $([[ "$LIVE_TLS" == "1" ]] && echo "فعال" || echo "غیرفعال") $([[ "$LIVE_TLS" == "$TLS" ]] && echo -e "${GREEN}[هماهنگ]${NC}" || { echo -e "${RED}[ناهماهنگ]${NC}"; MATCH=0; })"
+                echo -e "  Role: Foreign client (frpc)"
+                echo -e "  Proxy encryption in the current setting:  $([[ "$LIVE_ENC" == "1" ]] && echo "Enabled" || echo "Disabled") $([[ "$LIVE_ENC" == "$ENC" ]] && echo -e "${GREEN}[In sync]${NC}" || { echo -e "${RED}[Out of sync]${NC}"; MATCH=0; })"
+                echo -e "  Proxy compression in current setting: $([[ "$LIVE_COMP" == "1" ]] && echo "Enabled" || echo "Disabled") $([[ "$LIVE_COMP" == "$COMP" ]] && echo -e "${GREEN}[In sync]${NC}" || { echo -e "${RED}[Out of sync]${NC}"; MATCH=0; })"
+                echo -e "  TLS Mandatory in current setting:        $([[ "$LIVE_TLS" == "1" ]] && echo "Enabled" || echo "Disabled") $([[ "$LIVE_TLS" == "$TLS" ]] && echo -e "${GREEN}[In sync]${NC}" || { echo -e "${RED}[Out of sync]${NC}"; MATCH=0; })"
             elif [[ -f "${CONFIG_DIR}/frps.toml" ]] || ls "${CONFIG_DIR}"/frps*.toml >/dev/null 2>&1; then
                 local LIVE_TLS=0
                 local F
@@ -2455,56 +2455,56 @@ cli_perf() {
                     [[ -f "$F" ]] || continue
                     grep -E -q '^[[:space:]]*transport\.tls\.force[[:space:]]*=[[:space:]]*true' "$F" && LIVE_TLS=1
                 done
-                echo -e "  نقش: سرور ایران (frps)"
-                echo -e "  TLS اجباری در تنظیم فعلی:        $([[ "$LIVE_TLS" == "1" ]] && echo "فعال" || echo "غیرفعال") $([[ "$LIVE_TLS" == "$TLS" ]] && echo -e "${GREEN}[هماهنگ]${NC}" || { echo -e "${RED}[ناهماهنگ]${NC}"; MATCH=0; })"
-                echo -e "  (رمزگذاری و فشرده‌سازی پروکسی روی کلاینت خارج تنظیم می‌شود)"
+                echo -e "  Role: Iran server (frps)"
+                echo -e "  TLS Mandatory in current setting:        $([[ "$LIVE_TLS" == "1" ]] && echo "Enabled" || echo "Disabled") $([[ "$LIVE_TLS" == "$TLS" ]] && echo -e "${GREEN}[In sync]${NC}" || { echo -e "${RED}[Out of sync]${NC}"; MATCH=0; })"
+                echo -e "  (Proxy encryption and compression is set on the external client)"
             else
-                echo -e "  تنظیمات تونل فعالی پیدا نشد."
+                echo -e "  No active tunnel settings found."
             fi
 
             # DPI live
             if iptables -L NAVATUNNEL-DPI -n >/dev/null 2>&1; then
-                echo -e "  محافظ DPI:  ${GREEN}فعال${NC}"
+                echo -e "  Shield DPI:  ${GREEN}Enabled${NC}"
             else
-                echo -e "  محافظ DPI:  ${YELLOW}غیرفعال${NC}"
+                echo -e "  Shield DPI:  ${YELLOW}Disabled${NC}"
             fi
 
             # Chaff live
             if systemctl is-active --quiet gre-chaff 2>/dev/null || systemctl list-units --type=service 2>/dev/null | grep -q 'gre-chaff.*running'; then
-                echo -e "  سرویس ترافیک پوششی:          ${GREEN}در حال اجرا${NC}"
+                echo -e "  Cover traffic service:          ${GREEN}running${NC}"
             else
-                echo -e "  سرویس ترافیک پوششی:          ${YELLOW}متوقف${NC}"
+                echo -e "  Cover traffic service:          ${YELLOW}Stopped${NC}"
             fi
 
             echo ""
             if [[ "$MATCH" -eq 1 ]]; then
-                echo -e "${GREEN}[✔️] تنظیمات فعلی با انتخاب ذخیره‌شده هماهنگ است.${NC}"
+                echo -e "${GREEN}[✔️] The current setting matches the saved selection.${NC}"
             else
-                echo -e "${RED}[!] تنظیمات فعلی هماهنگ نیست؛ برای هماهنگی NavaTunnel perf apply را اجرا کنید.${NC}"
+                echo -e "${RED}[!] Current settings are not synchronized; for coordination NavaTunnel perf apply run the.${NC}"
             fi
             ;;
         enc)
             local VAL="${2:-}"
             case "$VAL" in
-                on)  perf_set_val "proxy_encryption" "true" 1; echo -e "${GREEN}[✔️] رمزگذاری پروکسی فعال انتخاب شد؛ برای اعمال و ری‌استارت NavaTunnel perf apply را اجرا کنید.${NC}" ;;
-                off) perf_set_val "proxy_encryption" "false" 1; echo -e "${GREEN}[✔️] رمزگذاری پروکسی غیرفعال انتخاب شد؛ برای اعمال و ری‌استارت NavaTunnel perf apply را اجرا کنید.${NC}" ;;
-                *)   echo -e "${RED}[!] روش استفاده: NavaTunnel perf enc on|off${NC}"; return 1 ;;
+                on)  perf_set_val "proxy_encryption" "true" 1; echo -e "${GREEN}[✔️] Enable proxy encryption is selected; To apply and restart NavaTunnel perf apply run the.${NC}" ;;
+                off) perf_set_val "proxy_encryption" "false" 1; echo -e "${GREEN}[✔️] Disabled proxy encryption is selected; To apply and restart NavaTunnel perf apply run the.${NC}" ;;
+                *)   echo -e "${RED}[!] Usage: NavaTunnel perf enc on|off${NC}"; return 1 ;;
             esac
             ;;
         comp)
             local VAL="${2:-}"
             case "$VAL" in
-                on)  perf_set_val "proxy_compression" "true" 1; echo -e "${GREEN}[✔️] فشرده‌سازی پروکسی فعال انتخاب شد؛ برای اعمال و ری‌استارت NavaTunnel perf apply را اجرا کنید.${NC}" ;;
-                off) perf_set_val "proxy_compression" "false" 1; echo -e "${GREEN}[✔️] فشرده‌سازی پروکسی غیرفعال انتخاب شد؛ برای اعمال و ری‌استارت NavaTunnel perf apply را اجرا کنید.${NC}" ;;
-                *)   echo -e "${RED}[!] روش استفاده: NavaTunnel perf comp on|off${NC}"; return 1 ;;
+                on)  perf_set_val "proxy_compression" "true" 1; echo -e "${GREEN}[✔️] Enable proxy compression is selected; To apply and restart NavaTunnel perf apply run the.${NC}" ;;
+                off) perf_set_val "proxy_compression" "false" 1; echo -e "${GREEN}[✔️] Disabled proxy compression is selected; To apply and restart NavaTunnel perf apply run the.${NC}" ;;
+                *)   echo -e "${RED}[!] Usage: NavaTunnel perf comp on|off${NC}"; return 1 ;;
             esac
             ;;
         tls)
             local VAL="${2:-}"
             case "$VAL" in
-                on)  perf_set_val "force_tls" "true" 1; echo -e "${GREEN}[✔️] TLS اجباری فعال انتخاب شد؛ برای اعمال و ری‌استارت NavaTunnel perf apply را اجرا کنید.${NC}" ;;
-                off) perf_set_val "force_tls" "false" 1; echo -e "${GREEN}[✔️] TLS اجباری غیرفعال انتخاب شد؛ برای اعمال و ری‌استارت NavaTunnel perf apply را اجرا کنید.${NC}" ;;
-                *)   echo -e "${RED}[!] روش استفاده: NavaTunnel perf tls on|off${NC}"; return 1 ;;
+                on)  perf_set_val "force_tls" "true" 1; echo -e "${GREEN}[✔️] TLS Mandatory Active was selected; To apply and restart NavaTunnel perf apply run the.${NC}" ;;
+                off) perf_set_val "force_tls" "false" 1; echo -e "${GREEN}[✔️] TLS forced disabled is selected; To apply and restart NavaTunnel perf apply run the.${NC}" ;;
+                *)   echo -e "${RED}[!] Usage: NavaTunnel perf tls on|off${NC}"; return 1 ;;
             esac
             ;;
         chaff)
@@ -2513,15 +2513,15 @@ cli_perf() {
                 off)
                     perf_set_val "chaff_profile" "off" 0
                     cli_chaff off
-                    echo -e "${GREEN}[✔️] ترافیک پوششی غیرفعال و سرویس‌ها متوقف شدند.${NC}"
+                    echo -e "${GREEN}[✔️] Cover traffic is disabled and services are stopped.${NC}"
                     ;;
                 low|mid|custom)
                     perf_set_val "chaff_profile" "$VAL" 0
                     CHAFF_PROFILE="$VAL" cli_chaff on || return 1
-                    echo -e "${GREEN}[✔️] حالت ترافیک پوششی روی $VAL قرار گرفت و سرویس‌ها اجرا شدند.${NC}"
+                    echo -e "${GREEN}[✔️] Cover traffic mode set to $VAL and applied to services.${NC}"
                     ;;
                 *)
-                    echo -e "${RED}[!] روش استفاده: NavaTunnel perf chaff off|low|mid|custom${NC}"
+                    echo -e "${RED}[!] Usage: NavaTunnel perf chaff off|low|mid|custom${NC}"
                     return 1
                     ;;
             esac
@@ -2532,15 +2532,15 @@ cli_perf() {
                 on)
                     perf_set_val "dpi_enabled" "true" 1
                     dpi_shield_on || return 1
-                    echo -e "${GREEN}[✔️] محافظ DPI فعال شد.${NC}"
+                    echo -e "${GREEN}[✔️] Shield DPI activated.${NC}"
                     ;;
                 off)
                     perf_set_val "dpi_enabled" "false" 1
                     dpi_shield_off
-                    echo -e "${GREEN}[✔️] محافظ DPI غیرفعال شد.${NC}"
+                    echo -e "${GREEN}[✔️] DPI shield disabled.${NC}"
                     ;;
                 *)
-                    echo -e "${RED}[!] روش استفاده: NavaTunnel perf dpi on|off${NC}"
+                    echo -e "${RED}[!] Usage: NavaTunnel perf dpi on|off${NC}"
                     return 1
                     ;;
             esac
@@ -2558,14 +2558,14 @@ cli_perf() {
             dpi_shield_off >/dev/null 2>&1 || true
             cli_chaff off >/dev/null 2>&1 || true
             perf_apply
-            echo -e "${GREEN}[✔️] تنظیمات کارایی به پیش‌فرض برگشت: رمزگذاری و فشرده‌سازی خاموش، TLS استاندارد، ترافیک پوششی و محافظ DPI خاموش.${NC}"
+            echo -e "${GREEN}[✔️] Performance settings return to default: encryption and compression off, TLS Standard, covering and protective traffic DPI off.${NC}"
             ;;
         -h|--help|help)
-            echo "روش استفاده: NavaTunnel perf status|enc on|off|comp on|off|tls on|off|chaff off|low|mid|custom|dpi on|off|apply|reset"
+            echo "Usage: NavaTunnel perf status|enc on|off|comp on|off|tls on|off|chaff off|low|mid|custom|dpi on|off|apply|reset"
             ;;
         *)
-            echo -e "${RED}[!] زیردستور ناشناخته: $SUB${NC}"
-            echo "روش استفاده: NavaTunnel perf status|enc on|off|comp on|off|tls on|off|chaff off|low|mid|custom|dpi on|off|apply|reset"
+            echo -e "${RED}[!] Unknown subcommand: $SUB${NC}"
+            echo "Usage: NavaTunnel perf status|enc on|off|comp on|off|tls on|off|chaff off|low|mid|custom|dpi on|off|apply|reset"
             return 1
             ;;
     esac
@@ -2576,15 +2576,15 @@ menu_perf() {
         ui_clear
         cli_perf status
         echo ""
-        echo "  1) فعال یا غیرفعال‌سازی رمزگذاری پروکسی"
-        echo "  2) فعال یا غیرفعال‌سازی فشرده‌سازی پروکسی"
-        echo "  3) فعال یا غیرفعال‌سازی TLS اجباری"
-        echo "  4) انتخاب حالت ترافیک پوششی"
-        echo "  5) فعال یا غیرفعال‌سازی محافظ DPI"
-        echo "  6) اعمال تنظیمات و ری‌استارت تونل‌ها"
-        echo "  0) بازگشت به منوی اصلی"
+        echo "  1) Enable or disable proxy encryption"
+        echo "  2) Enable or disable proxy compression"
+        echo "  3) Enable or disable TLS Required"
+        echo "  4) Select the coverage traffic mode"
+        echo "  5) Enable or disable protection DPI"
+        echo "  6) Apply settings and restart tunnels"
+        echo "  0) Return to the main menu"
         echo ""
-        read -r -p "انتخاب گزینه [0-6]: " P_OPT || return 0
+        read -r -p "Select option [0-6]: " P_OPT || return 0
         case "$P_OPT" in
             1)
                 local cur=$(perf_get_enc)
@@ -2600,20 +2600,20 @@ menu_perf() {
                 ;;
             4)
                 ui_clear
-                echo "حالت ترافیک پوششی را انتخاب کنید:"
-                echo "  1) غیرفعال"
-                echo "  2) کم (پیش‌فرض)"
-                echo "  3) متوسط"
-                echo "  4) سفارشی ذخیره‌شده"
-                echo "  5) تنظیم فاصله و اندازه سفارشی"
-                read -r -p "انتخاب [1-5]: " C_OPT || return 0
+                echo "Select the overlay traffic mode:"
+                echo "  1) Disabled"
+                echo "  2) Low (Default)"
+                echo "  3) Medium"
+                echo "  4) Custom saved"
+                echo "  5) Configure custom ping interval and size"
+                read -r -p "Select [1-5]: " C_OPT || return 0
                 case "$C_OPT" in
                     1) cli_perf chaff off ;;
                     2) cli_perf chaff low ;;
                     3) cli_perf chaff mid ;;
                     4) cli_perf chaff custom ;;
                     5) menu_cover_configure chaff ;;
-                    *) echo "گزینه نامعتبر است." ;;
+                    *) echo "Invalid option." ;;
                 esac
                 ;;
             5)
@@ -2627,7 +2627,7 @@ menu_perf() {
                 return 0
                 ;;
             *)
-                echo -e "${RED}[!] گزینه نامعتبر است.${NC}"
+                echo -e "${RED}[!] Invalid option.${NC}"
                 ;;
         esac
         pause_prompt
@@ -2646,7 +2646,7 @@ setup_iran_server_noninteractive() {
     local IP_IRAN=$1 IP_FOREIGN=$2 BIND_PORT=$3 TOKEN=$4
     local LOCAL_GRE=${5:-$IRAN_GRE_IP} PEER_GRE=${6:-$FOREIGN_GRE_IP}
 
-    log_msg "tunnel" "INFO" "شروع راه‌اندازی سرور ایران: GRE ${IP_IRAN} <-> ${IP_FOREIGN}, پورت FRP: ${BIND_PORT}"
+    log_msg "tunnel" "INFO" "Starting to set up the Iran server: GRE ${IP_IRAN} <-> ${IP_FOREIGN}, Port FRP: ${BIND_PORT}"
     backup_configs "pre_setup_iran"
     ensure_dependencies_smart || return 1
 
@@ -2657,15 +2657,15 @@ setup_iran_server_noninteractive() {
     # 1. Setup GRE interface
     if ! setup_gre_systemd "$IP_IRAN" "$IP_FOREIGN" "$LOCAL_GRE" "$PEER_GRE"; then
         STATUS_GRE="FAILED"
-        GRE_ERR="راه‌اندازی اینترفیس GRE یا تنظیم IP ناموفق بود"
-        log_msg "tunnel" "ERROR" "راه‌اندازی GRE روی ایران ناموفق بود"
+        GRE_ERR="Launch the interface GRE or setting IP It was unsuccessful"
+        log_msg "tunnel" "ERROR" "launch GRE It was unsuccessful on Iran"
     fi
 
     # 2. Setup FRP Server
     if ! install_frp_binaries; then
         STATUS_FRP="FAILED"
-        FRP_ERR="نصب FRP به دلیل خطای دریافت یا استخراج ناموفق بود"
-        log_msg "tunnel" "ERROR" "نصب فایل‌های اجرایی FRP ناموفق بود"
+        FRP_ERR="Install FRP Failed due to fetch or extraction error"
+        log_msg "tunnel" "ERROR" "FRP binary installation failed"
     fi
     local EFF_TLS=$(perf_get_tls)
     local QUIC_PORT=$((BIND_PORT == 65535 ? BIND_PORT - 1 : BIND_PORT + 1))
@@ -2695,7 +2695,7 @@ EOF
     cat <<EOF > /etc/systemd/system/frps.service
 [Unit]
 ConditionPathExists=!${NAVATUNNEL_STATE_DIR}/stopped/${TUNNEL_NAME}
-Description=سرویس سرور FRP
+Description=FRP server service
 After=network.target network-online.target
 Wants=network-online.target
 
@@ -2732,8 +2732,8 @@ EOF
         STATUS_FRP="FAILED"
         local FRPS_LOG=""
         FRPS_LOG=$(journalctl -u frps -n 5 --no-pager 2>/dev/null | tr '\n' ' ' | head -c 200)
-        FRP_ERR="راه‌اندازی سرویس frps ناموفق بود${FRPS_LOG:+: $FRPS_LOG}"
-        log_msg "tunnel" "ERROR" "راه‌اندازی سرویس frps ناموفق بود"
+        FRP_ERR="Start the service frps It was unsuccessful${FRPS_LOG:+: $FRPS_LOG}"
+        log_msg "tunnel" "ERROR" "Start the service frps It was unsuccessful"
     fi
 
     # Chaff is now opt-in: users can enable it from Performance menu or `NavaTunnel chaff on`.
@@ -2754,39 +2754,39 @@ EOF
 
     # 4. Summary & Verification
     echo -e "\n=============================================================="
-    echo "                   خلاصه راه‌اندازی"
+    echo "                   Startup summary"
     echo "=============================================================="
     if [[ "$STATUS_GRE" == "OK" ]]; then
-        echo -e "[${GREEN}موفق${NC}]     اینترفیس تونل GRE (${TUNNEL_NAME}: ${IP_IRAN} <-> ${IP_FOREIGN}, IP: ${LOCAL_GRE})"
+        echo -e "[${GREEN}OK${NC}]     GRE tunnel interface (${TUNNEL_NAME}: ${IP_IRAN} <-> ${IP_FOREIGN}, IP: ${LOCAL_GRE})"
     else
-        echo -e "[${RED}ناموفق${NC}] اینترفیس تونل GRE (${GRE_ERR})"
+        echo -e "[${RED}Failed${NC}] GRE tunnel interface (${GRE_ERR})"
     fi
 
     if [[ "$STATUS_FRP" == "OK" ]]; then
-        echo -e "[${GREEN}موفق${NC}]     سرویس سرور FRP (سرویس frps روی پورت :${BIND_PORT})"
+        echo -e "[${GREEN}OK${NC}]     FRP server service (service frps On the port :${BIND_PORT})"
     else
-        echo -e "[${RED}ناموفق${NC}] سرویس سرور FRP (${FRP_ERR})"
+        echo -e "[${RED}Failed${NC}] FRP server service (${FRP_ERR})"
     fi
 
     echo "=============================================================="
 
     local BUNDLE_OUT
     BUNDLE_OUT=$(bundle_make "$IP_IRAN" "$BIND_PORT" "$LOCAL_GRE" "$PEER_GRE" "$TOKEN" "$PORTS_CLEANED")
-    echo -e "کد اتصال:         ${CYAN}${BUNDLE_OUT}${NC}"
+    echo -e "Connection code:         ${CYAN}${BUNDLE_OUT}${NC}"
     echo -e "BUNDLE:${BUNDLE_OUT}"
 
     if [[ "$STATUS_GRE" == "OK" && "$STATUS_FRP" == "OK" ]]; then
-        echo -e "وضعیت کلی راه‌اندازی: ${GREEN}موفق${NC}\n"
-        echo -e "ارتباط عمومی GRE:      ${CYAN}${IP_IRAN} <--> ${IP_FOREIGN}${NC}"
-        echo -e "IP داخلی GRE ایران: ${CYAN}${LOCAL_GRE}${NC}"
-        echo -e "پورت کنترل FRP:        ${CYAN}${BIND_PORT}${NC}"
-        echo -e "توکن اتصال:         ${CYAN}${TOKEN}${NC}"
-        log_msg "tunnel" "INFO" "راه‌اندازی سرور ایران موفق بود"
+        echo -e "Overall setup status: ${GREEN}OK${NC}\n"
+        echo -e "Public communication GRE:      ${CYAN}${IP_IRAN} <--> ${IP_FOREIGN}${NC}"
+        echo -e "Iran GRE IP: ${CYAN}${LOCAL_GRE}${NC}"
+        echo -e "FRP control port:        ${CYAN}${BIND_PORT}${NC}"
+        echo -e "Connection token:         ${CYAN}${TOKEN}${NC}"
+        log_msg "tunnel" "INFO" "Iran server setup was successful"
         return 0
     else
-        echo -e "وضعیت کلی راه‌اندازی: ${RED}بخشی ناموفق${NC}"
-        echo -e "${YELLOW}[!] خطاهای بالا را بررسی کنید؛ هنوز آماده‌بودن تونل تأیید نشده است.${NC}\n"
-        log_msg "tunnel" "ERROR" "بخشی از راه‌اندازی ایران ناموفق بود: GRE=${STATUS_GRE}, FRP=${STATUS_FRP}"
+        echo -e "Overall setup status: ${RED}Partial failure${NC}"
+        echo -e "${YELLOW}[!] Check the above errors; The readiness of the tunnel has not yet been confirmed.${NC}\n"
+        log_msg "tunnel" "ERROR" "Part of Irans launch was unsuccessful: GRE=${STATUS_GRE}, FRP=${STATUS_FRP}"
         return 1
     fi
 }
@@ -2815,7 +2815,7 @@ _setup_foreign_full() {
     local FRP_ENCRYPTION=${11:-off}
     local FRP_COMPRESSION=${12:-off}
 
-    log_msg "tunnel" "INFO" "شروع راه‌اندازی سرور خارج: GRE ${IP_FOREIGN} <-> ${IP_IRAN}, serverPort: ${SERVER_PORT}, پورت‌های سرویس: ${PORTS_CLEANED}"
+    log_msg "tunnel" "INFO" "Start foreign server setup: GRE ${IP_FOREIGN} <-> ${IP_IRAN}, serverPort: ${SERVER_PORT}, Service ports: ${PORTS_CLEANED}"
     backup_configs "pre_setup_foreign"
     ensure_dependencies_smart || return 1
 
@@ -2827,18 +2827,18 @@ _setup_foreign_full() {
     carrier_init_kernel 2>/dev/null || true
     if ! setup_gre_systemd "$IP_FOREIGN" "$IP_IRAN" "$LOCAL_GRE" "$PEER_GRE"; then
         STATUS_GRE="FAILED"
-        GRE_ERR="راه‌اندازی یا تنظیم اینترفیس GRE ناموفق بود"
-        log_msg "tunnel" "ERROR" "راه‌اندازی GRE روی خارج ناموفق بود"
+        GRE_ERR="Initialize or configure the interface GRE It was unsuccessful"
+        log_msg "tunnel" "ERROR" "launch GRE On the outside it was unsuccessful"
     fi
     carrier_apply_active "$TUNNEL_NAME" >/dev/null 2>&1 || true
 
-    echo -e "${CYAN}[*] در حال تست پینگ داخلی GRE به ایران (${PEER_GRE})...${NC}"
+    echo -e "${CYAN}[*] Testing internal ping GRE to Iran (${PEER_GRE})...${NC}"
     if ping -c 3 -W 2 "$PEER_GRE" >/dev/null 2>&1; then
-        echo -e "${GREEN}[✔️] تونل GRE برقرار و قابل دسترسی است.${NC}"
+        echo -e "${GREEN}[✔️] GRE tunnel is established and reachable.${NC}"
     else
         STATUS_PING="WARN"
-        PING_ERR="پینگ GRE مقابل ${PEER_GRE} پاسخ نداد؛ راه‌اندازی ایران را بررسی کنید"
-        echo -e "${YELLOW}[!] پینگ ${PEER_GRE} هنوز پاسخ نداده است.${NC}"
+        PING_ERR="Ping GRE Opposite ${PEER_GRE} did not answer; Check out the Iran launch"
+        echo -e "${YELLOW}[!] Ping ${PEER_GRE} has not responded yet.${NC}"
     fi
 
     install_frp_binaries || return 1
@@ -2913,7 +2913,7 @@ EOF
 
     cat <<EOF > /etc/systemd/system/frpc.service
 [Unit]
-Description=سرویس اتصال معکوس کلاینت FRP
+Description=Client reverse connection service FRP
 After=network.target network-online.target
 Wants=network-online.target
 
@@ -2948,8 +2948,8 @@ EOF
 
     if [[ "$_frpc_ok" -ne 1 ]]; then
         STATUS_FRP="FAILED"
-        FRP_ERR="راه‌اندازی سرویس frpc ناموفق بود؛ بررسی کنید: journalctl -u frpc"
-        log_msg "tunnel" "ERROR" "راه‌اندازی سرویس frpc ناموفق بود"
+        FRP_ERR="Start the service frpc was unsuccessful; Check it out: journalctl -u frpc"
+        log_msg "tunnel" "ERROR" "Start the service frpc It was unsuccessful"
     fi
 
     # Chaff is now opt-in: users can enable it from Performance menu or `NavaTunnel chaff on`.
@@ -2962,25 +2962,25 @@ EOF
 
 
     echo -e "\n=============================================================="
-    echo "                   خلاصه راه‌اندازی"
+    echo "                   Startup summary"
     echo "=============================================================="
     if [[ "$STATUS_GRE" == "OK" ]]; then
-        echo -e "[${GREEN}موفق${NC}]     اینترفیس تونل GRE (${TUNNEL_NAME}: ${IP_FOREIGN} <-> ${IP_IRAN}, IP: ${LOCAL_GRE})"
+        echo -e "[${GREEN}OK${NC}]     GRE tunnel interface (${TUNNEL_NAME}: ${IP_FOREIGN} <-> ${IP_IRAN}, IP: ${LOCAL_GRE})"
     else
-        echo -e "[${RED}ناموفق${NC}] اینترفیس تونل GRE (${GRE_ERR})"
+        echo -e "[${RED}Failed${NC}] GRE tunnel interface (${GRE_ERR})"
     fi
 
     if [[ "$STATUS_PING" == "OK" ]]; then
-        echo -e "[${GREEN}موفق${NC}]     دسترسی با پینگ GRE (سرور ${PEER_GRE} قابل دسترسی است)"
+        echo -e "[${GREEN}OK${NC}]     Access by ping GRE (server ${PEER_GRE} accessible)"
     else
-        echo -e "[${YELLOW}هشدار${NC}]   دسترسی با پینگ GRE (${PING_ERR})"
+        echo -e "[${YELLOW}Warning${NC}]   Access by ping GRE (${PING_ERR})"
     fi
 
     if [[ "$STATUS_FRP" == "OK" ]]; then
-        echo -e "[${GREEN}موفق${NC}]     سرویس کلاینت FRP (سرویس frpc فعال و در حال اتصال به ${PEER_GRE}:${SERVER_PORT})"
-        echo -e "         پورت‌های سرویس: ${PORTS_CLEANED} (TCP و UDP، با TLS)"
+        echo -e "[${GREEN}OK${NC}]     FRP client service (service frpc Active and connecting to ${PEER_GRE}:${SERVER_PORT})"
+        echo -e "         Service ports: ${PORTS_CLEANED} (TCP and UDP, with TLS)"
     else
-        echo -e "[${RED}ناموفق${NC}] سرویس کلاینت FRP (${FRP_ERR})"
+        echo -e "[${RED}Failed${NC}] FRP client service (${FRP_ERR})"
     fi
 
     echo "=============================================================="
@@ -2996,16 +2996,16 @@ EOF
 
     if [[ "$STATUS_GRE" == "OK" && "$STATUS_FRP" == "OK" && "$_ping_blocking" -eq 0 ]]; then
         if [[ "$STATUS_PING" != "OK" ]]; then
-            echo -e "وضعیت کلی راه‌اندازی: ${GREEN}موفق${NC} ${YELLOW}(پینگ ICMP مسدود است؛ اتصال TCP تونل برقرار است)${NC}\n"
+            echo -e "Overall setup status: ${GREEN}OK${NC} ${YELLOW}(Ping ICMP is blocked; Connection TCP The tunnel is established)${NC}\n"
         else
-            echo -e "وضعیت کلی راه‌اندازی: ${GREEN}موفق${NC}\n"
+            echo -e "Overall setup status: ${GREEN}OK${NC}\n"
         fi
-        log_msg "tunnel" "INFO" "راه‌اندازی سرور خارج موفق بود (PING=${STATUS_PING})"
+        log_msg "tunnel" "INFO" "External server setup was successful (PING=${STATUS_PING})"
         return 0
     else
-        echo -e "وضعیت کلی راه‌اندازی: ${RED}بخشی ناموفق${NC}"
-        echo -e "${YELLOW}[!] خطاهای بالا را بررسی کنید؛ هنوز آماده‌بودن تونل تأیید نشده است.${NC}\n"
-        log_msg "tunnel" "ERROR" "بخشی از راه‌اندازی خارج ناموفق بود: GRE=${STATUS_GRE}, FRP=${STATUS_FRP}, PING=${STATUS_PING}"
+        echo -e "Overall setup status: ${RED}Partial failure${NC}"
+        echo -e "${YELLOW}[!] Check the above errors; The readiness of the tunnel has not yet been confirmed.${NC}\n"
+        log_msg "tunnel" "ERROR" "Part of the external setup failed: GRE=${STATUS_GRE}, FRP=${STATUS_FRP}, PING=${STATUS_PING}"
         return 1
     fi
 }
@@ -3024,7 +3024,7 @@ peer_init() {
 }
 
 peer_require_py() {
-    command -v python3 >/dev/null 2>&1 || { echo -e "${RED}[!] برای مدیریت تونل‌ها به python3 نیاز است.${NC}"; return 1; }
+    command -v python3 >/dev/null 2>&1 || { echo -e "${RED}[!] python3 is required to manage tunnels.${NC}"; return 1; }
 }
 
 # print registry as-is (JSON)
@@ -3060,11 +3060,11 @@ peer_get() {
 peer_connection_settings() {
     local record
     record=$(peer_get "$1") || return 1
-    [[ -n "$record" ]] || { echo 'تونل پیدا نشد.' >&2; return 1; }
+    [[ -n "$record" ]] || { echo 'Tunnel not found.' >&2; return 1; }
     python3 -c 'import json,sys
 p=json.load(sys.stdin)
 protocol=p.get("frp_transport") or ("kcp" if p.get("loss_recovery",False) else "tcp")
-if protocol not in ("tcp","kcp","quic","websocket","wss"): sys.exit("پروتکل FRP ذخیره‌شده نامعتبر است")
+if protocol not in ("tcp","kcp","quic","websocket","wss"): sys.exit("FRP protocol Invalid save")
 print(protocol+"\t"+("on" if protocol=="kcp" else "off"))' <<< "$record"
 }
 
@@ -3072,7 +3072,7 @@ peer_token() {
     peer_init; peer_require_py || return 1
     local ID=$1 rec
     rec=$(peer_get "$ID")
-    [[ -n "$rec" ]] || { echo -e "${RED}[!] تونلی با شناسه $ID وجود ندارد.${NC}"; return 1; }
+    [[ -n "$rec" ]] || { echo -e "${RED}[!] A tunnel with an ID $ID does not exist.${NC}"; return 1; }
     echo "$rec" | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])'
     # second line: full foreign-setup bundle (token + addresses + ports).
     # First-line token output stays unchanged for scripts.
@@ -3087,16 +3087,16 @@ peer_token() {
     settings=$(peer_connection_settings "$ID") || return 1
     IFS=$'\t' read -r PROTOCOL LOSS <<< "$settings"
     if ! is_valid_ip "$LIP" || ! is_valid_port "$FP" || ! is_valid_ip "$LGRE" || ! is_valid_ip "$PGRE"; then
-        echo 'اطلاعات اتصال این تونل ناقص یا نامعتبر است؛ IP ایران، پورت کنترل و IPهای داخلی را بررسی کنید.' >&2
+        echo 'Connection information is incomplete or invalid; check the Iran IP, control port and internal IPs.' >&2
         return 1
     fi
     [[ "$B_TOK" =~ ^[A-Za-z0-9-]{1,128}$ && -n "$PTS" ]] || {
-        echo 'توکن یا پورت‌های سرویس این تونل ناقص یا نامعتبر است.' >&2
+        echo 'The service token or ports of this tunnel are incomplete or invalid.' >&2
         return 1
     }
     local generated
     generated=$(bundle_make "$LIP" "$FP" "$LGRE" "$PGRE" "$B_TOK" "$PTS" "" "$LOSS" "$PROTOCOL") || return 1
-    bundle_parse "$generated" || { echo 'ساخت کد اتصال معتبر ناموفق بود.' >&2; return 1; }
+    bundle_parse "$generated" || { echo 'Failed to generate valid connection code.' >&2; return 1; }
     printf 'BUNDLE:%s\n' "$generated"
 }
 
@@ -3131,7 +3131,7 @@ EOF
     cat <<EOF > /etc/systemd/system/${SVC}.service
 [Unit]
 ConditionPathExists=!${NAVATUNNEL_STATE_DIR}/stopped/${POWER_IF}
-Description=سرویس سرور FRP${SUF:+ (peer${SUF#-})}
+Description=FRP server service${SUF:+ (peer${SUF#-})}
 After=network.target network-online.target
 Wants=network-online.target
 
@@ -3170,7 +3170,7 @@ cli_add_peer() {
         if [[ "$1" == --* && $# -lt 2 ]]; then
             case "$1" in
                 --force|--show-token|--encrypt|--compress|--dry-run|--off|--help) ;;
-                *) echo "مقدار این گزینه وارد نشده است: $1" >&2; return 1 ;;
+                *) echo "The value of this option is not entered: $1" >&2; return 1 ;;
             esac
         fi
         case "$1" in
@@ -3186,18 +3186,18 @@ cli_add_peer() {
             --bundle) BUNDLE="$2"; shift 2 ;;
             --chaff) CHAFF_PROFILE="$2"; shift 2 ;;
             --force) FORCE=1; shift ;;
-            -h|--help) echo 'روش استفاده: NavaTunnel.sh add-peer --local-pub IP --remote-pub IP [--frp-port N] --token T --local-gre IP --peer-gre IP --ports "443, 2083" [--name LABEL] [--bundle hsh1_...] [--chaff low|mid|off] [--force]'; return 0 ;;
-            *) echo -e "${RED}[!] گزینه ناشناخته: $1${NC}"; return 1 ;;
+            -h|--help) echo 'Usage: NavaTunnel.sh add-peer --local-pub IP --remote-pub IP [--frp-port N] --token T --local-gre IP --peer-gre IP --ports "443, 2083" [--name LABEL] [--bundle hsh1_...] [--chaff low|mid|off] [--force]'; return 0 ;;
+            *) echo -e "${RED}[!] Unknown option: $1${NC}"; return 1 ;;
         esac
     done
-    case "$LOSS_RECOVERY" in on|off) ;; *) echo "مقدار --loss-recovery باید on یا off باشد." >&2; return 1;; esac
+    case "$LOSS_RECOVERY" in on|off) ;; *) echo "amount --loss-recovery must on or off be." >&2; return 1;; esac
     CHAFF_PROFILE="${CHAFF_PROFILE:-$(perf_get_chaff)}"
     case "$CHAFF_PROFILE" in
         low|mid|off) ;;
-        *) echo -e "${YELLOW}[!] حالت ترافیک پوششی ${CHAFF_PROFILE} ناشناخته است؛ غیرفعال انتخاب شد.${NC}"; CHAFF_PROFILE="off" ;;
+        *) echo -e "${YELLOW}[!] Cover traffic mode ${CHAFF_PROFILE} is unknown; Disabled is selected.${NC}"; CHAFF_PROFILE="off" ;;
     esac
     if [[ -n "$BUNDLE" ]]; then
-        bundle_parse "$BUNDLE" || { echo -e "${RED}[!] کد --bundle نامعتبر است؛ قالب مورد انتظار ( hsh1_<IRAN_PUB>_<PORT>_<IRAN_GRE>_<FOREIGN_GRE>_<TOKEN>[_<PORTS>]).${NC}"; return 1; }
+        bundle_parse "$BUNDLE" || { echo -e "${RED}[!] Code --bundle is invalid; Expected format ( hsh1_<IRAN_PUB>_<PORT>_<IRAN_GRE>_<FOREIGN_GRE>_<TOKEN>[_<PORTS>]).${NC}"; return 1; }
         [[ "$LOSS_EXPLICIT" == 1 ]] || LOSS_RECOVERY=$B_LOSS_RECOVERY
         # add-peer runs on Iran: bundle Iran pub/GRE are OURS, foreign GRE is THEIRS
         [[ -z "$LOCAL_PUB" ]] && LOCAL_PUB=$B_IRAN_PUB
@@ -3209,23 +3209,23 @@ cli_add_peer() {
     fi
     FRP_PORT=${FRP_PORT:-$(gen_random_port)}
     validate_setup_common "$LOCAL_PUB" "$REMOTE_PUB" "$FRP_PORT" "$LOCAL_GRE" || return 1
-    is_valid_ip "$PEER_GRE" || { echo -e "${RED}[!] IP داخلی GRE سرور مقابل نامعتبر است: '$PEER_GRE'${NC}"; return 1; }
-    [[ "$LOCAL_GRE" != "$PEER_GRE" ]] || { echo -e "${RED}[!] IP داخلی GRE دو سمت باید متفاوت باشد.${NC}"; return 1; }
+    is_valid_ip "$PEER_GRE" || { echo -e "${RED}[!] Invalid peer GRE IP: '$PEER_GRE'${NC}"; return 1; }
+    [[ "$LOCAL_GRE" != "$PEER_GRE" ]] || { echo -e "${RED}[!] IP Internal GRE The two sides must be different.${NC}"; return 1; }
     if grep -q "\"remote_pub\": *\"${REMOTE_PUB}\"" "$PEERS_FILE" 2>/dev/null; then
-        echo -e "${RED}[!] IP خارج ${REMOTE_PUB} در تونل دیگری استفاده شده است؛ برای همان سرور تونل تکراری نسازید.${NC}"; return 1
+        echo -e "${RED}[!] IP Foreign ${REMOTE_PUB} used in another tunnel; Do not create duplicate tunnels for the same server.${NC}"; return 1
     fi
-    [[ -n "$TOKEN" ]] || { echo -e "${RED}[!] گزینه --token ضروری است؛ برای هر تونل توکن جدا بسازید.${NC}"; return 1; }
+    [[ -n "$TOKEN" ]] || { echo -e "${RED}[!] --token is required; use a separate token for each tunnel.${NC}"; return 1; }
     local CLEANED="" p
     for p in $(echo "$PORTS" | tr ',' ' '); do
-        is_valid_port "$p" || { echo "پورت نامعتبر: $p" >&2; return 1; }
+        is_valid_port "$p" || { echo "Invalid port: $p" >&2; return 1; }
             CLEANED="$CLEANED $((10#$p))"
     done
     CLEANED=$(echo "$CLEANED" | xargs)
-    [[ -n "$CLEANED" ]] || { echo -e "${RED}[!] گزینه --ports باید حداقل یک پورت معتبر داشته باشد.${NC}"; return 1; }
+    [[ -n "$CLEANED" ]] || { echo -e "${RED}[!] --ports must contain at least one valid port.${NC}"; return 1; }
     peer_init; peer_require_py || return 1
     local ID
     ID=$(peer_next_id) || return 1
-    [[ "$ID" =~ ^[1-9][0-9]*$ ]] || { echo "اختصاص شناسه تونل ناموفق بود." >&2; return 1; }
+    [[ "$ID" =~ ^[1-9][0-9]*$ ]] || { echo "Failed to assign tunnel ID." >&2; return 1; }
     # port conflict: a remotePort can be served by only one frpc
     local USED entry CONFLICT=""
     USED=$(peer_ports_used)
@@ -3235,14 +3235,14 @@ cli_add_peer() {
         done
     done
     if [[ -n "$CONFLICT" ]]; then
-        echo -e "${RED}[!] تداخل پورت؛ در تونل دیگری استفاده شده است:${CONFLICT}${NC}"
-        echo -e "${YELLOW}    برای این تونل پورت دیگری انتخاب کنید؛ مثلاً 8443 به‌جای 443.${NC}"
+        echo -e "${RED}[!] port interference; used in another tunnel:${CONFLICT}${NC}"
+        echo -e "${YELLOW}    Choose another port for this tunnel; e.g. 8443 instead of 443.${NC}"
         return 1
     fi
     peer_control_port_check "$FRP_PORT" 0 "$CLEANED" || return 1
     # GRE inner IPs must be unique across peers
     if grep -q "\"local_gre\": *\"${LOCAL_GRE}\"" "$PEERS_FILE" || grep -q "\"peer_gre\": *\"${LOCAL_GRE}\"" "$PEERS_FILE"; then
-        echo -e "${RED}[!] IP داخلی GRE ${LOCAL_GRE} در تونل دیگری استفاده شده است.${NC}"; return 1
+        echo -e "${RED}[!] IP Internal GRE ${LOCAL_GRE} used in another tunnel.${NC}"; return 1
     fi
     [[ -z "$NAME" ]] && NAME="peer-${ID}"
     install_frp_binaries || return 1
@@ -3263,7 +3263,7 @@ cli_add_peer() {
     fi
     sleep 1
     if ! systemctl is-active --quiet "$FRPS_SVC"; then
-        echo -e "${RED}[!] راه‌اندازی ${FRPS_SVC} ناموفق بود؛ تنظیمات تولیدشده را بررسی کنید.${NC}"
+        echo -e "${RED}[!] launch ${FRPS_SVC} was unsuccessful; Check the generated settings.${NC}"
         return 1
     fi
     # registry record (ports as JSON array)
@@ -3280,10 +3280,10 @@ d.setdefault("peers", []).append({"id": int(iid), "name": name, "local_pub": lip
   "legacy": leg == "true", "chaff_profile": prof, "loss_recovery": loss == "on"})
 json.dump(d, open(f, "w"), indent=2)
 PYEOF
-    echo -e "${GREEN}[✔️] تونل ${NAME} با شناسه ${ID} ساخته شد: GRE ${LOCAL_PUB} <-> ${REMOTE_PUB} (${LOCAL_GRE} peer ${PEER_GRE} on ${GRE_IF}), ${FRPS_SVC} :${FRP_PORT}${NC}"
-    echo -e "${YELLOW}توکن تونل ${NAME}: ${TOKEN} (روی خارج با پورت‌های ${CLEANED} وارد کنید)${NC}"
+    echo -e "${GREEN}[✔️] Tunnel ${NAME} with ID ${ID} was made: GRE ${LOCAL_PUB} <-> ${REMOTE_PUB} (${LOCAL_GRE} peer ${PEER_GRE} on ${GRE_IF}), ${FRPS_SVC} :${FRP_PORT}${NC}"
+    echo -e "${YELLOW}Tunnel token ${NAME}: ${TOKEN} (On the outside with ports ${CLEANED} enter)${NC}"
     echo -e "BUNDLE:$(bundle_make "$LOCAL_PUB" "$FRP_PORT" "$LOCAL_GRE" "$PEER_GRE" "$TOKEN" "$CLEANED" "" "$LOSS_RECOVERY")"
-    echo -e "${CYAN}سمت خارج؛ مقصد سرویس frpc: ${LOCAL_GRE}:${FRP_PORT}${NC}"
+    echo -e "${CYAN}the outside; Service destination frpc: ${LOCAL_GRE}:${FRP_PORT}${NC}"
 }
 
 # remove one peer ($1=id). Legacy peer 1 also drops the old single tunnel.
@@ -3293,25 +3293,25 @@ cli_remove_peer() {
         if [[ "$1" == --* && $# -lt 2 ]]; then
             case "$1" in
                 --force|--show-token|--encrypt|--compress|--dry-run|--off|--help) ;;
-                *) echo "مقدار این گزینه وارد نشده است: $1" >&2; return 1 ;;
+                *) echo "The value of this option is not entered: $1" >&2; return 1 ;;
             esac
         fi
         case "$1" in --id) ID="$2"; shift 2 ;; --force) FORCE=1; shift ;;
-            -h|--help) echo 'روش استفاده: NavaTunnel.sh remove-peer --id N [--force]'; return 0 ;;
-            *) echo -e "${RED}[!] گزینه ناشناخته: $1${NC}"; return 1 ;; esac
+            -h|--help) echo 'Usage: NavaTunnel.sh remove-peer --id N [--force]'; return 0 ;;
+            *) echo -e "${RED}[!] Unknown option: $1${NC}"; return 1 ;; esac
     done
-    [[ "$ID" =~ ^[0-9]+$ ]] || { echo -e "${RED}[!] شناسه تونل با --id ضروری است.${NC}"; return 1; }
+    [[ "$ID" =~ ^[0-9]+$ ]] || { echo -e "${RED}[!] A tunnel ID is required with --id.${NC}"; return 1; }
     peer_init; peer_require_py || return 1
     local rec
     rec=$(peer_get "$ID")
-    [[ -n "$rec" ]] || { echo -e "${RED}[!] تونلی با شناسه $ID وجود ندارد.${NC}"; return 1; }
+    [[ -n "$rec" ]] || { echo -e "${RED}[!] A tunnel with an ID $ID does not exist.${NC}"; return 1; }
     local NAME GIF SVC LEG
     NAME=$(echo "$rec" | python3 -c 'import json,sys; print(json.load(sys.stdin)["name"])')
     GIF=$(echo "$rec" | python3 -c 'import json,sys; print(json.load(sys.stdin)["gre_if"])')
     SVC=$(echo "$rec" | python3 -c 'import json,sys; print(json.load(sys.stdin)["frps_svc"])')
     LEG=$(echo "$rec" | python3 -c 'import json,sys; print("1" if json.load(sys.stdin).get("legacy") else "0")')
     if [[ "$FORCE" -ne 1 ]]; then
-        read -p "تونل ${NAME} با شناسه ${ID} همراه GRE و سرویس آن حذف شود؟ [y/N]: " CONFIRM
+        read -p "Tunnel ${NAME} with ID ${ID} companion GRE And delete its service? [y/N]: " CONFIRM
         [[ "$CONFIRM" =~ ^[Yy]$ ]] || { echo -e "${YELLOW}[*] Aborted.${NC}"; return 0; }
     fi
     local TRAFFIC_IDS tid
@@ -3341,7 +3341,7 @@ PYREMOVE
 'import json,os; f=os.environ["PEERS_F"]; d=json.load(open(f)); d["peers"]=[p for p in d.get("peers",[]) if p["id"]!=int(os.environ["PEER_ID"])]; json.dump(d,open(f,"w"),indent=2)' \
         || return 1
     [[ ! "$GIF" =~ ^gre-(tunnel|t[0-9]+)$ ]] || rm -f "${NAVATUNNEL_STATE_DIR}/stopped/${GIF}"
-    echo -e "${GREEN}[✔️] تونل ${NAME} با شناسه ${ID} حذف شد.${NC}"
+    echo -e "${GREEN}[✔️] Tunnel ${NAME} with ID ${ID} deleted.${NC}"
 }
 
 cli_edit_peer() {
@@ -3351,7 +3351,7 @@ cli_edit_peer() {
         if [[ "$1" == --* && $# -lt 2 ]]; then
             case "$1" in
                 --force|--show-token|--encrypt|--compress|--dry-run|--off|--help) ;;
-                *) echo "مقدار این گزینه وارد نشده است: $1" >&2; return 1 ;;
+                *) echo "The value of this option is not entered: $1" >&2; return 1 ;;
             esac
         fi
         case "$1" in
@@ -3360,26 +3360,26 @@ cli_edit_peer() {
             --remote-pub) REMOTE_PUB="$2"; shift 2 ;;
             --carrier) CARRIER="$2"; shift 2 ;;
             --ports) PORTS="$2"; shift 2 ;;
-            --proxy-protocol) echo "این تنظیم باید روی کلاینت FRP سرور خارج انجام شود." >&2; return 1 ;;
-            --frp-transport) echo "این تنظیم باید روی کلاینت FRP سرور خارج انجام شود." >&2; return 1 ;;
-            --encrypt) echo "این تنظیم باید روی کلاینت FRP سرور خارج انجام شود." >&2; return 1 ;;
-            --compress) echo "این تنظیم باید روی کلاینت FRP سرور خارج انجام شود." >&2; return 1 ;;
-            --frp-encryption) echo "این تنظیم باید روی کلاینت FRP سرور خارج انجام شود." >&2; return 1 ;;
-            --frp-compression) echo "این تنظیم باید روی کلاینت FRP سرور خارج انجام شود." >&2; return 1 ;;
-            -h|--help) echo 'روش استفاده: NavaTunnel.sh edit-peer --id N [--name LABEL] [--remote-pub IP] [--carrier direct|fou:P] [--ports "443, 2083"]'; return 0 ;;
-            *) echo -e "${RED}[!] گزینه ناشناخته: $1${NC}"; return 1 ;;
+            --proxy-protocol) echo "Apply this setting to the FRP client on the foreign server." >&2; return 1 ;;
+            --frp-transport) echo "Apply this setting to the FRP client on the foreign server." >&2; return 1 ;;
+            --encrypt) echo "Apply this setting to the FRP client on the foreign server." >&2; return 1 ;;
+            --compress) echo "Apply this setting to the FRP client on the foreign server." >&2; return 1 ;;
+            --frp-encryption) echo "Apply this setting to the FRP client on the foreign server." >&2; return 1 ;;
+            --frp-compression) echo "Apply this setting to the FRP client on the foreign server." >&2; return 1 ;;
+            -h|--help) echo 'Usage: NavaTunnel.sh edit-peer --id N [--name LABEL] [--remote-pub IP] [--carrier direct|fou:P] [--ports "443, 2083"]'; return 0 ;;
+            *) echo -e "${RED}[!] Unknown option: $1${NC}"; return 1 ;;
         esac
     done
-    [[ "$ID" =~ ^[0-9]+$ ]] || { echo -e "${RED}[!] شناسه تونل با --id ضروری است.${NC}"; return 1; }
+    [[ "$ID" =~ ^[0-9]+$ ]] || { echo -e "${RED}[!] A tunnel ID is required with --id.${NC}"; return 1; }
     if [[ -z "$NAME" && -z "$REMOTE_PUB" && -z "$CARRIER" && -z "$PORTS" && -z "$PROXY_PROTOCOL" && -z "$FRP_TRANSPORT" && -z "$FRP_ENCRYPTION" && -z "$FRP_COMPRESSION" ]]; then
-        echo -e "${RED}[!] موردی برای ویرایش وارد نشده است؛ حداقل یک گزینه تعیین کنید.${NC}"
+        echo -e "${RED}[!] There is no item to edit; Specify at least one option.${NC}"
         return 1
     fi
 
     peer_init; peer_require_py || return 1
     local rec
     rec=$(peer_get "$ID")
-    [[ -n "$rec" ]] || { echo -e "${RED}[!] تونلی با شناسه $ID وجود ندارد.${NC}"; return 1; }
+    [[ -n "$rec" ]] || { echo -e "${RED}[!] A tunnel with an ID $ID does not exist.${NC}"; return 1; }
 
     local CUR_NAME CUR_REMOTE CUR_CARRIER CUR_GIF CUR_SVC
     CUR_NAME=$(echo "$rec" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("name",""))')
@@ -3390,7 +3390,7 @@ cli_edit_peer() {
 
     # Validate remote public IP if provided
     if [[ -n "$REMOTE_PUB" ]]; then
-        is_valid_ip "$REMOTE_PUB" || { echo -e "${RED}[!] IP عمومی سرور مقابل نامعتبر است: ${REMOTE_PUB}${NC}"; return 1; }
+        is_valid_ip "$REMOTE_PUB" || { echo -e "${RED}[!] Invalid peer public IP: ${REMOTE_PUB}${NC}"; return 1; }
         PEERS_F="$PEERS_FILE" PEER_ID="$ID" NEW_IP="$REMOTE_PUB" python3 <<'PYEOF'
 import json, os, sys
 f = os.environ["PEERS_F"]
@@ -3399,7 +3399,7 @@ new_ip = os.environ["NEW_IP"]
 d = json.load(open(f))
 for p in d.get("peers", []):
     if p.get("id") != pid and p.get("remote_pub") == new_ip:
-        print(f"[!] تداخل IP: آدرس {new_ip} در تونل {p.get('name')} استفاده شده است", file=sys.stderr)
+        print(f"[!] interference IP: address {new_ip} in the tunnel {p.get('name')} has been used", file=sys.stderr)
         sys.exit(1)
 PYEOF
         if [[ $? -ne 0 ]]; then
@@ -3410,7 +3410,7 @@ PYEOF
     # Validate carrier if provided
     if [[ -n "$CARRIER" ]]; then
         if [[ "$CARRIER" != "direct" && "$CARRIER" != fou:* ]]; then
-            echo -e "${RED}[!] روش انتقال نامعتبر: ${CARRIER} (باید direct یا fou:PORT باشد)${NC}"
+            echo -e "${RED}[!] Invalid transfer method: ${CARRIER} (must direct or fou:PORT be)${NC}"
             return 1
         fi
     fi
@@ -3420,11 +3420,11 @@ PYEOF
     if [[ -n "$PORTS" ]]; then
         local p
         for p in $(echo "$PORTS" | tr ',' ' '); do
-            is_valid_port "$p" || { echo "پورت نامعتبر: $p" >&2; return 1; }
+            is_valid_port "$p" || { echo "Invalid port: $p" >&2; return 1; }
             CLEANED="$CLEANED $((10#$p))"
         done
         CLEANED=$(echo "$CLEANED" | xargs)
-        [[ -n "$CLEANED" ]] || { echo -e "${RED}[!] گزینه --ports باید حداقل یک پورت بین 1 و 65535 داشته باشد.${NC}"; return 1; }
+        [[ -n "$CLEANED" ]] || { echo -e "${RED}[!] Option --ports Must have at least one port between 1 and 65535 have.${NC}"; return 1; }
 
         local USED entry CONFLICT=""
         USED=$(PEERS_F="$PEERS_FILE" PEER_ID="$ID" python3 -c 'import json,os
@@ -3439,14 +3439,14 @@ print(" ".join(str(port)+":"+str(peer["id"]) for peer in peers if peer["id"]!=in
             done
         done
         if [[ -n "$CONFLICT" ]]; then
-            echo -e "${RED}[!] تداخل پورت؛ در تونل دیگری استفاده شده است:${CONFLICT}${NC}"
+            echo -e "${RED}[!] port interference; used in another tunnel:${CONFLICT}${NC}"
             return 1
         fi
     fi
 
     # 1. Apply Remote IP update if changed
     if [[ -n "$REMOTE_PUB" && "$REMOTE_PUB" != "$CUR_REMOTE" ]]; then
-        echo -e "${CYAN}[*] در حال تغییر IP مقابل GRE: ${CUR_REMOTE} -> ${REMOTE_PUB}...${NC}"
+        echo -e "${CYAN}[*] changing IP Opposite GRE: ${CUR_REMOTE} -> ${REMOTE_PUB}...${NC}"
         if ip link show "$CUR_GIF" >/dev/null 2>&1; then
             ip tunnel change "$CUR_GIF" remote "$REMOTE_PUB" >/dev/null 2>&1 || {
                 ip link set dev "$CUR_GIF" down >/dev/null 2>&1 || true
@@ -3461,19 +3461,19 @@ print(" ".join(str(port)+":"+str(peer["id"]) for peer in peers if peer["id"]!=in
             systemctl restart "${CUR_GIF}.service" >/dev/null 2>&1 || true
         fi
         if ! ping -c 1 -W 2 "$REMOTE_PUB" >/dev/null 2>&1; then
-            echo -e "${YELLOW}[WARN] IP جدید ${REMOTE_PUB} پاسخ پینگ نداد؛ ممکن است خاموش باشد یا ICMP را بسته باشد.${NC}"
+            echo -e "${YELLOW}[WARN] IP new ${REMOTE_PUB} No ping response; It may be off or ICMP close.${NC}"
         fi
     fi
 
     # 2. Apply Carrier update if changed
     if [[ -n "$CARRIER" && "$CARRIER" != "$CUR_CARRIER" ]]; then
-        echo -e "${CYAN}[*] در حال اعمال روش انتقال ${CARRIER} روی ${CUR_GIF}...${NC}"
+        echo -e "${CYAN}[*] Applying transfer method ${CARRIER} on ${CUR_GIF}...${NC}"
         carrier_apply "$CARRIER" "$CUR_GIF" || return 1
     fi
 
     # 3. Apply Ports update if changed
     if [[ -n "$CLEANED" ]]; then
-        echo -e "${CYAN}[*] در حال به‌روزرسانی پورت‌های سرویس ${CUR_SVC}...${NC}"
+        echo -e "${CYAN}[*] Updating service ports ${CUR_SVC}...${NC}"
         local TOML_FILE="/etc/frp/frps-${ID}.toml"
         [[ ! -f "$TOML_FILE" && "$ID" -eq 1 ]] && TOML_FILE="/etc/frp/frps.toml"
         if [[ -f "$TOML_FILE" ]]; then
@@ -3549,7 +3549,7 @@ json.dump(d, open(f, "w"), indent=2)
 PYEOF
 
     local FINAL_NAME="${NAME:-$CUR_NAME}"
-    echo -e "${GREEN}[✔️] تونل ${FINAL_NAME} با شناسه ${ID} به‌روز شد.${NC}"
+    echo -e "${GREEN}[✔️] Tunnel ${FINAL_NAME} with ID ${ID} updated.${NC}"
 }
 
 # edit forwarded ports of one peer ($1=id, --ports "443, 2083")
@@ -3559,14 +3559,14 @@ cli_edit_peer_ports() {
         if [[ "$1" == --* && $# -lt 2 ]]; then
             case "$1" in
                 --force|--show-token|--encrypt|--compress|--dry-run|--off|--help) ;;
-                *) echo "مقدار این گزینه وارد نشده است: $1" >&2; return 1 ;;
+                *) echo "The value of this option is not entered: $1" >&2; return 1 ;;
             esac
         fi
         case "$1" in
             --id) ID="$2"; shift 2 ;;
             --ports) PORTS="$2"; shift 2 ;;
-            -h|--help) echo 'روش استفاده: NavaTunnel.sh edit-peer-ports --id N --ports "443, 2083"'; return 0 ;;
-            *) echo -e "${RED}[!] گزینه ناشناخته: $1${NC}"; return 1 ;;
+            -h|--help) echo 'Usage: NavaTunnel.sh edit-peer-ports --id N --ports "443, 2083"'; return 0 ;;
+            *) echo -e "${RED}[!] Unknown option: $1${NC}"; return 1 ;;
         esac
     done
     cli_edit_peer --id "$ID" --ports "$PORTS"
@@ -3581,9 +3581,9 @@ import json, os, subprocess
 try:
     peers = json.load(open(os.environ["PEERS_F"])).get("peers", [])
 except Exception as e:
-    print(f"[!] خواندن فهرست تونل‌ها ناموفق بود: {e}"); raise SystemExit(1)
+    print(f"[!] Failed to read tunnel list: {e}"); raise SystemExit(1)
 if not peers:
-    print("[*] تونلی ثبت نشده است؛ از گزینه ساخت تونل برای افزودن سرور خارج استفاده کنید.")
+    print("[*] No tunnel has been registered; Use the tunnel creation option to add an foreign server.")
     raise SystemExit(0)
 try:
     tun = subprocess.run(["ip", "tunnel", "show"], capture_output=True, text=True).stdout
@@ -3596,31 +3596,31 @@ for p in sorted(peers, key=lambda x: x["id"]):
                              capture_output=True, text=True).stdout.strip()
     except Exception:
         frp = "?"
-    states=dict(active='فعال',inactive='غیرفعال',failed='ناموفق',activating='در حال راه‌اندازی')
-    print(f"\nتونل #{p['id']}: {p.get('name','')} | خارج: {p.get('remote_pub','?')}")
-    print(f"  GRE: {p.get('gre_if','?')} | "+('موجود' if gre=='up' else 'موجود نیست'))
-    print(f"  IP داخلی: {p.get('local_gre','?')} -> {p.get('peer_gre','?')}")
-    print(f"  سرویس: {p.get('frps_svc','?')} | پورت کنترل: {p.get('frp_port','?')} | "+states.get(frp,frp or 'نامشخص'))
-    print('  پورت‌های سرویس: '+','.join(map(str,p.get('ports',[]))))
+    states=dict(active='Enabled',inactive='Disabled',failed='Failed',activating='Launching')
+    print(f"\nTunnel #{p['id']}: {p.get('name','')} | Foreign: {p.get('remote_pub','?')}")
+    print(f"  GRE: {p.get('gre_if','?')} | "+('existing' if gre=='up' else 'not available'))
+    print(f"  IP Internal: {p.get('local_gre','?')} -> {p.get('peer_gre','?')}")
+    print(f"  service: {p.get('frps_svc','?')} | Control port: {p.get('frp_port','?')} | "+states.get(frp,frp or 'Unknown'))
+    print('  Service ports: '+','.join(map(str,p.get('ports',[]))))
 
 PYEOF
 }
 
 setup_iran_server() {
     echo -e "\n${YELLOW}====================================================${NC}"
-    echo -e "${YELLOW}       مرحله 1: تنظیم سرور ایران با GRE و FRP  ${NC}"
+    echo -e "${YELLOW}       stage 1: Iran server setup with GRE and FRP  ${NC}"
     echo -e "${YELLOW}====================================================${NC}"
 
     MY_PUBLIC_IP=$(ip route get 1.1.1.1 2>/dev/null | awk '/src/ {for (i=1; i<=NF; i++) if ($i=="src") {print $(i+1); exit}}')
     [[ -z "$MY_PUBLIC_IP" ]] && MY_PUBLIC_IP=$(curl -sSL --max-time 5 https://api.ipify.org 2>/dev/null)
-    prompt_ip IP_IRAN "IP عمومی سرور ایران" "$MY_PUBLIC_IP"
-    prompt_ip IP_FOREIGN "IP عمومی سرور خارج" ""
+    prompt_ip IP_IRAN "Iran server public IP" "$MY_PUBLIC_IP"
+    prompt_ip IP_FOREIGN "Foreign server public IP" ""
 
-    prompt_port BIND_PORT "پورت کنترل FRP" "$(gen_random_port)"
-    BIND_PORT=$(ensure_port_available "$BIND_PORT" "پورت کنترل FRP" 0) || return 1
+    prompt_port BIND_PORT "FRP control port" "$(gen_random_port)"
+    BIND_PORT=$(ensure_port_available "$BIND_PORT" "FRP control port" 0) || return 1
 
     AUTO_TOKEN=$(gen_token32)
-    prompt_token TOKEN "توکن محرمانه اتصال" "$AUTO_TOKEN"
+    prompt_token TOKEN "Connection secret token" "$AUTO_TOKEN"
 
     # single source of truth: GRE + frps all happen inside
     setup_iran_server_noninteractive "$IP_IRAN" "$IP_FOREIGN" "$BIND_PORT" "$TOKEN" "$IRAN_GRE_IP" "$FOREIGN_GRE_IP"
@@ -3630,20 +3630,20 @@ setup_iran_server() {
 menu_protocol_prompt() {
     ui_clear >&2
     local current=${1:-tcp} choice
-    echo 'پروتکل FRP روی کلاینت خارج اجرا می‌شود؛ روی ایران انتخاب و در کد اتصال ذخیره می‌شود.' >&2
-    echo '1) TCP (پیش‌فرض)' >&2
-    echo '2) KCP (همراه FEC؛ ترافیک بیشتر)' >&2
+    echo 'FRP protocol runs on the foreign client; select it on Iran and apply the connection code on the foreign server.' >&2
+    echo '1) TCP (Default)' >&2
+    echo '2) KCP (with FEC; additional traffic)' >&2
     echo '3) QUIC' >&2
     echo '4) WebSocket' >&2
-    echo '5) WSS (WebSocket با TLS)' >&2
-    echo '0) لغو' >&2
+    echo '5) WSS (WebSocket with TLS)' >&2
+    echo '0) Cancel' >&2
     while true; do
-        read -r -p "انتخاب پروتکل [Enter: $current]: " choice || return 1
+        read -r -p "Select protocol [Enter: $current]: " choice || return 1
         case "$choice" in
             '') printf '%s\n' "$current"; return 0 ;;
             1) echo tcp; return 0;; 2) echo kcp; return 0;; 3) echo quic; return 0;;
             4) echo websocket; return 0;; 5) echo wss; return 0;; 0) return 1;;
-            *) echo 'شماره‌ای از 0 تا 5 وارد کنید.' >&2 ;;
+            *) echo 'A number from 0 until 5 enter.' >&2 ;;
         esac
     done
 }
@@ -3651,17 +3651,17 @@ menu_protocol_prompt() {
 cli_peer_protocol() {
     local id="" protocol=""
     while [[ $# -gt 0 ]]; do
-        [[ $# -ge 2 ]] || { echo 'روش استفاده: NavaTunnel peer-protocol --id N --protocol tcp|kcp|quic|websocket|wss' >&2; return 1; }
+        [[ $# -ge 2 ]] || { echo 'Usage: NavaTunnel peer-protocol --id N --protocol tcp|kcp|quic|websocket|wss' >&2; return 1; }
         case "$1" in --id) id="$2";; --protocol) protocol="$2";; *) return 1;; esac
         shift 2
     done
     [[ "$id" =~ ^[0-9]+$ ]] || return 1
-    case "$protocol" in tcp|kcp|quic|websocket|wss) ;; *) echo 'پروتکل FRP نامعتبر است.' >&2; return 1;; esac
+    case "$protocol" in tcp|kcp|quic|websocket|wss) ;; *) echo 'Invalid FRP protocol.' >&2; return 1;; esac
     peer_init || return 1
     if [[ "$protocol" == kcp ]]; then
         local record iface
         record=$(peer_get "$id") || return 1
-        [[ -n "$record" ]] || { echo 'تونل پیدا نشد.' >&2; return 1; }
+        [[ -n "$record" ]] || { echo 'Tunnel not found.' >&2; return 1; }
         iface=$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("gre_if",""))' <<< "$record") || return 1
         validate_kcp_mtu "$iface" kcp || return 1
     fi
@@ -3669,7 +3669,7 @@ cli_peer_protocol() {
 import json,sys,os
 from pathlib import Path
 p=Path(sys.argv[1]); data=json.loads(p.read_text()); record=next((t for t in data.get('peers',[]) if t['id']==int(sys.argv[2])),None)
-if record is None: sys.exit('تونل پیدا نشد')
+if record is None: sys.exit('Tunnel not found')
 record['frp_transport']=sys.argv[3]; record['loss_recovery']=sys.argv[3]=='kcp'
 out=p.with_suffix('.protocol.tmp')
 with open(out,'w') as f:
@@ -3677,34 +3677,34 @@ with open(out,'w') as f:
 os.replace(out,p)
 PYCODE
     [[ $? == 0 ]] || return 1
-    echo "پروتکل FRP این تونل ذخیره شد: $protocol"
-    echo 'این انتخاب در ایران ذخیره شد؛ برای اعمال، کد اتصال جدید را روی سرور خارج اجرا کنید.'
+    echo "FRP protocol This tunnel has been saved: $protocol"
+    echo 'This choice was saved in Iran; To apply, run the new connection code on the foreign server.'
 }
 
 menu_loss_prompt() {
     ui_clear >&2
     local answer
-    echo 'جبران افت بسته با KCP/FEC، مصرف ترافیک را افزایش می‌دهد و افت مسیر را حذف نمی‌کند.' >&2
+    echo 'KCP/FEC loss recovery increases traffic usage; it does not remove packet loss on the network path.' >&2
     while true; do
-        read -r -p 'آیا می‌خواهید جبران افت پکت فعال شود؟ [y/N]: ' answer || return 1
-        case "$answer" in y|Y) echo on; return 0;; n|N|'') echo off; return 0;; *) echo 'فقط y یا n وارد کنید.' >&2;; esac
+        read -r -p 'Do you want to enable loss recovery? [y/N]: ' answer || return 1
+        case "$answer" in y|Y) echo on; return 0;; n|N|'') echo off; return 0;; *) echo 'only y or n enter.' >&2;; esac
     done
 }
 
 cli_loss_recovery() {
     local id="" mode=""
     while [[ $# -gt 0 ]]; do
-        [[ $# -ge 2 ]] || { echo 'روش استفاده: NavaTunnel loss-recovery --id N --mode on|off' >&2; return 1; }
-        case "$1" in --id) id="$2";; --mode) mode="$2";; *) echo "گزینه ناشناخته: $1" >&2; return 1;; esac
+        [[ $# -ge 2 ]] || { echo 'Usage: NavaTunnel loss-recovery --id N --mode on|off' >&2; return 1; }
+        case "$1" in --id) id="$2";; --mode) mode="$2";; *) echo "Unknown option: $1" >&2; return 1;; esac
         shift 2
     done
     [[ "$id" =~ ^[0-9]+$ ]] || return 1
-    case "$mode" in on|off) ;; *) echo 'حالت باید on یا off باشد.' >&2; return 1;; esac
+    case "$mode" in on|off) ;; *) echo 'must state on or off be.' >&2; return 1;; esac
     peer_init || return 1
     if [[ "$mode" == on ]]; then
         local record iface
         record=$(peer_get "$id") || return 1
-        [[ -n "$record" ]] || { echo 'تونل پیدا نشد.' >&2; return 1; }
+        [[ -n "$record" ]] || { echo 'Tunnel not found.' >&2; return 1; }
         iface=$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("gre_if",""))' <<< "$record") || return 1
         validate_kcp_mtu "$iface" kcp || return 1
     fi
@@ -3712,7 +3712,7 @@ cli_loss_recovery() {
 import json,sys,os
 from pathlib import Path
 p=Path(sys.argv[1]); data=json.loads(p.read_text()); record=next((t for t in data.get('peers',[]) if t['id']==int(sys.argv[2])),None)
-if record is None: sys.exit('تونل پیدا نشد')
+if record is None: sys.exit('Tunnel not found')
 record['loss_recovery']=sys.argv[3]=='on'
 if record['loss_recovery']: record['frp_transport']='kcp'
 elif record.get('frp_transport')=='kcp': record['frp_transport']='tcp'
@@ -3725,9 +3725,9 @@ PYCODE
     local stored_protocol stored_mode stored
     stored=$(peer_connection_settings "$id") || return 1
     IFS=$'\t' read -r stored_protocol stored_mode <<< "$stored"
-    [[ "$stored_mode" == "$mode" ]] || { echo 'بررسی انتخاب ذخیره‌شده ناموفق بود.' >&2; return 1; }
-    echo "جبران افت بسته: $(fa_state "$stored_mode") | پروتکل: $stored_protocol (در فایل ایران تأیید شد)."
-    echo 'برای اعمال روی اتصال فعال، کد اتصال جدید را روی سرور خارج اجرا کنید؛ گزینه جایگزینی را تأیید کنید.'
+    [[ "$stored_mode" == "$mode" ]] || { echo 'Failed to check saved selection.' >&2; return 1; }
+    echo "Loss recovery: $(display_state "$stored_mode") | Protocol: $stored_protocol (confirmed in the Iran configuration)."
+    echo 'To apply to an active connection, run the new connection code on the foreign server and confirm replacement.'
 }
 
 menu_loss_recovery() {
@@ -3736,26 +3736,26 @@ menu_loss_recovery() {
         ui_clear
         settings=$(peer_connection_settings "$id") || return 1
         IFS=$'\t' read -r protocol mode <<< "$settings"
-        label='غیرفعال'; [[ "$mode" == on ]] && label='فعال'
-        echo "انتخاب ذخیره‌شده روی ایران: $label | پروتکل: $protocol"
-        echo 'وضعیت اعمال‌شده روی خارج از این سرور بررسی نشده؛ تغییر مستقیم خارج خودکار این فهرست را تغییر نمی‌دهد.'
-        echo '1) فعال‌سازی جبران افت بسته (KCP/FEC)'
-        echo '2) غیرفعال‌سازی جبران افت بسته (KCP به TCP برمی‌گردد)'
-        echo '3) نمایش انتخاب ذخیره‌شده'
-        echo '0) بازگشت'
-        read -r -p 'انتخاب [Enter: بازگشت]: ' option || return 0
+        label='Disabled'; [[ "$mode" == on ]] && label='Enabled'
+        echo "Selection saved on Iran: $label | Protocol: $protocol"
+        echo 'The foreign server state is not checked here; changes made there do not automatically update this list.'
+        echo '1) Enable loss recovery (KCP/FEC)'
+        echo '2) Disable loss recovery (switch KCP back to TCP)'
+        echo '3) Show saved selection'
+        echo '0) Back'
+        read -r -p 'Select [Enter: Back]: ' option || return 0
         case "$option" in
             1|2)
                 mode=off; [[ "$option" == 1 ]] && mode=on
                 cli_loss_recovery --id "$id" --mode "$mode" || return 1
                 bundle=$(peer_token "$id" | sed -n 's/^BUNDLE://p')
                 if [[ -n "$bundle" ]]; then
-                    echo 'برای اعمال این انتخاب روی تونل موجود، دستور زیر را روی خارج اجرا کنید (اتصال کوتاه قطع می‌شود):'
+                    echo 'To apply this selection to an existing tunnel, run the following command on the outside (The short circuit is broken):'
                     printf 'NavaTunnel setup-foreign --bundle %q --force\n' "$bundle"
                 fi ;;
             3) ;;
             0|'') return 0 ;;
-            *) echo 'گزینه نامعتبر است.' ;;
+            *) echo 'Invalid option.' ;;
         esac
         pause_prompt
     done
@@ -3809,18 +3809,18 @@ for n in range(16384):
     remote=str(ipaddress.IPv4Address(base+n*4+1)); local=str(ipaddress.IPv4Address(base+n*4+2))
     if local not in used and remote not in used:
         print(local,remote); break
-else: sys.exit('در بازه 10.200.0.0/16 آدرس GRE آزاد پیدا نشد')
+else: sys.exit('in the interval 10.200.0.0/16 address GRE Azad was not found')
 PYCODE
 }
 
 # Check all listeners used by FRPS, including its companion QUIC port.
 peer_control_port_check() {
     local port=$1 exclude=${2:-0} service_ports=${3:-} tcp udp fou
-    is_valid_port "$port" || { echo 'پورت کنترل باید بین 1 و 65535 باشد.' >&2; return 1; }
+    is_valid_port "$port" || { echo 'The control port must be between 1 and 65535 be.' >&2; return 1; }
     peer_init || return 1
     command -v ss >/dev/null || ensure_dependencies_smart || return 1
-    tcp=$(ss -H -ltn) || { echo 'بررسی پورت‌های TCP ناموفق بود.' >&2; return 1; }
-    udp=$(ss -H -lun) || { echo 'بررسی پورت‌های UDP ناموفق بود.' >&2; return 1; }
+    tcp=$(ss -H -ltn) || { echo 'Failed to check TCP listeners.' >&2; return 1; }
+    udp=$(ss -H -lun) || { echo 'Failed to check UDP listeners.' >&2; return 1; }
     fou=$(ip fou show 2>/dev/null) || fou=''
     TCP_LISTEN="$tcp" UDP_LISTEN="$udp" FOU_LISTEN="$fou" python3 - "$PEERS_FILE" "$port" "$exclude" "$service_ports" <<'PYCODE'
 import json,os,re,sys
@@ -3834,11 +3834,11 @@ for peer in peers:
     if peer.get('id')==exclude:
         if control: ignore_tcp.add(control); ignore_udp.update((control,quic(control)))
     elif control and (needed_tcp & {control} or needed_udp & {control,quic(control)}):
-        sys.exit('پورت کنترل یا پورت QUIC همراه آن با تونل '+str(peer.get('name',''))+' تداخل دارد.')
+        sys.exit('Control port or port QUIC along with the tunnel '+str(peer.get('name',''))+' conflicts.')
     if (needed_tcp|needed_udp)&set(map(int,peer.get('ports',[]))):
-        sys.exit('پورت کنترل یا پورت QUIC همراه آن با پورت سرویس تونل '+str(peer.get('name',''))+' تداخل دارد.')
+        sys.exit('Control port or port QUIC along with the tunnel service port '+str(peer.get('name',''))+' conflicts.')
 if (needed_tcp|needed_udp)&{int(p) for p in sys.argv[4].replace(',',' ').split()}:
-    sys.exit('پورت کنترل یا پورت QUIC همراه آن در فهرست پورت‌های سرویس همین تونل است.')
+    sys.exit('The control port or companion QUIC port conflicts with this tunnel service ports.')
 def listeners(text):
     ports=set()
     for line in text.splitlines():
@@ -3848,11 +3848,11 @@ def listeners(text):
             if match: ports.add(int(match[1]))
     return ports
 if needed_tcp & (listeners(os.environ['TCP_LISTEN'])-ignore_tcp):
-    sys.exit('پورت کنترل TCP روی این سرور اشغال است.')
+    sys.exit('Control port TCP This server is busy.')
 if needed_udp & (listeners(os.environ['UDP_LISTEN'])-ignore_udp):
-    sys.exit('پورت کنترل UDP یا پورت QUIC همراه آن روی این سرور اشغال است.')
+    sys.exit('Control port UDP or port QUIC Along with it, this server is busy.')
 if needed_udp & {int(p) for p in re.findall(r'\bport\s+(\d+)',os.environ['FOU_LISTEN'])}:
-    sys.exit('پورت کنترل یا پورت QUIC همراه آن با حامل FOU تداخل دارد.')
+    sys.exit('Control port or port QUIC along with the carrier FOU conflicts.')
 PYCODE
 }
 
@@ -3862,7 +3862,7 @@ peer_control_port_auto() {
         candidate=$(gen_random_port) || return 1
         peer_control_port_check "$candidate" "$exclude" "$ports" 2>/dev/null && { echo "$candidate"; return 0; }
     done
-    echo 'انتخاب پورت کنترل آزاد ناموفق بود؛ وضعیت پورت‌ها را بررسی کنید.' >&2
+    echo 'Free control port selection failed; Check the status of the ports.' >&2
     return 1
 }
 
@@ -3870,9 +3870,9 @@ menu_control_port_prompt() {
     local id=${1:-0} ports=${2:-} value
     while true; do
         if [[ "$id" == 0 ]]; then
-            read -r -p 'پورت کنترل FRP [Enter یا auto: خودکار؛ 0: لغو]: ' value || return 1
+            read -r -p 'FRP control port [Enter or auto: automatic; 0: Cancel]: ' value || return 1
         else
-            read -r -p 'پورت کنترل جدید [auto: خودکار؛ Enter یا 0: لغو]: ' value || return 1
+            read -r -p 'New control port [auto: automatic; Enter or 0: Cancel]: ' value || return 1
             [[ -n "$value" ]] || return 1
         fi
         [[ "$value" != 0 ]] || return 1
@@ -3888,23 +3888,23 @@ menu_control_port_prompt() {
 cli_peer_control_port() {
     local id='' port='' rec svc config tmp failure=0
     while [[ $# -gt 0 ]]; do
-        [[ $# -ge 2 ]] || { echo 'روش استفاده: NavaTunnel peer-control-port --id N --port N|auto' >&2; return 1; }
+        [[ $# -ge 2 ]] || { echo 'Usage: NavaTunnel peer-control-port --id N --port N|auto' >&2; return 1; }
         case "$1" in --id) id=$2;; --port) port=$2;; *) return 1;; esac
         shift 2
     done
     [[ "$id" =~ ^[1-9][0-9]*$ && -n "$port" ]] || return 1
     rec=$(peer_get "$id") || return 1
-    [[ -n "$rec" ]] || { echo 'تونل پیدا نشد.' >&2; return 1; }
+    [[ -n "$rec" ]] || { echo 'Tunnel not found.' >&2; return 1; }
     [[ "$port" != auto ]] || port=$(peer_control_port_auto "$id") || return 1
     peer_control_port_check "$port" "$id" || return 1
     port=$((10#$port))
     local old
     old=$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("frp_port",0))' <<< "$rec") || return 1
-    [[ "$port" != "$old" ]] || { echo 'پورت کنترل همین مقدار است؛ تغییری انجام نشد.'; return 0; }
+    [[ "$port" != "$old" ]] || { echo 'The control port is the same value; No change was made.'; return 0; }
     svc=$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("frps_svc",""))' <<< "$rec") || return 1
-    [[ "$svc" =~ ^frps(-[0-9]+)?$ ]] || { echo 'نام سرویس FRPS نامعتبر است.' >&2; return 1; }
+    [[ "$svc" =~ ^frps(-[0-9]+)?$ ]] || { echo 'Invalid FRPS service name.' >&2; return 1; }
     config="${CONFIG_DIR}/${svc}.toml"
-    [[ -f "$config" ]] || { echo 'فایل تنظیمات FRPS پیدا نشد.' >&2; return 1; }
+    [[ -f "$config" ]] || { echo 'Settings file FRPS not found.' >&2; return 1; }
     tmp=$(mktemp -d) || return 1
     cp -p "$PEERS_FILE" "$tmp/peers.json" && cp -p "$config" "$tmp/frps.toml" || { rm -rf "$tmp"; return 1; }
     # Change only the root listener settings; preserve TLS, token and proxy rules.
@@ -3939,16 +3939,16 @@ PYCODE
     fi
     if (( failure )); then
         cp -p "$tmp/peers.json" "$PEERS_FILE" && cp -p "$tmp/frps.toml" "$config" || {
-            echo "بازیابی فایل‌ها ناموفق بود؛ پشتیبان: $tmp" >&2; return 1;
+            echo "Failed to retrieve files; backup: $tmp" >&2; return 1;
         }
-        systemctl restart "$svc" || { echo "تنظیمات قبلی بازیابی شد ولی سرویس راه‌اندازی نشد؛ پشتیبان: $tmp" >&2; return 1; }
+        systemctl restart "$svc" || { echo "The previous settings were restored, but the service did not start; backup: $tmp" >&2; return 1; }
         rm -rf "$tmp"
-        echo 'تغییر پورت کنترل ناموفق بود؛ تنظیمات قبلی بازیابی شد.' >&2
+        echo 'Changing the control port failed; previous settings were restored.' >&2
         return 1
     fi
     rm -rf "$tmp"
-    echo "پورت کنترل این تونل به $port تغییر کرد."
-    echo 'اتصال خارج تا اعمال کد جدید قطع می‌شود؛ فرمان زیر را روی سرور خارج همین تونل اجرا کنید:'
+    echo "The control port of this tunnel to $port changed."
+    echo 'The foreign connection is interrupted until the new code is applied; run this command on the matching foreign server:'
     local output bundle
     output=$(peer_token "$id") || return 1
     bundle=$(sed -n 's/^BUNDLE://p' <<< "$output")
@@ -3960,23 +3960,23 @@ menu_add_peer() {
     ui_clear
     menu_import_existing || return 1
     local NAME LOCAL_IRAN IP_FOREIGN PPORTS CPORT TOKEN LGRE PGRE pair MYIP LOSS
-    echo 'ساخت تونل ایران — برای لغو، نام را 0 وارد کنید.'
-    read -r -p 'نام دلخواه تونل [Enter: خودکار]: ' NAME || return 0
+    echo 'Iran tunnel construction — To cancel, the name 0 enter.'
+    read -r -p 'Custom tunnel name [Enter: Auto]: ' NAME || return 0
     [[ "$NAME" == 0 ]] && return 0
     MYIP=$(curl -fsS --max-time 5 https://api.ipify.org 2>/dev/null)
     [[ -n "$MYIP" ]] || MYIP=$(ip route get 1.1.1.1 2>/dev/null | awk '/src/ {for(i=1;i<=NF;i++) if($i=="src") {print $(i+1);exit}}')
-    prompt_ip LOCAL_IRAN 'IP عمومی سرور ایران' "$MYIP" || return 1
-    prompt_ip IP_FOREIGN 'IP عمومی سرور خارج' '' || return 1
-    prompt_ports PPORTS 'پورت‌های سرویس (مثلاً 443,8443)' || return 1
+    prompt_ip LOCAL_IRAN 'Iran server public IP' "$MYIP" || return 1
+    prompt_ip IP_FOREIGN 'Foreign server public IP' '' || return 1
+    prompt_ports PPORTS 'Service ports (e.g. 443,8443)' || return 1
     LOSS=$(menu_loss_prompt) || return 0
     pair=$(menu_gre_pair) || return 1
     read -r LGRE PGRE <<< "$pair"
     CPORT=$(menu_control_port_prompt 0 "$PPORTS") || return 0
     TOKEN=$(gen_token32)
-    echo "پورت کنترل: $CPORT | آدرس داخلی: $LGRE / $PGRE (خودکار)"
+    echo "Control port: $CPORT | Internal address: $LGRE / $PGRE (Auto)"
     cli_add_peer --name "$NAME" --local-pub "$LOCAL_IRAN" --remote-pub "$IP_FOREIGN" \
         --frp-port "$CPORT" --token "$TOKEN" --local-gre "$LGRE" --peer-gre "$PGRE" --ports "$PPORTS" --loss-recovery "$LOSS" || return 1
-    echo 'تونل ساخته شد. برای دریافت کد اتصال سرور خارج، از مدیریت تونل‌ها گزینه کد اتصال را انتخاب کنید.'
+    echo 'The tunnel was built. To get the foreign server connection code, select the connection code option from the tunnel management.'
 }
 
 # Selection menus keep IDs internally and present numbered choices.
@@ -3987,7 +3987,7 @@ menu_select_peer() {
     rows=$(python3 - "$PEERS_FILE" <<'PYCODE'
 import json,sys
 for p in sorted(json.load(open(sys.argv[1])).get('peers',[]),key=lambda p:p['id']):
-    print(str(p['id'])+'\t'+str(p.get('name',''))+' | '+str(p.get('remote_pub',''))+' | پورت کنترل: '+str(p.get('frp_port') or 'نامشخص'))
+    print(str(p['id'])+'\t'+str(p.get('name',''))+' | '+str(p.get('remote_pub',''))+' | Control port: '+str(p.get('frp_port') or 'Unknown'))
 PYCODE
 ) || return 1
     local -a ids=()
@@ -3996,10 +3996,10 @@ PYCODE
         [[ -n "$id" ]] || continue
         ids+=("$id"); i=$((i+1)); printf '%s) %s\n' "$i" "$label" >&2
     done <<< "$rows"
-    ((i)) || { echo 'تونلی در فهرست نیست. ابتدا یک تونل بسازید.' >&2; pause_prompt >&2; return 1; }
-    echo '0) بازگشت' >&2
+    ((i)) || { echo 'The tunnel is not listed. First, build a tunnel.' >&2; pause_prompt >&2; return 1; }
+    echo '0) Back' >&2
     while true; do
-        read -r -p 'شماره تونل: ' choice || return 1
+        read -r -p 'Tunnel number: ' choice || return 1
         if [[ "$choice" =~ ^[0-9]{1,6}$ ]]; then
             choice=$((10#$choice))
             ((choice==0)) && return 1
@@ -4008,7 +4008,7 @@ PYCODE
                 return 0
             fi
         fi
-        echo 'شماره تونل نامعتبر است؛ از فهرست انتخاب کنید یا 0 بزنید.' >&2
+        echo 'Invalid tunnel number; choose from the list or enter 0.' >&2
     done
 }
 
@@ -4024,8 +4024,8 @@ menu_edit_peer_ports() {
 
 # Change the shared Iran endpoint without rebuilding FRP or traffic counters.
 cli_iran_ip() {
-    [[ $# -eq 2 && "$1" == --ip ]] || { echo 'روش استفاده: NavaTunnel iran-ip --ip IP' >&2; return 1; }
-    is_valid_ip "$2" || { echo 'IP عمومی ایران نامعتبر است.' >&2; return 1; }
+    [[ $# -eq 2 && "$1" == --ip ]] || { echo 'Usage: NavaTunnel iran-ip --ip IP' >&2; return 1; }
+    is_valid_ip "$2" || { echo 'Iran public IP is invalid.' >&2; return 1; }
     peer_init; peer_require_py || return 1
     PEERS_F="$PEERS_FILE" NEW_IRAN_IP="$2" IP_BACKUP_DIR="$BACKUP_DIR" python3 <<'PYEOF'
 import ipaddress,json,os,re,subprocess,tempfile
@@ -4049,9 +4049,9 @@ def atomic(path,content,mode):
 try:
     data=json.loads(registry.read_text())
     peers=data.get('peers',[])
-    if not peers: raise ValueError('هیچ تونل ایران ثبت نشده است.')
+    if not peers: raise ValueError('No Iranian tunnel has been registered.')
     if all(p.get('local_pub')==new for p in peers):
-        print('IP ایران برای همه تونل‌ها همین آدرس است؛ تغییری انجام نشد.')
+        print('IP Iran is the same address for all tunnels; No change was made.')
         raise SystemExit(0)
     addresses=run('ip','-o','-4','addr','show')
     bound=any(token.split('/')[0]==new for token in addresses.split())
@@ -4059,7 +4059,7 @@ try:
     for peer in peers:
         iface=peer.get('gre_if','')
         if not re.fullmatch(r'gre-(?:tunnel|t[0-9]+)',iface):
-            raise ValueError('نام اینترفیس تونل نامعتبر است.')
+            raise ValueError('The tunnel interface name is invalid.')
         path=Path('/etc/systemd/system')/(iface+'.service')
         old=path.read_bytes(); mode=path.stat().st_mode & 0o777
         remote=str(ipaddress.IPv4Address(peer['remote_pub']))
@@ -4071,7 +4071,7 @@ try:
         pattern=r'(?:\blocal\s+\d+\.\d+\.\d+\.\d+\s+)?\bremote\s+'+re.escape(remote)+r'\b'
         replacement=('local '+local+' ' if local else '')+'remote '+remote
         text,count=re.subn(pattern,replacement,old.decode())
-        if not count: raise ValueError('آدرس GRE در سرویس '+iface+' پیدا نشد.')
+        if not count: raise ValueError('address GRE in service '+iface+' not found.')
         originals[path]=(old,mode); updates[path]=(text.encode(),mode)
         services.append(iface+'.service')
         peer['local_pub']=new
@@ -4087,9 +4087,9 @@ try:
     for service in services:
         run('systemctl','restart',service)
         run('systemctl','is-active','--quiet',service)
-    print('IP ایران برای همه تونل‌ها ثبت شد: '+new)
-    print('پشتیبان تنظیمات قبلی: '+str(backup))
-    print('برای وصل شدن مجدد، کد اتصال جدید هر تونل را روی سرور خارج همان تونل اجرا کنید.')
+    print('IP Iran was registered for all tunnels: '+new)
+    print('Backup of previous settings: '+str(backup))
+    print('To reconnect, apply each new connection code on its matching foreign server.')
 except Exception as error:
     failures=[]
     for path in reversed(touched):
@@ -4097,13 +4097,13 @@ except Exception as error:
         except Exception: failures.append(str(path))
     if touched:
         try: run('systemctl','daemon-reload')
-        except Exception: failures.append('بازخوانی سرویس‌ها')
+        except Exception: failures.append('Refresh services')
         for service in services:
             try: run('systemctl','restart',service)
             except Exception: failures.append(service)
-    print('تغییر IP ایران ناموفق بود: '+str(error),file=__import__('sys').stderr)
+    print('change IP Iran was unsuccessful: '+str(error),file=__import__('sys').stderr)
     if touched:
-        print('تنظیمات قبلی بازیابی شد.' if not failures else 'بازیابی کامل نشد؛ وضعیت سرویس‌ها و پشتیبان را بررسی کنید: '+str(backup),file=__import__('sys').stderr)
+        print('Previous settings are restored.' if not failures else 'Recovery failed; Check the status of services and backup: '+str(backup),file=__import__('sys').stderr)
     raise SystemExit(1)
 PYEOF
 }
@@ -4112,23 +4112,23 @@ menu_iran_ip() {
     ui_clear
     local value confirm id bundle
     menu_import_existing || return 1
-    echo 'تغییر IP عمومی ایران برای همه تونل‌های ثبت‌شده'
-    echo 'این گزینه IP کارت شبکه را تغییر نمی‌دهد؛ ابتدا IP جدید باید روی سرور قابل استفاده باشد.'
-    echo 'اتصال‌ها تا اعمال کدهای جدید روی سرورهای خارج قطع می‌شوند.'
-    read -r -p 'IP جدید ایران [Enter: لغو]: ' value || return 0
+    echo 'Change the Iran public IP for all registered tunnels'
+    echo 'This updates tunnel configurations, not the network interface; the new IP must already be configured on this server.'
+    echo 'Connections will be interrupted until new codes are applied to external servers.'
+    read -r -p 'New Iran IP [Enter: Cancel]: ' value || return 0
     [[ -n "$value" ]] || return 0
-    is_valid_ip "$value" || { echo 'IP نامعتبر است.'; return 1; }
-    read -r -p 'این تغییر روی همه تونل‌های ایران اعمال شود؟ [y/N]: ' confirm || return 0
+    is_valid_ip "$value" || { echo 'Invalid IP address.'; return 1; }
+    read -r -p 'Should this change be applied to all tunnels in Iran? [y/N]: ' confirm || return 0
     [[ "$confirm" =~ ^[Yy]$ ]] || return 0
     cli_iran_ip --ip "$value" || return 1
-    echo 'کدهای زیر را روی سرور خارج مربوط به هر تونل اجرا کنید (جایگزینی اتصال قبلی):'
+    echo 'Run the following codes on the foreign server corresponding to each tunnel (Replace the previous connection):'
     while read -r id; do
-        peer_get "$id" | python3 -c 'import json,sys; p=json.load(sys.stdin); print("تونل:",p.get("name",""),"| خارج:",p["remote_pub"])'
+        peer_get "$id" | python3 -c 'import json,sys; p=json.load(sys.stdin); print("Tunnel:",p.get("name",""),"| Foreign:",p["remote_pub"])'
         bundle=$(peer_token "$id" | sed -n 's/^BUNDLE://p') || return 1
         [[ -n "$bundle" ]] || return 1
         printf 'NavaTunnel setup-foreign --bundle %q --force\n' "$bundle"
     done < <(python3 -c 'import json,sys; print("\n".join(str(p["id"]) for p in json.load(open(sys.argv[1])).get("peers",[])))' "$PEERS_FILE")
-    echo 'کدهای اتصال شامل توکن هستند؛ آن‌ها را عمومی منتشر نکنید.'
+    echo 'Connection codes include tokens; Do not publish them publicly.'
 }
 
 # Persist intentional stops through boot and automatic service restarts.
@@ -4140,7 +4140,7 @@ cli_tunnel_power() {
         case "$1" in
             --id) [[ $# -ge 2 ]] || return 1; id=$2; shift 2 ;;
             --foreign) foreign=1; shift ;;
-            *) echo 'روش استفاده: NavaTunnel tunnel-power start|stop --id N | --foreign' >&2; return 1 ;;
+            *) echo 'Usage: NavaTunnel tunnel-power start|stop --id N | --foreign' >&2; return 1 ;;
         esac
     done
     if ((foreign)); then
@@ -4149,7 +4149,7 @@ cli_tunnel_power() {
     else
         [[ "$id" =~ ^[1-9][0-9]*$ ]] || return 1
         rec=$(peer_get "$id") || return 1
-        [[ -n "$rec" ]] || { echo 'تونل پیدا نشد.' >&2; return 1; }
+        [[ -n "$rec" ]] || { echo 'Tunnel not found.' >&2; return 1; }
         iface=$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("gre_if",""))' <<< "$rec") || return 1
         service=$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("frps_svc",""))' <<< "$rec") || return 1
     fi
@@ -4169,7 +4169,7 @@ cli_tunnel_power() {
     temp=$(mktemp -d) || return 1
     for unit in "${units[@]}"; do
         [[ -f "/etc/systemd/system/$unit" ]] && cp -p "/etc/systemd/system/$unit" "$temp/$unit" || {
-            rm -rf "$temp"; echo 'فایل سرویس تونل پیدا نشد یا پشتیبان‌گیری ناموفق بود.' >&2; return 1;
+            rm -rf "$temp"; echo 'The tunnel service file was not found or the backup failed.' >&2; return 1;
         }
     done
     python3 - "$marker" "${units[@]}" <<'PYCODE'
@@ -4180,7 +4180,7 @@ for name in sys.argv[2:]:
     path=Path('/etc/systemd/system')/name
     text=path.read_text(); line='ConditionPathExists=!'+marker
     if line in text.splitlines():continue
-    if '[Unit]\n' not in text:sys.exit('بخش Unit در فایل سرویس پیدا نشد.')
+    if '[Unit]\n' not in text:sys.exit('section Unit The file was not found in the service.')
     text=text.replace('[Unit]\n','[Unit]\n'+line+'\n',1)
     staged.append((path,text,path.stat().st_mode&0o777))
 for path,text,mode in staged:
@@ -4206,7 +4206,7 @@ PYCODE
         if ((was_stopped)); then (umask 077; printf 'chaff=%s\n' "$resume_chaff" > "$marker"); else rm -f "$marker"; fi
         systemctl daemon-reload >/dev/null 2>&1 || true
         rm -rf "$temp"
-        echo 'ثبت تنظیم توقف/شروع ناموفق بود؛ فایل‌های قبلی بازیابی شدند.' >&2
+        echo 'Stop setting record/The start was unsuccessful; Previous files have been restored.' >&2
         return 1
     fi
     rm -rf "$temp"
@@ -4217,8 +4217,8 @@ PYCODE
             systemctl stop "$unit" || failure=1
             if systemctl is-active --quiet "$unit"; then failure=1; fi
         done
-        (( ! failure )) || { echo 'توقف کامل نشد؛ وضعیت سرویس‌ها را بررسی کنید. توقف دستی ثبت شده است.' >&2; return 1; }
-        echo 'همین تونل متوقف شد؛ توقف پس از ریبوت و راه‌اندازی خودکار هم حفظ می‌شود.'
+        (( ! failure )) || { echo 'The stop was not completed; Check the status of services. Manual stop is registered.' >&2; return 1; }
+        echo 'This tunnel was stopped; it remains stopped after reboot and automatic startup.'
     else
         for unit in "${units[@]}"; do
             [[ "$unit" != "${chaff}.service" || "$resume_chaff" == 1 ]] || continue
@@ -4227,10 +4227,10 @@ PYCODE
         if ((failure)); then
             (umask 077; printf 'chaff=%s\n' "$resume_chaff" > "$marker")
             for ((i=${#units[@]}-1; i>=0; i--)); do systemctl stop "${units[i]}" >/dev/null 2>&1 || true; done
-            echo 'شروع تونل ناموفق بود؛ برای جلوگیری از راه‌اندازی ناقص، تونل متوقف ماند.' >&2
+            echo 'Tunnel initiation failed; To avoid incomplete startup, the tunnel was stopped.' >&2
             return 1
         fi
-        echo 'همین تونل شروع شد؛ برقراری اتصال سمت مقابل را از وضعیت و لاگ‌ها بررسی کنید.'
+        echo 'This tunnel started; Check the connection of the opposite side from the status and logs.'
     fi
 }
 
@@ -4241,98 +4241,98 @@ menu_edit_peer() {
         ui_clear
         rec=$(peer_get "$id") || return 1
         [[ -n "$rec" ]] || return 0
-        name=$(python3 -c 'import json,sys; p=json.load(sys.stdin); print(p.get("name",""),"|",p.get("remote_pub",""),"| پورت‌ها:",",".join(map(str,p.get("ports",[]))))' <<< "$rec")
-        echo "تونل: $name"
+        name=$(python3 -c 'import json,sys; p=json.load(sys.stdin); print(p.get("name",""),"|",p.get("remote_pub",""),"| Ports:",",".join(map(str,p.get("ports",[]))))' <<< "$rec")
+        echo "Tunnel: $name"
         service=$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("frps_svc",""))' <<< "$rec")
         local service_state
         service_state=$(systemctl is-active "$service" 2>/dev/null) || true
-        echo "وضعیت سرویس همین تونل: $(fa_state "${service_state:-unknown}")"
-        echo "پورت کنترل FRP: $(python3 -c 'import json,sys; print(json.load(sys.stdin).get("frp_port","نامشخص"))' <<< "$rec")"
-        echo "IP ذخیره‌شده ایران: $(python3 -c 'import json,sys; print(json.load(sys.stdin).get("local_pub",""))' <<< "$rec")"
+        echo "Service status of this tunnel: $(display_state "${service_state:-unknown}")"
+        echo "FRP control port: $(python3 -c 'import json,sys; print(json.load(sys.stdin).get("frp_port","Unknown"))' <<< "$rec")"
+        echo "Saved Iran IP: $(python3 -c 'import json,sys; print(json.load(sys.stdin).get("local_pub",""))' <<< "$rec")"
         settings=$(peer_connection_settings "$id") || return 1
         IFS=$'\t' read -r protocol loss <<< "$settings"
-        [[ "$loss" == on ]] && loss='فعال' || loss='غیرفعال'
-        echo "انتخاب ذخیره‌شده ایران: FRP=$protocol | جبران افت بسته: $loss"
-        echo 'اعمال روی خارج نیاز به کد اتصال دارد؛ وضعیت خارج از اینجا بررسی نشده است.'
+        [[ "$loss" == on ]] && loss='Enabled' || loss='Disabled'
+        echo "Saved Iran selection: FRP=$protocol | Loss recovery: $loss"
+        echo 'Apply the connection code on the foreign server; its live state is not checked here.'
         iface=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["gre_if"])' <<< "$rec")
         echo "MTU: $(tunnel_mtu_get "$iface")"
         local counter
         counter=$(traffic_id_for_interface "$iface") || return 1
         if [[ -n "$counter" ]]; then
-            echo 'آخرین مصرف ذخیره‌شده؛ پایش هر 10 ثانیه:'
+            echo 'Last saved usage; monitoring every 10 seconds:'
             traffic_summary "$counter" || return 1
         else
-            echo 'شمارنده ترافیک ثبت نشده است؛ از گزینه 9 برای ثبت و نمایش مصرف استفاده کنید.'
+            echo 'No traffic counter registered; use option 9 to register it and view usage.'
         fi
-        echo '1) شروع همین تونل'
-        echo '2) توقف همین تونل'
-        echo '3) ری‌استارت همین تونل'
-        echo '4) تغییر پورت‌های سرویس'
-        echo '5) تغییر نام تونل'
-        echo '6) تغییر IP سرور خارج'
-        echo '7) انتخاب روش انتقال GRE'
-        echo '8) دریافت کد اتصال خارج'
-        echo '9) مصرف و تنظیمات ترافیک همین تونل'
-        echo '10) فعال‌سازی یا غیرفعال‌سازی جبران افت بسته'
-        echo '11) انتخاب پروتکل FRP'
-        echo '12) تغییر دائمی MTU همین تونل'
-        echo '13) تغییر پورت کنترل FRP همین تونل'
-        echo '14) حذف همین تونل'
-        echo '0) بازگشت'
-        read -r -p 'انتخاب: ' option || return 0
+        echo '1) Start this tunnel'
+        echo '2) Stop this tunnel'
+        echo '3) Restart this tunnel'
+        echo '4) Change service ports'
+        echo '5) Rename tunnel'
+        echo '6) Change foreign server IP'
+        echo '7) Select GRE carrier'
+        echo '8) Get foreign connection code'
+        echo '9) Traffic usage and settings for this tunnel'
+        echo '10) Enable or disable loss recovery'
+        echo '11) Select FRP protocol'
+        echo '12) Set persistent MTU for this tunnel'
+        echo '13) Change FRP control port for this tunnel'
+        echo '14) Delete this tunnel'
+        echo '0) Back'
+        read -r -p 'Select: ' option || return 0
         case "$option" in
             4|5|6)
-                echo 'Enter: بدون تغییر'
-                read -r -p 'مقدار جدید: ' value || return 0
+                echo 'Enter: No change'
+                read -r -p 'New value: ' value || return 0
                 [[ -n "$value" ]] || continue
                 case "$option" in
-                    4) cli_edit_peer --id "$id" --ports "$value" && echo 'برای اعمال پورت‌ها در خارج، کد اتصال جدید را روی سرور خارج دوباره اعمال کنید.' ;;
+                    4) cli_edit_peer --id "$id" --ports "$value" && echo 'To apply the ports externally, re-apply the new connection code to the foreign server.' ;;
                     5) cli_edit_peer --id "$id" --name "$value" ;;
                     6) cli_edit_peer --id "$id" --remote-pub "$value" ;;
                 esac ;;
             7)
                 ui_clear
-                echo 'انتخاب روش انتقال GRE همین تونل'
-                echo '1) GRE مستقیم'
+                echo 'Select GRE carrier for this tunnel'
+                echo '1) GRE Direct'
                 echo '2) FOU:443'
                 echo '3) FOU:55555'
-                echo '0) لغو'
-                read -r -p 'انتخاب: ' value || return 0
+                echo '0) Cancel'
+                read -r -p 'Select: ' value || return 0
                 case "$value" in 1) value=direct;; 2) value=fou:443;; 3) value=fou:55555;; *) continue;; esac
                 cli_edit_peer --id "$id" --carrier "$value"
-                echo 'روش انتقال دو سمت باید یکسان باشد؛ تنظیمات سرور خارج را هم به‌روز کنید.' ;;
+                echo 'The transfer method of both sides must be the same; Also update the foreign server settings.' ;;
             8)
                 local connection_output
                 if connection_output=$(peer_token "$id"); then
                     bundle=$(sed -n 's/^BUNDLE://p' <<< "$connection_output")
                     if [[ -n "$bundle" ]]; then
-                        echo 'روی سرور خارج (بعد از نصب NavaTunnel) اجرا کنید:'
+                        echo 'Run on the foreign server after installing NavaTunnel:'
                         printf 'NavaTunnel setup-foreign --bundle %q\n' "$bundle"
-                        echo 'این کد شامل توکن اتصال است؛ آن را عمومی منتشر نکنید.'
+                        echo 'This code contains the connection token; do not publish it.'
                     else
-                        echo 'کد اتصال تولید نشد؛ اطلاعات ذخیره‌شده تونل را بررسی کنید.'
+                        echo 'The connection code was not generated; Check the saved tunnel information.'
                     fi
                 else
-                    echo 'دریافت کد اتصال ناموفق بود؛ خطای بالا را بررسی کنید.'
+                    echo 'Failed to get connection code; Check the above error.'
                 fi
                 pause_prompt ;;
             3)
                 service=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["frps_svc"])' <<< "$rec")
                 iface=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["gre_if"])' <<< "$rec")
-                if systemctl restart "${iface}.service" && systemctl restart "${service}.service"; then echo 'تونل ری‌استارت شد.'; else echo 'ری‌استارت ناموفق بود؛ وضعیت سرویس را بررسی کنید.'; fi ;;
+                if systemctl restart "${iface}.service" && systemctl restart "${service}.service"; then echo 'The tunnel is restarted.'; else echo 'Restart failed; Check the service status.'; fi ;;
             2) cli_tunnel_power stop --id "$id" ;;
             1) cli_tunnel_power start --id "$id" ;;
             9) menu_tunnel_traffic "$iface" ;;
             12) menu_mtu "$iface" ;;
             13)
-                echo 'تغییر پورت کنترل اتصال خارج را قطع می‌کند؛ پس از تغییر، کد جدید را روی خارج اعمال کنید.'
+                echo 'Changing the control port interrupts the foreign connection; apply the new code on the foreign server afterward.'
                 value=$(menu_control_port_prompt "$id") || continue
                 cli_peer_control_port --id "$id" --port "$value" ;;
             11) value=$(menu_protocol_prompt "$protocol") || continue; cli_peer_protocol --id "$id" --protocol "$value" ;;
             10) menu_loss_recovery "$id" ;;
             14) cli_remove_peer --id "$id"; [[ -n "$(peer_get "$id")" ]] || return 0 ;;
             0) return 0 ;;
-            *) echo 'گزینه نامعتبر است.' ;;
+            *) echo 'Invalid option.' ;;
         esac
         case "$option" in 4|5|6|7|3|11|12|13|2|1) pause_prompt ;; 8|9|14|10) ;; *) pause_prompt ;; esac
     done
@@ -4341,13 +4341,13 @@ menu_edit_peer() {
 setup_foreign_server() {
     ui_clear
     echo -e "\n${YELLOW}====================================================${NC}"
-    echo -e "${YELLOW}   مرحله 2: تنظیم سرور خارج با GRE و FRP  ${NC}"
+    echo -e "${YELLOW}   stage 2: Set the foreign server with GRE and FRP  ${NC}"
     echo -e "${YELLOW}====================================================${NC}"
     MY_PUBLIC_IP=$(ip route get 1.1.1.1 2>/dev/null | awk '/src/ {for (i=1; i<=NF; i++) if ($i=="src") {print $(i+1); exit}}')
     [[ -z "$MY_PUBLIC_IP" ]] && MY_PUBLIC_IP=$(curl -sSL --max-time 5 https://api.ipify.org 2>/dev/null)
 
-    echo -e "کد اتصال سرور ایران را دارید؟ (${CYAN}hsh1_...${NC})"
-    read -p "کد اتصال را وارد کنید [Enter: تنظیم دستی]: " BUNDLE_IN
+    echo -e "Do you have the Iran server connection code? (${CYAN}hsh1_...${NC})"
+    read -p "Enter the connection code [Enter: Manual adjustment]: " BUNDLE_IN
     local SERVER_PORT TOKEN INPUT_PORTS BUNDLE_USED=0 LOCAL_GRE_SET="$FOREIGN_GRE_IP" PEER_GRE_SET="$IRAN_GRE_IP"
     local IP_FOREIGN="" IP_IRAN="" LOSS=off TRANSPORT=tcp
 
@@ -4355,15 +4355,15 @@ setup_foreign_server() {
         if bundle_parse "$BUNDLE_IN"; then
             echo ""
             cli_bundle_inspect "$BUNDLE_IN"
-            read -p "تنظیمات این کد اتصال اعمال شود؟ [Y/n]: " CONFIRM_APPLY
+            read -p "Apply the settings of this connection code? [Y/n]: " CONFIRM_APPLY
             if [[ "$CONFIRM_APPLY" =~ ^[Nn]$ ]]; then
-                echo -e "${YELLOW}[*] اعمال کد اتصال لغو شد؛ بازگشت به منو.${NC}"
+                echo -e "${YELLOW}[*] Applying the connection code was canceled; Back to menu.${NC}"
                 return 0
             fi
             BUNDLE_USED=1
             LOSS=$B_LOSS_RECOVERY
             TRANSPORT=$B_FRP_TRANSPORT
-            prompt_ip IP_FOREIGN "IP عمومی سرور خارج" "$MY_PUBLIC_IP"
+            prompt_ip IP_FOREIGN "Foreign server public IP" "$MY_PUBLIC_IP"
             IP_IRAN=$B_IRAN_PUB
             SERVER_PORT=$B_FRP_PORT
             TOKEN=$B_TOKEN
@@ -4373,19 +4373,19 @@ setup_foreign_server() {
             carrier_set_fou_ports "$B_FOU_P1" "$B_FOU_P2" 2>/dev/null || true
             carrier_init_kernel 2>/dev/null || true
             if [[ -z "$INPUT_PORTS" ]]; then
-                prompt_ports INPUT_PORTS "پورت‌های سرویس"
+                prompt_ports INPUT_PORTS "Service ports"
             fi
         else
-            echo -e "${RED}[!] کد اتصال نامعتبر است؛ ادامه با تنظیم دستی.${NC}"
+            echo -e "${RED}[!] The connection code is invalid; Continue with manual adjustment.${NC}"
         fi
     fi
 
     if [[ "$BUNDLE_USED" -ne 1 ]]; then
-        prompt_ip IP_FOREIGN "IP عمومی سرور خارج" "$MY_PUBLIC_IP"
-        prompt_ip IP_IRAN "IP عمومی سرور ایران" ""
-        prompt_port SERVER_PORT "پورت FRP اعلام‌شده از ایران" "$(gen_random_port)"
-        prompt_required TOKEN "توکن محرمانه اتصال"
-        prompt_ports INPUT_PORTS "پورت‌های سرویس"
+        prompt_ip IP_FOREIGN "Foreign server public IP" "$MY_PUBLIC_IP"
+        prompt_ip IP_IRAN "Iran server public IP" ""
+        prompt_port SERVER_PORT "FRP control port from Iran" "$(gen_random_port)"
+        prompt_required TOKEN "Connection secret token"
+        prompt_ports INPUT_PORTS "Service ports"
     fi
 
     if [[ "$BUNDLE_USED" != 1 ]]; then LOSS=$(menu_loss_prompt) || return 0; fi
@@ -4398,62 +4398,62 @@ setup_foreign_server() {
 }
 
 check_status() {
-    echo -e "\n${YELLOW}=== بررسی وضعیت GRE و FRP ===${NC}"
+    echo -e "\n${YELLOW}=== GRE and FRP status ===${NC}"
 
     # 1. GRE Status
-    echo -e "\n${CYAN}[1] اینترفیس تونل GRE:${NC}"
+    echo -e "\n${CYAN}[1] GRE tunnel interface:${NC}"
     if ip link show "$TUNNEL_NAME" >/dev/null 2>&1; then
         ip addr show dev "$TUNNEL_NAME"
-        echo -e "${GREEN}[✔️] اینترفیس ${TUNNEL_NAME} موجود و فعال است.${NC}"
+        echo -e "${GREEN}[✔️] Interface ${TUNNEL_NAME} Available and active.${NC}"
     else
-        echo -e "${YELLOW}[*] اینترفیس ${TUNNEL_NAME} پیدا نشد.${NC}"
+        echo -e "${YELLOW}[*] Interface ${TUNNEL_NAME} not found.${NC}"
     fi
 
     # 2. Ping Test
     if ip link show "$TUNNEL_NAME" >/dev/null 2>&1; then
-        echo -e "\n${CYAN}[2] تست پینگ GRE:${NC}"
+        echo -e "\n${CYAN}[2] Ping test GRE:${NC}"
         if ip addr show dev "$TUNNEL_NAME" 2>/dev/null | grep -q "$IRAN_GRE_IP"; then
             TARGET_PING="$FOREIGN_GRE_IP"
-            echo "تست پینگ IP داخلی GRE خارج ($TARGET_PING)..."
+            echo "Ping test Foreign GRE IP ($TARGET_PING)..."
         else
             TARGET_PING="$IRAN_GRE_IP"
-            echo "تست پینگ IP داخلی GRE ایران ($TARGET_PING)..."
+            echo "Ping test Iran GRE IP ($TARGET_PING)..."
         fi
-        ping -c 3 -W 2 "$TARGET_PING" && echo -e "${GREEN}[✔️] پینگ موفق بود.${NC}" || echo -e "${YELLOW}[!] سرور مقابل پاسخ پینگ نداد.${NC}"
+        ping -c 3 -W 2 "$TARGET_PING" && echo -e "${GREEN}[✔️] Ping was successful.${NC}" || echo -e "${YELLOW}[!] The opposite server did not respond to the ping.${NC}"
     fi
 
     # 3. Service Status
-    echo -e "\n${CYAN}[3] وضعیت سرویس‌های تونل:${NC}"
+    echo -e "\n${CYAN}[3] Tunnel services status:${NC}"
     if systemctl is-active --quiet frps; then
-        echo -e "${GREEN}[✔️] سرویس frps روی ایران فعال است.${NC}"
+        echo -e "${GREEN}[✔️] service frps It is active on Iran.${NC}"
         systemctl status frps --no-pager -l
     elif systemctl is-active --quiet frpc; then
-        echo -e "${GREEN}[✔️] سرویس frpc روی خارج فعال است.${NC}"
+        echo -e "${GREEN}[✔️] service frpc Active on the outside.${NC}"
         systemctl status frpc --no-pager -l
     else
-        echo -e "${RED}[!] هیچ‌یک از سرویس‌های FRP فعال نیستند.${NC}"
+        echo -e "${RED}[!] None of the services FRP are not active.${NC}"
     fi
 }
 
 show_logs() {
-    echo -e "\n${YELLOW}=== لاگ زنده سرویس‌ها (Ctrl+C: خروج) ===${NC}"
+    echo -e "\n${YELLOW}=== Live log of services (Ctrl+C: Exit) ===${NC}"
     if systemctl list-unit-files | grep -q "frps.service"; then
         journalctl -u frps -n 50 -f
     elif systemctl list-unit-files | grep -q "frpc.service"; then
         journalctl -u frpc -n 50 -f
     else
-        echo -e "${RED}[!] سرویس تونل پیدا نشد.${NC}"
+        echo -e "${RED}[!] Tunnel service not found.${NC}"
     fi
 }
 
 restart_all() {
-    echo -e "\n${CYAN}[*] در حال ری‌استارت سرویس‌های GRE و FRP همه تونل‌ها...${NC}"
+    echo -e "\n${CYAN}[*] Restarting services GRE and FRP All tunnels...${NC}"
     local u
     for u in /etc/systemd/system/gre-t*.service /etc/systemd/system/frps*.service /etc/systemd/system/frpc.service /etc/systemd/system/gre-chaff*.service; do
         [[ -f "$u" ]] || continue
-        systemctl restart "$(basename "$u")" >/dev/null 2>&1 && echo -e "${GREEN}[✔️] سرویس $(basename "$u") ری‌استارت شد.${NC}"
+        systemctl restart "$(basename "$u")" >/dev/null 2>&1 && echo -e "${GREEN}[✔️] service $(basename "$u") Restarted.${NC}"
     done
-    echo -e "${GREEN}[✔️] همه سرویس‌ها ری‌استارت شدند.${NC}"
+    echo -e "${GREEN}[✔️] All services have been restarted.${NC}"
 }
 
 ensure_doctor_tools() {
@@ -4465,8 +4465,8 @@ ensure_doctor_tools() {
         fi
     done
     if [[ "$NEED_INSTALL" -eq 1 ]]; then
-        echo -e "${CYAN}[*] در حال نصب ابزارهای بررسی شبکه...${NC}"
-        apt-get update -qq && apt-get install -y -qq iperf3 iputils-ping curl || echo -e "${YELLOW}[!] نصب بعضی ابزارهای بررسی شبکه ناموفق بود.${NC}"
+        echo -e "${CYAN}[*] Installing network monitoring tools...${NC}"
+        apt-get update -qq && apt-get install -y -qq iperf3 iputils-ping curl || echo -e "${YELLOW}[!] Installation of some network monitoring tools failed.${NC}"
     fi
 }
 
@@ -4474,7 +4474,7 @@ doctor_diagnostics() {
     ensure_doctor_tools
 
     echo -e "\n${CYAN}==========================================================${NC}"
-    echo -e "${CYAN}      بررسی سلامت شبکه و تست سرعت NavaTunnel      ${NC}"
+    echo -e "${CYAN}      Network health check and speed test NavaTunnel      ${NC}"
     echo -e "${CYAN}==========================================================${NC}\n"
 
     # 1. Determine Peer IP
@@ -4505,18 +4505,18 @@ doctor_diagnostics() {
         fi
     fi
 
-    echo -e "  ${YELLOW}نقش:${NC}        ${ROLE}"
-    echo -e "  ${YELLOW}تونل:${NC}      ${TUNNEL_NAME:-gre-tunnel}"
-    echo -e "  ${YELLOW}IP این سرور:${NC}    ${LOCAL_IP:-N/A}"
-    echo -e "  ${YELLOW}IP سرور مقابل:${NC}     ${TARGET_IP:-N/A}\n"
+    echo -e "  ${YELLOW}Role:${NC}        ${ROLE}"
+    echo -e "  ${YELLOW}Tunnel:${NC}      ${TUNNEL_NAME:-gre-tunnel}"
+    echo -e "  ${YELLOW}IP This server:${NC}    ${LOCAL_IP:-N/A}"
+    echo -e "  ${YELLOW}IP Peer server:${NC}     ${TARGET_IP:-N/A}\n"
 
     if [[ -z "$TARGET_IP" ]]; then
-        echo -e "${RED}[!] اینترفیس تونل فعال نیست یا IP مقابل پیدا نشد.${NC}"
+        echo -e "${RED}[!] The tunnel interface is not active or IP The opposite was not found.${NC}"
         return 1
     fi
 
     # 2. Ping & Jitter Test (10 packets)
-    echo -e "${CYAN}[1/4] اندازه‌گیری تأخیر، افت بسته و نوسان با 10 بسته...${NC}"
+    echo -e "${CYAN}[1/4] Measure latency, packet loss and jitter with 10 Packet...${NC}"
     local PING_OUT
     PING_OUT=$(ping -c 10 -W 2 "$TARGET_IP" 2>&1)
     local LOSS
@@ -4537,22 +4537,22 @@ doctor_diagnostics() {
     local LOSS_INT="${LOSS%%.*}"
     LOSS_INT="${LOSS_INT:-0}"
 
-    echo -e "  • افت بسته:  ${LOSS:-0}%"
-    echo -e "  • کمترین تأخیر:      ${MIN_RTT} ms"
-    echo -e "  • میانگین تأخیر:      ${AVG_RTT} ms"
-    echo -e "  • بیشترین تأخیر:      ${MAX_RTT} ms"
-    echo -e "  • نوسان تأخیر:${JITTER} ms"
+    echo -e "  • package drop:  ${LOSS:-0}%"
+    echo -e "  • Minimum latency:      ${MIN_RTT} ms"
+    echo -e "  • Average latency:      ${AVG_RTT} ms"
+    echo -e "  • Maximum latency:      ${MAX_RTT} ms"
+    echo -e "  • Latency jitter:${JITTER} ms"
 
     if [[ "$LOSS_INT" -eq 0 ]]; then
-        echo -e "  ${GREEN}[✔️] تست پینگ بدون افت بسته انجام شد.${NC}\n"
+        echo -e "  ${GREEN}[✔️] Ping test was done without packet drop.${NC}\n"
     elif [[ "$LOSS_INT" -le 10 ]]; then
-        echo -e "  ${YELLOW}[⚠️] افت بسته کم (${LOSS}%).${NC}\n"
+        echo -e "  ${YELLOW}[⚠️] Low packet loss (${LOSS}%).${NC}\n"
     else
-        echo -e "  ${RED}[!] افت بسته زیاد مشاهده شد (${LOSS}%).${NC}\n"
+        echo -e "  ${RED}[!] A lot of packet loss was observed (${LOSS}%).${NC}\n"
     fi
 
     # 3. Path MTU Discovery
-    echo -e "${CYAN}[2/4] بررسی MTU مسیر و تکه‌شدن بسته‌ها...${NC}"
+    echo -e "${CYAN}[2/4] review MTU Packet routing and fragmentation...${NC}"
     local OPTIMAL_MTU=0
     # 1420
     if ping -c 2 -W 2 -M do -s 1392 "$TARGET_IP" >/dev/null 2>&1; then
@@ -4575,13 +4575,13 @@ doctor_diagnostics() {
         echo -e "  • MTU 1360: ${GREEN}PASS (Unfragmented)${NC}"
         [[ "$OPTIMAL_MTU" -eq 0 ]] && OPTIMAL_MTU=1360
     else
-        echo -e "  • MTU 1360: ${RED}ناموفق${NC}"
+        echo -e "  • MTU 1360: ${RED}Failed${NC}"
     fi
 
-    echo -e "  ${GREEN}[✔️] MTU پیشنهادی مسیر: ${OPTIMAL_MTU:-1400} بایت.${NC}\n"
+    echo -e "  ${GREEN}[✔️] MTU Suggested route: ${OPTIMAL_MTU:-1400} bytes.${NC}\n"
 
     # 4. Kernel TCP Stack Audit
-    echo -e "${CYAN}[3/4] بررسی TCP سیستم و هدایت بسته‌ها...${NC}"
+    echo -e "${CYAN}[3/4] review TCP System and package routing...${NC}"
     local CC
     CC=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo "unknown")
     local FWD
@@ -4590,27 +4590,27 @@ doctor_diagnostics() {
     MSS_COUNT=$(iptables -t mangle -L -v -n 2>/dev/null | grep -c "TCPMSS" || echo "0")
 
     if [[ "$CC" == "bbr" ]]; then
-        echo -e "  • کنترل ازدحام TCP: ${GREEN}BBR فعال${NC}"
+        echo -e "  • Congestion control TCP: ${GREEN}BBR Enabled${NC}"
     else
-        echo -e "  • کنترل ازدحام TCP: ${YELLOW}${CC} (BBR فعال نیست)${NC}"
+        echo -e "  • Congestion control TCP: ${YELLOW}${CC} (BBR not active)${NC}"
     fi
 
     if [[ "$FWD" == "1" ]]; then
-        echo -e "  • هدایت IPv4:        ${GREEN}فعال${NC}"
+        echo -e "  • IP forwardingv4:        ${GREEN}Enabled${NC}"
     else
-        echo -e "  • هدایت IPv4:        ${RED}غیرفعال${NC}"
+        echo -e "  • IP forwardingv4:        ${RED}Disabled${NC}"
     fi
 
     if [[ "$MSS_COUNT" -gt 0 ]]; then
-        echo -e "  • محدودیت MSS برای TCP:       ${GREEN}Active (${MSS_COUNT} rules)${NC}\n"
+        echo -e "  • Limit MSS for TCP:       ${GREEN}Active (${MSS_COUNT} rules)${NC}\n"
     else
-        echo -e "  • محدودیت MSS برای TCP:       ${YELLOW}تنظیم نشده${NC}\n"
+        echo -e "  • Limit MSS for TCP:       ${YELLOW}not set${NC}\n"
     fi
 
     # 5. Throughput / iPerf3 Test
-    echo -e "${CYAN}[4/4] تست پهنای باند و سرعت انتقال...${NC}"
+    echo -e "${CYAN}[4/4] Bandwidth and transfer speed test...${NC}"
     if command -v iperf3 >/dev/null 2>&1; then
-        echo -e "  تست انتقال سه‌ثانیه‌ای به ${TARGET_IP}:5201..."
+        echo -e "  Three-second transfer test to ${TARGET_IP}:5201..."
         local IPERF_OUT
         IPERF_OUT=$(iperf3 -c "$TARGET_IP" -t 3 -J 2>/dev/null)
         if [[ -n "$IPERF_OUT" ]] && echo "$IPERF_OUT" | grep -q '"bits_per_second"'; then
@@ -4618,10 +4618,10 @@ doctor_diagnostics() {
             BPS=$(echo "$IPERF_OUT" | awk -F'"bits_per_second":' '/"bits_per_second"/ {print $2}' | tr -dc '0-9.' | head -n1)
             local MBPS
             MBPS=$(awk -v b="$BPS" 'BEGIN { if (b > 0) printf "%.2f", b / 1000000; else print "0" }')
-            echo -e "  ${GREEN}[✔️] سرعت انتقال: ${MBPS} Mbps${NC}\n"
+            echo -e "  ${GREEN}[✔️] Transfer speed: ${MBPS} Mbps${NC}\n"
         else
-            echo -e "  ${YELLOW}[i] سرویس iperf3 روی مقابل فعال نیست در ${TARGET_IP}:5201.${NC}"
-            echo -e "      (برای تست مستقیم سرعت، روی مقابل NavaTunnel doctor server را اجرا کنید).\n"
+            echo -e "  ${YELLOW}[i] service iperf3 On the opposite side is not active ${TARGET_IP}:5201.${NC}"
+            echo -e "      (For a direct speed test, on the opposite side NavaTunnel doctor server run the).\n"
         fi
     fi
 
@@ -4648,20 +4648,20 @@ doctor_diagnostics() {
     [[ "$SCORE" -lt 0 ]] && SCORE=0
 
     echo -e "${CYAN}==========================================================${NC}"
-    echo -e "  ${YELLOW}امتیاز سلامت:${NC} ${SCORE}/100"
+    echo -e "  ${YELLOW}health score:${NC} ${SCORE}/100"
     if [[ "$SCORE" -ge 85 ]]; then
-        echo -e "  ${GREEN}وضعیت: عالی؛ تنظیمات بررسی‌شده تونل مناسب‌اند.${NC}"
+        echo -e "  ${GREEN}Status: excellent; Checked tunnel settings are correct.${NC}"
     elif [[ "$SCORE" -ge 70 ]]; then
-        echo -e "  ${CYAN}وضعیت: خوب؛ بهینه‌سازی جزئی پیشنهاد می‌شود.${NC}"
+        echo -e "  ${CYAN}Status: good; Minor optimization is suggested.${NC}"
     elif [[ "$SCORE" -ge 50 ]]; then
-        echo -e "  ${YELLOW}وضعیت: هشدار؛ افت بسته یا محدودیت سیستم وجود دارد.${NC}"
+        echo -e "  ${YELLOW}Status: warning; There is a packet drop or system limitation.${NC}"
     else
-        echo -e "  ${RED}وضعیت: بحرانی؛ مشکل مهم شبکه یا مسیر مشاهده شد.${NC}"
+        echo -e "  ${RED}Status: critical; A critical network or path problem was detected.${NC}"
     fi
     echo -e "${CYAN}==========================================================${NC}\n"
 
     if [[ "$SCORE" -lt 85 ]]; then
-        read -p "اصلاحات پیشنهادی BBR، MSS و MTU خودکار اعمال شوند؟ [y/N]: " DO_FIX
+        read -p "Suggested amendments BBR, MSS and MTU Apply automatically? [y/N]: " DO_FIX
         if [[ "$DO_FIX" =~ ^[Yy]$ ]]; then
             doctor_apply_fixes
         fi
@@ -4669,29 +4669,29 @@ doctor_diagnostics() {
 }
 
 doctor_apply_fixes() {
-    echo -e "\n${CYAN}[*] در حال اعمال بهینه‌سازی خودکار...${NC}"
+    echo -e "\n${CYAN}[*] Applying automatic optimization...${NC}"
     tune_apply
-    echo -e "${GREEN}[✔️] بهینه‌سازی اعمال شد.${NC}\n"
+    echo -e "${GREEN}[✔️] Optimization applied.${NC}\n"
 }
 
 doctor_start_server() {
     ensure_doctor_tools
     if pgrep -x iperf3 >/dev/null 2>&1; then
-        echo -e "${YELLOW}[i] سرویس iperf3 از قبل فعال است.${NC}"
+        echo -e "${YELLOW}[i] service iperf3 It is already active.${NC}"
     else
         iperf3 -s -D
-        echo -e "${GREEN}[✔️] سرویس iperf3 روی پورت 5201 اجرا شد.${NC}"
+        echo -e "${GREEN}[✔️] service iperf3 On the port 5201 was executed.${NC}"
     fi
 }
 
 doctor_stop_server() {
     pkill -f "iperf3 -s" >/dev/null 2>&1 || true
-    echo -e "${GREEN}[✔️] سرویس iperf3 متوقف شد.${NC}"
+    echo -e "${GREEN}[✔️] service iperf3 it stopped.${NC}"
 }
 
 doctor_health_check() {
     echo -e "\n${CYAN}=============================================================="
-    echo "             بررسی سلامت سیستم و تونل NavaTunnel"
+    echo "             Checking the health of the system and tunnel NavaTunnel"
     echo -e "==============================================================${NC}"
 
     local PASS_COUNT=0 WARN_COUNT=0 FAIL_COUNT=0
@@ -4700,9 +4700,9 @@ doctor_health_check() {
         local name="$1" status="$2" details="$3"
         local badge
         case "$status" in
-            PASS) badge="${GREEN}[موفق]${NC}"; ((PASS_COUNT++)) ;;
-            WARN) badge="${YELLOW}[هشدار]${NC}"; ((WARN_COUNT++)) ;;
-            FAIL) badge="${RED}[ناموفق]${NC}"; ((FAIL_COUNT++)) ;;
+            PASS) badge="${GREEN}[OK]${NC}"; ((PASS_COUNT++)) ;;
+            WARN) badge="${YELLOW}[Warning]${NC}"; ((WARN_COUNT++)) ;;
+            FAIL) badge="${RED}[Failed]${NC}"; ((FAIL_COUNT++)) ;;
         esac
         printf "%-8b %-30s %s\n" "$badge" "$name" "$details"
     }
@@ -4710,47 +4710,47 @@ doctor_health_check() {
     # 1. OS & Architecture
     local OS_INFO
     OS_INFO=$(uname -s -m 2>/dev/null || echo "Linux")
-    report_item "سیستم‌عامل و معماری" "PASS" "$OS_INFO"
+    report_item "Operating system and architecture" "PASS" "$OS_INFO"
 
-    # 2. نسخه کرنل لینوکس
+    # 2. Linux kernel version
     local KERNEL_VER
     KERNEL_VER=$(uname -r 2>/dev/null || echo "Unknown")
-    report_item "نسخه کرنل لینوکس" "PASS" "$KERNEL_VER"
+    report_item "Linux kernel version" "PASS" "$KERNEL_VER"
 
     # 3. IP Forwarding
     local IP_FWD
     IP_FWD=$(sysctl -n net.ipv4.ip_forward 2>/dev/null || cat /proc/sys/net/ipv4/ip_forward 2>/dev/null || echo 0)
     if [[ "$IP_FWD" == "1" ]]; then
-        report_item "هدایت بسته‌ها (ip_forward)" "PASS" "فعال (1)"
+        report_item "Packet routing (ip_forward)" "PASS" "Enabled (1)"
     else
-        report_item "هدایت بسته‌ها (ip_forward)" "WARN" "غیرفعال (0)؛ از sysctl فعال کنید"
+        report_item "Packet routing (ip_forward)" "WARN" "Disabled (0); from sysctl activate"
     fi
 
     # 4. GRE Kernel Modules
     if lsmod 2>/dev/null | grep -q "ip_gre" || modprobe ip_gre 2>/dev/null; then
-        report_item "ماژول GRE کرنل" "PASS" "بارگذاری‌شده"
+        report_item "Module GRE Cornell" "PASS" "loaded"
     else
-        report_item "ماژول GRE کرنل" "FAIL" "ماژول ip_gre موجود یا قابل بارگذاری نیست"
+        report_item "Module GRE Cornell" "FAIL" "Module ip_gre Not available or loadable"
     fi
 
     # 5. FOU Kernel Module
     if lsmod 2>/dev/null | grep -q "fou" || modprobe fou 2>/dev/null; then
-        report_item "ماژول FOU کرنل" "PASS" "بارگذاری‌شده"
+        report_item "Module FOU Cornell" "PASS" "loaded"
     else
-        report_item "ماژول FOU کرنل" "WARN" "ماژول FOU در دسترس نیست؛ استفاده از GRE مستقیم"
+        report_item "Module FOU Cornell" "WARN" "Module FOU not available; use of GRE Direct"
     fi
 
-    # 6. اینترفیس GRE Status
+    # 6. Interface GRE Status
     if ip link show "$TUNNEL_NAME" >/dev/null 2>&1; then
         local INNER_IP
         INNER_IP=$(ip -4 addr show dev "$TUNNEL_NAME" 2>/dev/null | awk '/inet / {print $2}')
         if [[ -n "$INNER_IP" ]]; then
-            report_item "اینترفیس GRE (${TUNNEL_NAME})" "PASS" "فعال با IP: $INNER_IP"
+            report_item "Interface GRE (${TUNNEL_NAME})" "PASS" "active with IP: $INNER_IP"
         else
-            report_item "اینترفیس GRE (${TUNNEL_NAME})" "WARN" "اینترفیس موجود است ولی IPv4 ندارد"
+            report_item "Interface GRE (${TUNNEL_NAME})" "WARN" "The interface is available but IPv4 does not have"
         fi
     else
-        report_item "اینترفیس GRE (${TUNNEL_NAME})" "WARN" "اینترفیس پیدا نشد"
+        report_item "Interface GRE (${TUNNEL_NAME})" "WARN" "Interface not found"
     fi
 
     # 7. GRE Peer Ping Connectivity
@@ -4765,18 +4765,18 @@ doctor_health_check() {
         if P_OUT=$(ping -c 2 -W 2 "$PEER_PING_TARGET" 2>/dev/null); then
             local RTT
             RTT=$(echo "$P_OUT" | awk -F'/' '/rtt/ {print $5}')
-            report_item "دسترسی به GRE مقابل" "PASS" "قابل دسترسی (${RTT:-<50} ms)"
+            report_item "Access to GRE Opposite" "PASS" "accessible (${RTT:-<50} ms)"
         else
             # ICMP may be filtered by ISP/DPI (common in Iran with GRE tunnels).
             # If frpc is active, TCP through GRE is working — downgrade to WARN.
             if systemctl is-active --quiet frpc 2>/dev/null; then
-                report_item "دسترسی به GRE مقابل" "WARN" "پینگ ICMP مسدود است ولی سرویس TCP تونل فعال است"
+                report_item "Access to GRE Opposite" "WARN" "Ping ICMP It is blocked, but the service TCP The tunnel is active"
             else
-                report_item "دسترسی به GRE مقابل" "FAIL" "پینگ سرور مقابل ناموفق بود ${PEER_PING_TARGET}"
+                report_item "Access to GRE Opposite" "FAIL" "Ping the opposite server failed ${PEER_PING_TARGET}"
             fi
         fi
     else
-        report_item "دسترسی به GRE مقابل" "WARN" "IP سرور مقابل هنوز تنظیم نشده است"
+        report_item "Access to GRE Opposite" "WARN" "IP The opposite server is not set yet"
     fi
 
     # 8. FRPS Service
@@ -4784,35 +4784,35 @@ doctor_health_check() {
         if systemctl is-active --quiet frps 2>/dev/null; then
             local F_PORT
             F_PORT=$(awk -F'=' '/bindPort/{gsub(/[ "]/,"",$2); print $2}' /etc/frp/frps.toml 2>/dev/null)
-            report_item "سرور FRP (frps)" "PASS" "فعال روی پورت :${F_PORT:-unknown}"
+            report_item "server FRP (frps)" "PASS" "Active on the port :${F_PORT:-unknown}"
         else
-            report_item "سرور FRP (frps)" "FAIL" "سرویس نصب شده ولی فعال نیست"
+            report_item "server FRP (frps)" "FAIL" "The service is installed but not active"
         fi
     fi
 
     # 9. FRPC Service
     if [[ -f /etc/systemd/system/frpc.service ]]; then
         if systemctl is-active --quiet frpc 2>/dev/null; then
-            report_item "کلاینت FRP (frpc)" "PASS" "فعال؛ اتصال معکوس برقرار است"
+            report_item "the client FRP (frpc)" "PASS" "active; The reverse connection is established"
         else
-            report_item "کلاینت FRP (frpc)" "FAIL" "سرویس نصب شده ولی فعال نیست"
+            report_item "the client FRP (frpc)" "FAIL" "The service is installed but not active"
         fi
     fi
 
     # 11. Firewall / Ports
     if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
-        report_item "فایروال UFW" "PASS" "فعال؛ پورت‌ها تنظیم شده‌اند"
+        report_item "Firewall UFW" "PASS" "active; Ports are set"
     else
-        report_item "فایروال UFW" "PASS" "بدون محدودیت یا غیرفعال"
+        report_item "Firewall UFW" "PASS" "Unlimited or disabled"
     fi
 
     echo -e "${CYAN}==============================================================${NC}"
     if [[ "$FAIL_COUNT" -eq 0 && "$WARN_COUNT" -eq 0 ]]; then
-        echo -e "نتیجه کلی بررسی سلامت: ${GREEN}موفق${NC} (همه بررسی‌ها موفق بودند)"
+        echo -e "The overall result of the health check: ${GREEN}OK${NC} (All checks were successful)"
     elif [[ "$FAIL_COUNT" -eq 0 ]]; then
-        echo -e "نتیجه کلی بررسی سلامت: ${YELLOW}هشدار${NC} (${WARN_COUNT} هشدار مشاهده شد؛ سیستم قابل استفاده است)"
+        echo -e "The overall result of the health check: ${YELLOW}Warning${NC} (${WARN_COUNT} Warning was observed; The system is usable)"
     else
-        echo -e "نتیجه کلی بررسی سلامت: ${RED}ناموفق${NC} (${FAIL_COUNT} خطای مهم مشاهده شد)"
+        echo -e "The overall result of the health check: ${RED}Failed${NC} (${FAIL_COUNT} A critical error was encountered)"
     fi
     echo -e "${CYAN}==============================================================${NC}\n"
 }
@@ -4840,12 +4840,12 @@ cli_stress_test() {
     fi
 
     echo -e "\n${CYAN}==============================================================${NC}"
-    echo -e "${CYAN}      تست فشار اتصال هم‌زمان NavaTunnel${NC}"
+    echo -e "${CYAN}      Concurrent connection stress test NavaTunnel${NC}"
     echo -e "${CYAN}==============================================================${NC}"
-    echo -e "مقصد: ${GREEN}${TARGET_HOST}:${TARGET_PORT}${NC}"
-    echo -e "اتصال‌های هم‌زمان: ${YELLOW}${CONNS}${NC}\n"
+    echo -e "Target: ${GREEN}${TARGET_HOST}:${TARGET_PORT}${NC}"
+    echo -e "Simultaneous connections: ${YELLOW}${CONNS}${NC}\n"
 
-    echo -e "${CYAN}[*] بررسی ظرفیت اتصال هم‌زمان سیستم...${NC}"
+    echo -e "${CYAN}[*] Checking the simultaneous connection capacity of the system...${NC}"
     local NOFILE_VAL
     NOFILE_VAL=$(ulimit -n 2>/dev/null || echo 1024)
     local SOMAXCONN_VAL
@@ -4853,9 +4853,9 @@ cli_stress_test() {
     local CONNTRACK_VAL
     CONNTRACK_VAL=$(sysctl -n net.netfilter.nf_conntrack_max 2>/dev/null || sysctl -n net.nf_conntrack_max 2>/dev/null || echo 65536)
 
-    echo -e "  - ulimit -n: ${GREEN}${NOFILE_VAL}${NC} (هدف: حداقل 65536)"
-    echo -e "  - somaxconn: ${GREEN}${SOMAXCONN_VAL}${NC} (هدف: حداقل 65535)"
-    echo -e "  - nf_conntrack_max: ${GREEN}${CONNTRACK_VAL}${NC} (هدف: حداقل 1048576)"
+    echo -e "  - ulimit -n: ${GREEN}${NOFILE_VAL}${NC} (Target: at least 65536)"
+    echo -e "  - somaxconn: ${GREEN}${SOMAXCONN_VAL}${NC} (Target: at least 65535)"
+    echo -e "  - nf_conntrack_max: ${GREEN}${CONNTRACK_VAL}${NC} (Target: at least 1048576)"
 
     for svc in frps frpc; do
         if systemctl list-unit-files "${svc}.service" >/dev/null 2>&1; then
@@ -4865,16 +4865,16 @@ cli_stress_test() {
         fi
     done
 
-    echo -e "\n${CYAN}[*] در حال شروع ${CONNS} اتصال آزمایشی هم‌زمان...${NC}"
+    echo -e "\n${CYAN}[*] starting ${CONNS} Simultaneous test connection...${NC}"
     if ! command -v python3 >/dev/null 2>&1; then
-        echo -e "${YELLOW}[!] python3 پیدا نشد؛ تست به‌صورت ترتیبی با netcat انجام می‌شود.${NC}"
+        echo -e "${YELLOW}[!] python3 not found Test sequentially with netcat is done.${NC}"
         local SUCCESS=0
         for ((i=1; i<=CONNS; i++)); do
             if nc -z -w 2 "$TARGET_HOST" "$TARGET_PORT" >/dev/null 2>&1; then
                 ((SUCCESS++))
             fi
         done
-        echo -e "انجام شد: ${SUCCESS} اتصال از ${CONNS} اتصال برقرار شد."
+        echo -e "done: ${SUCCESS} Connect from ${CONNS} Connection established."
         return 0
     fi
 
@@ -4915,18 +4915,18 @@ if dropped > 0:
     local RET=$?
     echo -e "${CYAN}==============================================================${NC}"
     if [[ $RET -eq 0 ]]; then
-        echo -e "${GREEN}[✔️] موفق؛ در تست اتصال‌های هم‌زمان، قطع غیرمنتظره مشاهده نشد.${NC}"
-        echo -e "${GREEN}اتصال هم‌زمان زیاد، بدون قطع غیرمنتظره؛ پایداری FRP و تونل${NC}"
+        echo -e "${GREEN}[✔️] successful; In the test of simultaneous connections, no unexpected disconnection was observed.${NC}"
+        echo -e "${GREEN}High simultaneous connection, no unexpected disconnection; sustainability FRP and the tunnel${NC}"
     else
-        echo -e "${RED}[!] ناموفق؛ بعضی اتصال‌ها زیر بار قطع شدند. فایل /var/log/navatunnel/errors.log را بررسی کنید.${NC}"
+        echo -e "${RED}[!] failed; Some connections were disconnected under load. file /var/log/navatunnel/errors.log Check out.${NC}"
     fi
     echo -e "${CYAN}==============================================================${NC}\n"
     return $RET
 }
 
 uninstall_all() {
-    echo -e "\n${RED}=== حذف کامل تونل‌ها و فرمان NavaTunnel ===${NC}"
-    read -p "GRE، FRP و فرمان NavaTunnel حذف شوند؟ [y/N]: " CONFIRM
+    echo -e "\n${RED}=== Complete removal of tunnels and steering wheel NavaTunnel ===${NC}"
+    read -p "GRE, FRP and command NavaTunnel be removed? [y/N]: " CONFIRM
     if [[ "$CONFIRM" =~ ^[Yy]$ ]]; then
         uninstall_all_force
     else
@@ -4939,7 +4939,7 @@ uninstall_all() {
 # (/usr/local/bin/NavaTunnel + /usr/local/bin/NavaTunnel.sh + legacy gre.sh) so
 # `NavaTunnel` stops working.
 uninstall_all_force() {
-        echo -e "${CYAN}[*] در حال حذف کامل NavaTunnel...${NC}"
+        echo -e "${CYAN}[*] Complete deletion NavaTunnel...${NC}"
         if [[ -f /etc/gre-panel/traffic.json ]]; then cli_traffic clear || return 1; fi
         # 1. Stop & disable all services & timers
         systemctl stop frps frpc "${TUNNEL_NAME}.service" gre-panel gre-chaff navatunnel-chaff navatunnel-watchdog.timer navatunnel-watchdog.service navatunnel-dpi >/dev/null 2>&1 || true
@@ -5008,12 +5008,12 @@ uninstall_all_force() {
         # 9. Remove entrypoints last
         rm -f /usr/local/bin/NavaTunnel /usr/local/bin/NavaTunnel.sh /usr/local/bin/navatunnel /usr/local/bin/navatunnel.sh /usr/local/bin/gre.sh
 
-        echo -e "${GREEN}[✔️] حذف کامل انجام شد؛ همه تونل‌ها، سرویس‌ها و فایل‌ها حذف شدند.${NC}"
+        echo -e "${GREEN}[✔️] Complete deletion is done; All tunnels, services and files are removed.${NC}"
 }
 
 remove_tunnel() {
-    echo -e "\n${RED}=== حذف تونل GRE و FRP ===${NC}"
-    read -p "تونل از همین سرور حذف شود؟ [y/N]: " CONFIRM
+    echo -e "\n${RED}=== Remove the tunnel GRE and FRP ===${NC}"
+    read -p "Delete the tunnel from this server? [y/N]: " CONFIRM
     if [[ "$CONFIRM" =~ ^[Yy]$ ]]; then
         remove_tunnel_force
     else
@@ -5024,7 +5024,7 @@ remove_tunnel() {
 # Non-interactive core: stop/disable units, drop interface, remove FRP files.
 # Shared configuration is retained until full uninstall.
 remove_tunnel_force() {
-        echo -e "${CYAN}[*] در حال حذف همه اجزای تونل...${NC}"
+        echo -e "${CYAN}[*] Removing all tunnel components...${NC}"
         if [[ -f /etc/gre-panel/traffic.json ]]; then cli_traffic clear || return 1; fi
         # Stop & disable services
         systemctl stop frps frpc "${TUNNEL_NAME}.service" gre-chaff navatunnel-chaff navatunnel-dpi >/dev/null 2>&1 || true
@@ -5074,7 +5074,7 @@ remove_tunnel_force() {
         rm -f "$PEERS_FILE"
         rm -f /usr/local/bin/NavaTunnel-chaff.sh /usr/local/bin/gre-chaff.sh
 
-        echo -e "${GREEN}[✔️] تونل، اینترفیس GRE، سرویس‌های FRP و فایل‌های آن‌ها حذف شدند.${NC}"
+        echo -e "${GREEN}[✔️] Tunnel, interface GRE, services FRP And their files were deleted.${NC}"
 }
 
 
@@ -5108,20 +5108,20 @@ tune_backup_once() {
     else
         echo "mss_clamp=absent" >> "$TUNE_BACKUP"
     fi
-    echo -e "${CYAN}[*] تنظیمات فعلی پشتیبان‌گیری شد در ${TUNE_BACKUP}.${NC}"
+    echo -e "${CYAN}[*] The current settings were backed up ${TUNE_BACKUP}.${NC}"
 }
 
 tune_apply() {
     tune_backup_once
-    echo -e "${CYAN}[*] در حال بهینه‌سازی شبکه برای سرعت و پایداری تونل...${NC}"
+    echo -e "${CYAN}[*] Optimizing the network for tunnel speed and stability...${NC}"
 
     # 1. BBR congestion control + fq queuing (best for high-latency / lossy links)
     modprobe tcp_bbr >/dev/null 2>&1 || true
     sysctl -w net.core.default_qdisc=fq >/dev/null 2>&1 || true
     if sysctl -w net.ipv4.tcp_congestion_control=bbr >/dev/null 2>&1; then
-        echo -e "${GREEN}[✔️] کنترل ازدحام TCP روی bbr و fq تنظیم شد${NC}"
+        echo -e "${GREEN}[✔️] Congestion control TCP on bbr and fq was set${NC}"
     else
-        echo -e "${YELLOW}[!] BBR در دسترس نیست؛ کنترل ازدحام فعلی حفظ شد.${NC}"
+        echo -e "${YELLOW}[!] BBR not available; Current congestion control was maintained.${NC}"
     fi
 
     # 2. Bigger socket buffers (16MB) and full TCP window scaling
@@ -5132,13 +5132,13 @@ tune_apply() {
     sysctl -w net.ipv4.tcp_rmem="4096 1048576 16777216" >/dev/null 2>&1
     sysctl -w net.ipv4.tcp_wmem="4096 1048576 16777216" >/dev/null 2>&1
     sysctl -w net.ipv4.tcp_window_scaling=1 >/dev/null 2>&1
-    echo -e "${GREEN}[✔️] بافرهای شبکه روی 16 مگابایت و مقیاس پنجره فعال شد${NC}"
+    echo -e "${GREEN}[✔️] Network buffers on 16 MB and window scaling enabled${NC}"
 
     # 3. Deeper NIC queue and high connection backlog
     sysctl -w net.core.netdev_max_backlog=65535 >/dev/null 2>&1
     sysctl -w net.core.somaxconn=65535 >/dev/null 2>&1
     sysctl -w net.ipv4.tcp_max_syn_backlog=65535 >/dev/null 2>&1
-    echo -e "${GREEN}[✔️] ظرفیت صف شبکه روی 65535 تنظیم شد${NC}"
+    echo -e "${GREEN}[✔️] Network queue capacity on 65535 was set${NC}"
 
     # 4. Anti-stall, keepalive, TIME_WAIT reuse, and fast connection tuning
     sysctl -w net.ipv4.tcp_slow_start_after_idle=0 >/dev/null 2>&1
@@ -5165,7 +5165,7 @@ tune_apply() {
     sysctl -w net.netfilter.nf_conntrack_tcp_timeout_close_wait=60 >/dev/null 2>&1 || true
     sysctl -w net.netfilter.nf_conntrack_tcp_timeout_fin_wait=60 >/dev/null 2>&1 || true
     sysctl -w net.netfilter.nf_conntrack_tcp_timeout_time_wait=60 >/dev/null 2>&1 || true
-    echo -e "${GREEN}[✔️] تنظیم نگهداری TCP، شروع سریع، استفاده مجدد، ظرفیت اتصال و بازه پورت‌ها انجام شد${NC}"
+    echo -e "${GREEN}[✔️] maintenance adjustment TCP, fast start, reuse, connection capacity, and ports span${NC}"
 
     # OS limits configuration for high concurrency
     mkdir -p /etc/security/limits.d
@@ -5184,9 +5184,9 @@ EOF
         tunnel_mtu_apply "$iface" >/dev/null 2>&1 || true
     done
     if ip link show "$TUNNEL_NAME" >/dev/null 2>&1; then
-        tunnel_mtu_apply "$TUNNEL_NAME" >/dev/null 2>&1 && echo -e "${GREEN}[✔️] ${TUNNEL_NAME} MTU → $(tunnel_mtu_get "$TUNNEL_NAME")${NC}" || echo -e "${YELLOW}[!] اعمال MTU تونل GRE ناموفق بود.${NC}"
+        tunnel_mtu_apply "$TUNNEL_NAME" >/dev/null 2>&1 && echo -e "${GREEN}[✔️] ${TUNNEL_NAME} MTU → $(tunnel_mtu_get "$TUNNEL_NAME")${NC}" || echo -e "${YELLOW}[!] apply MTU GRE tunnel It was unsuccessful.${NC}"
     else
-        echo -e "${YELLOW}[*] اینترفیس ${TUNNEL_NAME} هنوز موجود نیست؛ MTU در راه‌اندازی بعدی اعمال می‌شود.${NC}"
+        echo -e "${YELLOW}[*] Interface ${TUNNEL_NAME} not yet available; MTU It will be applied on the next startup.${NC}"
     fi
 
     # 6. MSS clamp: POSTROUTING (general) + per GRE interface (precise)
@@ -5200,7 +5200,7 @@ EOF
         iptables -t mangle -C FORWARD -p tcp --tcp-flags SYN,RST SYN -o "$gre_iface" -j TCPMSS --set-mss 1340 >/dev/null 2>&1 || \
             iptables -t mangle -A FORWARD -p tcp --tcp-flags SYN,RST SYN -o "$gre_iface" -j TCPMSS --set-mss 1340 >/dev/null 2>&1 || true
     done
-    echo -e "${GREEN}[✔️] محدودیت MSS روی قواعد عمومی و اینترفیس‌های GRE اعمال شد${NC}"
+    echo -e "${GREEN}[✔️] Limit MSS On general rules and interfaces GRE applied${NC}"
 
     # 7. Persist across reboots
     mkdir -p /etc/sysctl.d
@@ -5237,16 +5237,16 @@ net.netfilter.nf_conntrack_tcp_timeout_close_wait = 60
 net.netfilter.nf_conntrack_tcp_timeout_fin_wait = 60
 net.netfilter.nf_conntrack_tcp_timeout_time_wait = 60
 EOF
-    echo -e "${GREEN}[✔️] تنظیمات در /etc/sysctl.d/99-gre-tune.conf ذخیره شد${NC}"
-    echo -e "${GREEN}[✔️] بهینه‌سازی انجام شد؛ در صورت افت کیفیت، بازگردانی تنظیمات را اجرا کنید.${NC}"
+    echo -e "${GREEN}[✔️] Settings in /etc/sysctl.d/99-gre-tune.conf saved${NC}"
+    echo -e "${GREEN}[✔️] Optimization done; If the quality drops, restore the settings.${NC}"
 }
 
 tune_restore() {
     if [[ ! -f "$TUNE_BACKUP" ]]; then
-        echo -e "${YELLOW}[!] در ${TUNE_BACKUP} پشتیبان پیدا نشد؛ بازگردانی ممکن نیست.${NC}"
+        echo -e "${YELLOW}[!] in ${TUNE_BACKUP} Backup not found; It is not possible to return.${NC}"
         return 1
     fi
-    echo -e "${CYAN}[*] در حال بازگردانی تنظیمات پیش از بهینه‌سازی...${NC}"
+    echo -e "${CYAN}[*] Reverting to pre-optimized settings...${NC}"
     local k v
     while IFS='=' read -r k v; do
         case "$k" in
@@ -5264,38 +5264,38 @@ tune_restore() {
                     for gri in $(ip -o link show 2>/dev/null | awk -F': ' '{print $2}' | cut -d'@' -f1 | grep -E '^(gre-t|gre-tunnel)'); do
                         iptables -t mangle -D FORWARD -p tcp --tcp-flags SYN,RST SYN -o "$gri" -j TCPMSS --set-mss 1340 >/dev/null 2>&1 || true
                     done
-                    echo -e "${GREEN}[✔️] قواعد محدودیت MSS حذف شدند${NC}"
+                    echo -e "${GREEN}[✔️] Limit rules MSS were deleted${NC}"
                 fi ;;
         esac
     done < "$TUNE_BACKUP"
     rm -f /etc/sysctl.d/99-gre-tune.conf
-    echo -e "${GREEN}[✔️] بازگردانی انجام شد؛ پشتیبان در ${TUNE_BACKUP} تا بهینه‌سازی بعدی باقی می‌ماند.${NC}"
+    echo -e "${GREEN}[✔️] Restore done; Backup in ${TUNE_BACKUP} It remains until the next optimization.${NC}"
     rm -f "$TUNE_BACKUP"
 }
 
 tune_status() {
-    echo -e "${CYAN}=== وضعیت بهینه‌سازی تونل ===${NC}"
-    echo "کنترل ازدحام: $(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo ?) ($(sysctl -n net.core.default_qdisc 2>/dev/null || echo ?))"
-    echo "بافر دریافت: $(sysctl -n net.core.rmem_max 2>/dev/null || echo ?)"
-    echo "بافر ارسال: $(sysctl -n net.core.wmem_max 2>/dev/null || echo ?)"
-    echo "صف شبکه: $(sysctl -n net.core.netdev_max_backlog 2>/dev/null || echo ?)"
-    echo "هدایت بسته‌ها: $(sysctl -n net.ipv4.ip_forward 2>/dev/null || echo ?)"
-    echo "MTU تونل GRE: $(ip link show "$TUNNEL_NAME" 2>/dev/null | grep -o 'mtu [0-9]*' | awk '{print $2}' || echo 'بدون اینترفیس')"
+    echo -e "${CYAN}=== Tunnel optimization status ===${NC}"
+    echo "Congestion control: $(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo ?) ($(sysctl -n net.core.default_qdisc 2>/dev/null || echo ?))"
+    echo "receive buffer: $(sysctl -n net.core.rmem_max 2>/dev/null || echo ?)"
+    echo "send buffer: $(sysctl -n net.core.wmem_max 2>/dev/null || echo ?)"
+    echo "network queue: $(sysctl -n net.core.netdev_max_backlog 2>/dev/null || echo ?)"
+    echo "Packet routing: $(sysctl -n net.ipv4.ip_forward 2>/dev/null || echo ?)"
+    echo "MTU GRE tunnel: $(ip link show "$TUNNEL_NAME" 2>/dev/null | grep -o 'mtu [0-9]*' | awk '{print $2}' || echo 'No interface')"
     if iptables -t mangle -C POSTROUTING -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 1340 >/dev/null 2>&1 || \
        iptables -t mangle -C POSTROUTING -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu >/dev/null 2>&1; then
-        echo "محدودیت MSS: فعال"
+        echo "Limit MSS: Enabled"
     else
-        echo "محدودیت MSS: غیرفعال"
+        echo "Limit MSS: Disabled"
     fi
-    if [[ -f "$TUNE_BACKUP" ]]; then echo "پشتیبان: $TUNE_BACKUP (قابل بازگردانی)"; else echo "پشتیبان: موجود نیست"; fi
-    [[ -f /etc/sysctl.d/99-gre-tune.conf ]] && echo "تنظیم دائمی: فعال در /etc/sysctl.d/99-gre-tune.conf" || echo "تنظیم دائمی: خیر"
+    if [[ -f "$TUNE_BACKUP" ]]; then echo "Backup: $TUNE_BACKUP (Returnable)"; else echo "Backup: not available"; fi
+    [[ -f /etc/sysctl.d/99-gre-tune.conf ]] && echo "Permanent adjustment: active in /etc/sysctl.d/99-gre-tune.conf" || echo "Permanent adjustment: no"
 }
 
 # free_ram: drop page caches + compact memory + journald cap + ensure 1G swap.
 # Safe on any Ubuntu host: no service is touched, kernel reclaims only
 # discardable cache; swap is created once and reused afterwards.
 free_ram() {
-    echo -e "${CYAN}[*] در حال آزادسازی حافظه کش؛ سرویس‌ها متوقف نمی‌شوند...${NC}"
+    echo -e "${CYAN}[*] freeing cache memory; Services do not stop...${NC}"
     local before
     before=$(free -m | awk '/^Mem:/{print $7}')
     # 1. journald cap (the #1 silent RAM eater on Ubuntu: 100M+ in RAM)
@@ -5306,33 +5306,33 @@ free_ram() {
         grep -q '^RuntimeMaxUse=16M' /etc/systemd/journald.conf || echo 'RuntimeMaxUse=16M' >> /etc/systemd/journald.conf
         journalctl --vacuum-size=16M >/dev/null 2>&1
         systemctl restart systemd-journald >/dev/null 2>&1
-        echo -e "${GREEN}[✔️] مصرف لاگ journald به 16 مگابایت محدود شد${NC}"
+        echo -e "${GREEN}[✔️] Log consumption journald to 16 MB was limited${NC}"
     fi
     # 2. drop page caches + compact
     sync
     echo 3 > /proc/sys/vm/drop_caches 2>/dev/null
     echo 1 > /proc/sys/vm/compact_memory 2>/dev/null
-    echo -e "${GREEN}[✔️] کش فایل آزاد و حافظه مرتب شد${NC}"
+    echo -e "${GREEN}[✔️] The cache file was freed and the memory was sorted${NC}"
     # 3. ensure 1G swap (safety net for 1GB VPS)
     if ! swapon --show 2>/dev/null | grep -q '/swapfile'; then
-        echo -e "${CYAN}[*] در حال ساخت یک گیگابایت حافظه swap...${NC}"
+        echo -e "${CYAN}[*] Creating a gigabyte of memory swap...${NC}"
         if fallocate -l 1G /swapfile 2>/dev/null || dd if=/dev/zero of=/swapfile bs=1M count=1024 2>/dev/null; then
             chmod 600 /swapfile
             mkswap /swapfile >/dev/null 2>&1
             swapon /swapfile >/dev/null 2>&1
             grep -q '/swapfile' /etc/fstab 2>/dev/null || echo '/swapfile none swap sw 0 0' >> /etc/fstab
-            echo -e "${GREEN}[✔️] یک گیگابایت swap ساخته شد${NC}"
+            echo -e "${GREEN}[✔️] One gigabyte swap was made${NC}"
         else
-            echo -e "${YELLOW}[!] ساخت swap ناموفق بود؛ فضای دیسک را بررسی کنید${NC}"
+            echo -e "${YELLOW}[!] made swap was unsuccessful; Check disk space${NC}"
         fi
     else
-        echo -e "${GREEN}[✔️] حافظه swap از قبل فعال است${NC}"
+        echo -e "${GREEN}[✔️] memory swap It is already active${NC}"
     fi
     sysctl -w vm.swappiness=15 >/dev/null 2>&1
     echo 'vm.swappiness=15' > /etc/sysctl.d/99-swappiness.conf 2>/dev/null
     local after
     after=$(free -m | awk '/^Mem:/{print $7}')
-    echo -e "${GREEN}[✔️] حافظه آزاد: ${before}M → ${after}M${NC}"
+    echo -e "${GREEN}[✔️] free memory: ${before}M → ${after}M${NC}"
     free -m | head -2
 }
 
@@ -5464,18 +5464,18 @@ except Exception:
     local DETAIL=""
     if [[ $GRE_OK -eq 1 && $FRP_OK -eq 1 ]]; then
         STATUS="up"
-        DETAIL="پینگ GRE به $PEER_GRE موفق و FRP $FRP_NAME فعال است"
+        DETAIL="Ping GRE to $PEER_GRE successful and FRP $FRP_NAME is active"
     else
         local ERR_PARTS=()
         if [[ $GRE_OK -ne 1 ]]; then
             if [[ -z "$PEER_GRE" ]]; then
-                ERR_PARTS+=("اینترفیس GRE موجود یا فعال نیست")
+                ERR_PARTS+=("Interface GRE Not available or active")
             else
-                ERR_PARTS+=("پینگ GRE به $PEER_GRE ناموفق بود")
+                ERR_PARTS+=("Ping GRE to $PEER_GRE It was unsuccessful")
             fi
         fi
         if [[ $FRP_OK -ne 1 ]]; then
-            ERR_PARTS+=("سرویس FRP ${FRP_NAME:-service} غیرفعال است")
+            ERR_PARTS+=("service FRP ${FRP_NAME:-service} It is disabled")
         fi
         DETAIL=$(IFS="; "; echo "${ERR_PARTS[*]}")
     fi
@@ -5483,9 +5483,9 @@ except Exception:
     if [[ "${1:-}" == --machine ]]; then
         echo "WATCHDOG status=$STATUS fails=$FAILS detail=$DETAIL"
     else
-        echo "وضعیت پایش: $(fa_state "$STATUS")"
-        echo "خطاهای متوالی: $FAILS"
-        echo "جزئیات: $DETAIL"
+        echo "Watchdog status: $(display_state "$STATUS")"
+        echo "Consecutive errors: $FAILS"
+        echo "Details: $DETAIL"
     fi
     return 0
 }
@@ -5514,7 +5514,7 @@ except Exception:
     IFS=$'\t' read -r TG_TOKEN TG_CHAT_ID TG_ROUTE TG_PORT <<< "$CFG"
 
     if [[ -z "$TG_TOKEN" || -z "$TG_CHAT_ID" ]]; then
-        echo -e "${YELLOW}[!] توکن ربات یا شناسه گفت‌وگوی تلگرام در ${WATCHDOG_FILE} تنظیم نشده است.${NC}" >&2
+        echo -e "${YELLOW}[!] The bot token or Telegram conversation ID in ${WATCHDOG_FILE} Not set.${NC}" >&2
         return 1
     fi
 
@@ -5525,7 +5525,7 @@ except Exception:
     local CURL_ARGS=(-sS -f)
     if [[ "$TG_ROUTE" == "tunnel" ]]; then
         if [[ -z "$TG_PORT" || "$TG_PORT" -le 0 ]]; then
-            echo -e "${RED}[!] مسیر تلگرام از تونل انتخاب شده ولی پورت آن تنظیم نشده است.${NC}" >&2
+            echo -e "${RED}[!] Telegram route is selected from the tunnel, but its port is not set.${NC}" >&2
             return 1
         fi
         CURL_ARGS+=(--max-time 20 --socks5-hostname "127.0.0.1:${TG_PORT}")
@@ -5540,19 +5540,19 @@ except Exception:
     if [[ $RET -ne 0 ]]; then
         local REDACTED_ERR
         REDACTED_ERR=$(echo "$CURL_OUT" | sed "s/${TG_TOKEN}/[REDACTED]/g")
-        echo -e "${RED}[!] ارسال تلگرام ناموفق بود: ${REDACTED_ERR}${NC}" >&2
+        echo -e "${RED}[!] Sending telegram failed: ${REDACTED_ERR}${NC}" >&2
         return 1
     fi
     return 0
 }
 
 watchdog_test() {
-    echo -e "${CYAN}[*] در حال تست هشدار تلگرام...${NC}"
-    if watchdog_send "آزمایش پایش NavaTunnel موفق بود"; then
-        echo -e "${GREEN}[✔️] پیام آزمایشی تلگرام ارسال شد.${NC}"
+    echo -e "${CYAN}[*] Testing telegram alert...${NC}"
+    if watchdog_send "Monitoring test NavaTunnel It was successful"; then
+        echo -e "${GREEN}[✔️] Telegram test message has been sent.${NC}"
         return 0
     else
-        echo -e "${RED}[!] ارسال پیام آزمایشی ناموفق بود؛ توکن، شناسه گفت‌وگو و مسیر را بررسی کنید.${NC}"
+        echo -e "${RED}[!] Sending a test message failed; Check the token, conversation ID, and route.${NC}"
         return 1
     fi
 }
@@ -5608,7 +5608,7 @@ watchdog_tick() {
     mkdir -p /var/lock 2>/dev/null || true
     exec 200>"$LOCKFILE" 2>/dev/null || exec 200>/tmp/navatunnel-watchdog.lock
     if ! flock -n 200; then
-        echo "پایش دیگری در حال اجرا است؛ این اجرا پایان یافت"
+        echo "Another monitor is running; This performance is over"
         return 0
     fi
 
@@ -5707,9 +5707,9 @@ print(action)
         if [[ "$DECISION" == DOWN* ]]; then
             if [[ "$DECISION" == "DOWN" ]]; then
                 if [[ "$DO_RESTART" == "True" || "$DO_RESTART" == "true" ]]; then
-                    watchdog_send "🔴 تونل قطع است: ${DETAIL} (تلاش برای ری‌استارت تونل)" || true
+                    watchdog_send "🔴 The tunnel is closed: ${DETAIL} (Trying to restart the tunnel)" || true
                 else
-                    watchdog_send "🔴 تونل قطع است: ${DETAIL} (فقط هشدار؛ ری‌استارت خودکار خاموش است)" || true
+                    watchdog_send "🔴 The tunnel is closed: ${DETAIL} (Just a warning; Auto restart is off)" || true
                 fi
             fi
             if [[ "$DO_RESTART" == "True" || "$DO_RESTART" == "true" ]]; then
@@ -5718,7 +5718,7 @@ print(action)
         elif [[ "$DECISION" == RECOVERED* ]]; then
             local DMIN
             DMIN=$(echo "$DECISION" | awk '{print $2}')
-            watchdog_send "🟢 تونل بازیابی شد؛ مدت قطعی ${DMIN} دقیقه" || true
+            watchdog_send "🟢 The tunnel was recovered; definite period ${DMIN} minute" || true
         fi
     fi
 
@@ -5752,7 +5752,7 @@ backup_now() {
         if [[ "$1" == --* && $# -lt 2 ]]; then
             case "$1" in
                 --force|--show-token|--encrypt|--compress|--dry-run|--off|--help) ;;
-                *) echo "مقدار این گزینه وارد نشده است: $1" >&2; return 1 ;;
+                *) echo "The value of this option is not entered: $1" >&2; return 1 ;;
             esac
         fi
         case "$1" in
@@ -5766,13 +5766,13 @@ backup_now() {
         esac
     done
 
-    [[ "$KEEP" =~ ^[0-9]+$ ]] || { echo "مقدار --keep باید عدد صحیح نامنفی باشد." >&2; return 1; }
+    [[ "$KEEP" =~ ^[0-9]+$ ]] || { echo "amount --keep Must be a non-negative integer." >&2; return 1; }
     mkdir -p "$OUTDIR" || return 1
     chmod 700 "$OUTDIR" 2>/dev/null || true
 
     ensure_backup_key || return 1
     if [[ ! -f /etc/gre-panel/backup.key ]]; then
-        echo -e "${RED}[!] کلید /etc/gre-panel/backup.key پیدا نشد؛ رمزگذاری پشتیبان ممکن نیست.${NC}" >&2
+        echo -e "${RED}[!] the key /etc/gre-panel/backup.key not found Backup encryption is not possible.${NC}" >&2
         return 1
     fi
 
@@ -5790,12 +5790,12 @@ backup_now() {
     done
 
     if [[ ${#FILES[@]} -eq 0 ]]; then
-        echo -e "${RED}[!] فایل تنظیمات یا سرویس برای پشتیبان‌گیری پیدا نشد.${NC}" >&2
+        echo -e "${RED}[!] The configuration file or service to back up was not found.${NC}" >&2
         return 1
     fi
 
     if ! (set -o pipefail; tar -czf - "${FILES[@]}" 2>/dev/null | openssl enc -aes-256-cbc -pbkdf2 -pass file:/etc/gre-panel/backup.key -out "$OUT_FILE"); then
-        echo -e "${RED}[!] ساخت پشتیبان رمزگذاری‌شده ناموفق بود.${NC}" >&2
+        echo -e "${RED}[!] Failed to create encrypted backup.${NC}" >&2
         rm -f "$OUT_FILE"
         return 1
     fi
@@ -5807,14 +5807,14 @@ backup_now() {
     HSIZE=$(du -h "$OUT_FILE" 2>/dev/null | cut -f1)
 
     echo "BACKUP path=${OUT_FILE} size=${SIZE}"
-    echo -e "${GREEN}[✔️] پشتیبان ساخته شد: ${OUT_FILE} (${HSIZE})${NC}"
+    echo -e "${GREEN}[✔️] Backup was made: ${OUT_FILE} (${HSIZE})${NC}"
 
     if [[ "$KEEP" -gt 0 ]]; then
         local OLD_FILES
         OLD_FILES=$(ls -1t "$OUTDIR"/navatunnel-backup-*.enc 2>/dev/null | tail -n +$((KEEP + 1)))
         if [[ -n "$OLD_FILES" ]]; then
             echo "$OLD_FILES" | xargs -r rm -f
-            echo -e "${CYAN}[*] پشتیبان‌های قدیمی پاک شد؛ ${KEEP} پشتیبان آخر باقی ماند.${NC}"
+            echo -e "${CYAN}[*] Old backups are deleted; ${KEEP} The last backup remained.${NC}"
         fi
     fi
     return 0
@@ -5827,7 +5827,7 @@ backup_restore() {
         if [[ "$1" == --* && $# -lt 2 ]]; then
             case "$1" in
                 --force|--show-token|--encrypt|--compress|--dry-run|--off|--help) ;;
-                *) echo "مقدار این گزینه وارد نشده است: $1" >&2; return 1 ;;
+                *) echo "The value of this option is not entered: $1" >&2; return 1 ;;
             esac
         fi
         case "$1" in
@@ -5837,13 +5837,13 @@ backup_restore() {
     done
 
     if [[ -z "$FILE" || ! -f "$FILE" ]]; then
-        echo -e "${RED}[!] فایل پشتیبان پیدا نشد: '${FILE}'${NC}" >&2
+        echo -e "${RED}[!] Backup file not found: '${FILE}'${NC}" >&2
         return 1
     fi
     ensure_backup_key || return 1
     local KEY_FILE="/etc/gre-panel/backup.key"
     if [[ ! -f "$KEY_FILE" ]]; then
-        echo -e "${RED}[!] کلید رمزگذاری پیدا نشد؛ بازکردن پشتیبان ممکن نیست.${NC}" >&2
+        echo -e "${RED}[!] Encryption key not found; Unable to open backup.${NC}" >&2
         return 1
     fi
 
@@ -5851,38 +5851,38 @@ backup_restore() {
     TMP_D=$(mktemp -d)
     trap 'rm -rf "$TMP_D"' RETURN
 
-    echo -e "${CYAN}[*] در حال رمزگشایی فایل پشتیبان...${NC}"
+    echo -e "${CYAN}[*] Decrypting backup file...${NC}"
     if ! openssl enc -d -aes-256-cbc -pbkdf2 -pass file:"$KEY_FILE" -in "$FILE" -out "$TMP_D/backup.tar.gz" 2>/dev/null; then
-        echo -e "${RED}[!] رمزگشایی ناموفق بود؛ کلید نامعتبر یا فایل خراب است.${NC}" >&2
+        echo -e "${RED}[!] Decryption failed; The key is invalid or the file is corrupted.${NC}" >&2
         return 1
     fi
 
-    echo -e "${CYAN}[*] در حال بررسی محتوای پشتیبان...${NC}"
+    echo -e "${CYAN}[*] Checking backup content...${NC}"
     if ! tar -ztf "$TMP_D/backup.tar.gz" >"$TMP_D/list.txt" 2>/dev/null; then
-        echo -e "${RED}[!] بررسی پشتیبان ناموفق بود؛ فایل tar نامعتبر است.${NC}" >&2
+        echo -e "${RED}[!] Backup check failed; file tar It is invalid.${NC}" >&2
         return 1
     fi
 
     if [[ "$DRY_RUN" -eq 1 ]]; then
-        echo -e "${GREEN}[✔️] پشتیبان معتبر است؛ فایل‌های داخل:${NC}"
+        echo -e "${GREEN}[✔️] The backup is valid; files inside:${NC}"
         cat "$TMP_D/list.txt"
         return 0
     fi
 
-    echo -e "${CYAN}[*] در حال بازگردانی تنظیمات و سرویس‌ها...${NC}"
+    echo -e "${CYAN}[*] Restoring settings and services...${NC}"
     tar -xzf "$TMP_D/backup.tar.gz" -C / || return 1
     chmod 600 /etc/gre-panel/*.json 2>/dev/null || true
-    echo -e "${GREEN}[✔️] فایل‌های بازگردانده‌شده:${NC}"
+    echo -e "${GREEN}[✔️] Restored files:${NC}"
     cat "$TMP_D/list.txt"
 
-    echo -e "${CYAN}[*] در حال بازخوانی تنظیمات systemd...${NC}"
+    echo -e "${CYAN}[*] Reloading settings systemd...${NC}"
     chmod 600 "${CONFIG_DIR}"/*.toml 2>/dev/null || true
     systemctl daemon-reload
 
-    echo -e "${CYAN}[*] در حال ری‌استارت سرویس‌های تونل...${NC}"
+    echo -e "${CYAN}[*] Restarting tunnel services...${NC}"
     restart_all
 
-    echo -e "${GREEN}[✔️] بازگردانی با موفقیت انجام شد.${NC}"
+    echo -e "${GREEN}[✔️] The restore was successful.${NC}"
     return 0
 }
 
@@ -5890,7 +5890,7 @@ install_watchdog_units() {
     [[ -x "$NAVATUNNEL_BIN" ]] || { cp "$0" "$NAVATUNNEL_BIN" 2>/dev/null && chmod +x "$NAVATUNNEL_BIN"; } || true
     cat << 'EOF' > /etc/systemd/system/navatunnel-watchdog.service
 [Unit]
-Description=پایش تونل و اجرای پشتیبان زمان‌بندی‌شده
+Description=Tunnel monitoring and scheduled backup execution
 After=network.target
 
 [Service]
@@ -5900,7 +5900,7 @@ EOF
 
     cat << 'EOF' > /etc/systemd/system/navatunnel-watchdog.timer
 [Unit]
-Description=پایش تونل NavaTunnel در هر دقیقه
+Description=Tunnel monitoring NavaTunnel in every minute
 After=network.target
 
 [Timer]
@@ -5935,7 +5935,7 @@ try:
 except Exception:
     pass
 ' 2>/dev/null || true
-    echo -e "${GREEN}[✔️] پایش فعال شد؛ بررسی در هر دقیقه انجام می‌شود.${NC}"
+    echo -e "${GREEN}[✔️] His watch was activated; Checks are done every minute.${NC}"
 }
 
 watchdog_off() {
@@ -5957,13 +5957,13 @@ try:
 except Exception:
     pass
 ' 2>/dev/null || true
-    echo -e "${YELLOW}[*] پایش غیرفعال و زمان‌سنج متوقف شد.${NC}"
+    echo -e "${YELLOW}[*] Monitoring is disabled and the timer is stopped.${NC}"
 }
 
 watchdog_status_full() {
     init_watchdog_json
     echo -e "${CYAN}==========================================================${NC}"
-    echo -e "${CYAN}                 وضعیت پایش NavaTunnel                   ${NC}"
+    echo -e "${CYAN}                 Watchdog status NavaTunnel                   ${NC}"
     echo -e "${CYAN}==========================================================${NC}"
 
     local INFO
@@ -5978,20 +5978,20 @@ try:
     if tok:
         masked = tok[:6] + "..." + tok[-4:] if len(tok) > 10 else "******"
     else:
-        masked = "(تنظیم نشده)"
-    cid = str(d.get("tg_chat_id", "")) or "(تنظیم نشده)"
+        masked = "(not set)"
+    cid = str(d.get("tg_chat_id", "")) or "(not set)"
     route = d.get("tg_route", "direct")
     port = str(d.get("tg_tunnel_port", 0))
     fails = str(d.get("consec_fails", 0))
     thresh = str(d.get("fail_threshold", 2))
-    last_c = d.get("last_check", "") or "(هنوز ثبت نشده)"
-    last_a = d.get("last_alert", "") or "(بدون مقدار)"
+    last_c = d.get("last_check", "") or "(Not registered yet)"
+    last_a = d.get("last_alert", "") or "(No quantity)"
     be = int(d.get("backup_every_hours", 0))
     bd = d.get("backup_daily_at", "")
     if be > 0:
-        sched = f"هر {be} ساعت"
+        sched = f"every {be} hour"
     elif bd:
-        sched = f"روزانه ساعت {bd}"
+        sched = f"daily hours {bd}"
     else:
         sched = "Disabled"
     print(f"{en}\t{masked}\t{cid}\t{route}\t{port}\t{fails}\t{thresh}\t{last_c}\t{last_a}\t{sched}")
@@ -6004,35 +6004,35 @@ except Exception as e:
 
     local TIMER_ACTIVE="inactive"
     if systemctl is-active --quiet navatunnel-watchdog.timer 2>/dev/null; then
-        TIMER_ACTIVE="فعال در هر دقیقه"
+        TIMER_ACTIVE="Active every minute"
     fi
 
-    echo -e "وضعیت پایش:     ${CYAN}$(fa_state "${EN}")${NC} (زمان‌سنج: $(fa_state "${TIMER_ACTIVE}"))"
-    echo -e "خطاهای متوالی:  ${FAILS} / ${THRESH}"
-    echo -e "آخرین بررسی:         ${LAST_C}"
-    echo -e "آخرین هشدار:         ${LAST_A}"
+    echo -e "Watchdog status:     ${CYAN}$(display_state "${EN}")${NC} (timer: $(display_state "${TIMER_ACTIVE}"))"
+    echo -e "Consecutive errors:  ${FAILS} / ${THRESH}"
+    echo -e "Last review:         ${LAST_C}"
+    echo -e "Last warning:         ${LAST_A}"
     echo ""
-    echo -e "${YELLOW}── هشدارهای تلگرام ──${NC}"
-    echo -e "توکن ربات:          ${TOK}"
-    echo -e "شناسه گفت‌وگو:            ${CID}"
+    echo -e "${YELLOW}── Telegram alerts ──${NC}"
+    echo -e "Robot token:          ${TOK}"
+    echo -e "Conversation ID:            ${CID}"
     if [[ "$ROUTE" == "tunnel" ]]; then
-        echo -e "مسیر: تونل (SOCKS5 127.0.0.1:${PORT})"
+        echo -e "path: Tunnel (SOCKS5 127.0.0.1:${PORT})"
     else
-        echo -e "مسیر: مستقیم"
+        echo -e "path: Direct"
     fi
     echo ""
-    echo -e "${YELLOW}── زمان‌بندی و فایل‌های پشتیبان ──${NC}"
-    echo -e "زمان‌بندی:           ${SCHED}"
+    echo -e "${YELLOW}── Schedule and backup files ──${NC}"
+    echo -e "timing:           ${SCHED}"
     local BC=0
     if [[ -d "$BACKUP_DIR" ]]; then
         BC=$(ls -1 "$BACKUP_DIR"/navatunnel-backup-*.enc 2>/dev/null | wc -l)
     fi
-    echo -e "پشتیبان‌های ذخیره‌شده:     ${BC} در ${BACKUP_DIR}"
+    echo -e "Saved backups:     ${BC} in ${BACKUP_DIR}"
     if [[ "$BC" -gt 0 ]]; then
         ls -lh "$BACKUP_DIR"/navatunnel-backup-*.enc 2>/dev/null | awk '{print "  " $9 " (" $5 ", " $6 " " $7 " " $8 ")"}' | tail -n 5
     fi
     echo ""
-    echo -e "${YELLOW}── بررسی فعلی سلامت ──${NC}"
+    echo -e "${YELLOW}── Current health review ──${NC}"
     watchdog_check
     echo -e "${CYAN}==========================================================${NC}"
 }
@@ -6075,7 +6075,7 @@ menu_watchdog() {
     while true; do
         ui_clear
         echo -e "${CYAN}==========================================================${NC}"
-        echo -e "${CYAN}              پایش و پشتیبان رمزگذاری‌شده                 ${NC}"
+        echo -e "${CYAN}              Encrypted monitoring and backup                 ${NC}"
         echo -e "${CYAN}==========================================================${NC}"
         echo ""
         init_watchdog_json
@@ -6089,22 +6089,22 @@ except Exception:
     print("DISABLED")
 ' 2>/dev/null)
         if [[ "$W_EN" == "ENABLED" ]]; then
-            echo -e "وضعیت پایش: ${GREEN}● فعال${NC} (بررسی در هر دقیقه)"
+            echo -e "Watchdog status: ${GREEN}● Enabled${NC} (Check every minute)"
         else
-            echo -e "وضعیت پایش: ${RED}○ غیرفعال${NC}"
+            echo -e "Watchdog status: ${RED}○ Disabled${NC}"
         fi
         echo ""
-        echo "  1) فعال یا غیرفعال‌سازی پایش"
-        echo "  2) تنظیم توکن ربات و شناسه گفت‌وگوی تلگرام"
-        echo "  3) تست هشدار تلگرام"
-        echo "  4) انتخاب مسیر مستقیم یا تونل و پورت SOCKS"
-        echo "  5) ساخت پشتیبان رمزگذاری‌شده"
-        echo "  6) زمان‌بندی پشتیبان ساعتی یا روزانه"
-        echo "  7) بازگردانی پشتیبان رمزگذاری‌شده"
-        echo "  8) نمایش وضعیت و پشتیبان‌ها"
-        echo "  0) بازگشت به منوی اصلی"
+        echo "  1) Enable or disable monitoring"
+        echo "  2) Setting the bot token and Telegram chat ID"
+        echo "  3) Telegram alert test"
+        echo "  4) Selection of direct route or tunnel and port SOCKS"
+        echo "  5) Create an encrypted backup"
+        echo "  6) Hourly or daily backup schedule"
+        echo "  7) Restore encrypted backup"
+        echo "  8) Display status and backups"
+        echo "  0) Return to the main menu"
         echo ""
-        read -r -p "انتخاب گزینه [0-8]: " SUBOPT || return 0
+        read -r -p "Select option [0-8]: " SUBOPT || return 0
         case "$SUBOPT" in
             1)
                 if [[ "$W_EN" == "ENABLED" ]]; then
@@ -6112,12 +6112,12 @@ except Exception:
                 else
                     watchdog_on
                 fi
-                read -r -p "برای ادامه Enter بزنید..." _ || return 0
+                read -r -p "to continue Enter hit..." _ || return 0
                 ;;
             2)
-                echo -e "\n${CYAN}── تنظیم هشدارهای تلگرام ──${NC}"
-                read -r -p "توکن ربات تلگرام: " INPUT_TOKEN || return 0
-                read -r -p "شناسه گفت‌وگوی تلگرام: " INPUT_CID || return 0
+                echo -e "\n${CYAN}── Setting Telegram alerts ──${NC}"
+                read -r -p "Telegram bot token: " INPUT_TOKEN || return 0
+                read -r -p "Telegram chat ID: " INPUT_CID || return 0
                 if [[ -n "$INPUT_TOKEN" || -n "$INPUT_CID" ]]; then
                     python3 -c '
 import json
@@ -6139,21 +6139,21 @@ try:
 except Exception as e:
     print(e)
 ' 2>/dev/null
-                    echo -e "${GREEN}[✔️] تنظیمات تلگرام ذخیره شد.${NC}"
+                    echo -e "${GREEN}[✔️] Telegram settings have been saved.${NC}"
                 else
-                    echo -e "${YELLOW}[*] تغییری انجام نشد.${NC}"
+                    echo -e "${YELLOW}[*] No change was made.${NC}"
                 fi
-                read -r -p "برای ادامه Enter بزنید..." _ || return 0
+                read -r -p "to continue Enter hit..." _ || return 0
                 ;;
             3)
                 watchdog_test
-                read -r -p "برای ادامه Enter بزنید..." _ || return 0
+                read -r -p "to continue Enter hit..." _ || return 0
                 ;;
             4)
-                echo -e "\n${CYAN}── مسیر ارسال تلگرام ──${NC}"
-                echo "  1) مستقیم به API تلگرام"
-                echo "  2) از تونل با SOCKS5"
-                read -r -p "انتخاب مسیر [1-2]: " ROUTE_CHOICE || return 0
+                echo -e "\n${CYAN}── Telegram sending path ──${NC}"
+                echo "  1) direct to API Telegram"
+                echo "  2) from the tunnel with SOCKS5"
+                read -r -p "Path selection [1-2]: " ROUTE_CHOICE || return 0
                 if [[ "$ROUTE_CHOICE" == "1" ]]; then
                     python3 -c '
 import json
@@ -6170,27 +6170,27 @@ try:
 except Exception:
     pass
 ' 2>/dev/null
-                    echo -e "${GREEN}[✔️] مسیر مستقیم انتخاب شد.${NC}"
+                    echo -e "${GREEN}[✔️] The direct route was chosen.${NC}"
                 elif [[ "$ROUTE_CHOICE" == "2" ]]; then
                     local PORTS=()
                     mapfile -t PORTS < <(find_live_proxy_ports)
                     local CHOSEN_PORT=0
                     if [[ ${#PORTS[@]} -gt 0 ]]; then
-                        echo -e "\nپورت‌های تونل شناسایی‌شده:"
+                        echo -e "\nDetected tunnel ports:"
                         local idx=1
                         for p in "${PORTS[@]}"; do
-                            echo "  $idx) پورت $p"
+                            echo "  $idx) Port $p"
                             ((idx++))
                         done
-                        echo "  $idx) واردکردن پورت دلخواه"
-                        read -r -p "انتخاب پورت [1-$idx]: " PIDX || return 0
+                        echo "  $idx) Enter the desired port"
+                        read -r -p "Port selection [1-$idx]: " PIDX || return 0
                         if [[ "$PIDX" =~ ^[0-9]+$ ]] && (( PIDX >= 1 && PIDX < idx )); then
                             CHOSEN_PORT="${PORTS[$((PIDX-1))]}"
                         else
-                            read -r -p "پورت SOCKS5 تونل بین 1 و 65535: " CHOSEN_PORT || return 0
+                            read -r -p "Port SOCKS5 tunnel between 1 and 65535: " CHOSEN_PORT || return 0
                         fi
                     else
-                        read -r -p "پورت SOCKS5 تونل بین 1 و 65535: " CHOSEN_PORT || return 0
+                        read -r -p "Port SOCKS5 tunnel between 1 and 65535: " CHOSEN_PORT || return 0
                     fi
                     if is_valid_port "$CHOSEN_PORT"; then
                         python3 -c '
@@ -6209,27 +6209,27 @@ try:
 except Exception:
     pass
 ' 2>/dev/null
-                        echo -e "${GREEN}[✔️] مسیر تونل روی 127.0.0.1:${CHOSEN_PORT} انتخاب شد.${NC}"
+                        echo -e "${GREEN}[✔️] on tunnel route 127.0.0.1:${CHOSEN_PORT} was selected.${NC}"
                     else
-                        echo -e "${RED}[!] شماره پورت نامعتبر است.${NC}"
+                        echo -e "${RED}[!] The port number is invalid.${NC}"
                     fi
                 fi
-                read -r -p "برای ادامه Enter بزنید..." _ || return 0
+                read -r -p "to continue Enter hit..." _ || return 0
                 ;;
             5)
-                echo -e "\n${CYAN}── ساخت پشتیبان رمزگذاری‌شده ──${NC}"
+                echo -e "\n${CYAN}── Create an encrypted backup ──${NC}"
                 backup_now
-                read -r -p "برای ادامه Enter بزنید..." _ || return 0
+                read -r -p "to continue Enter hit..." _ || return 0
                 ;;
             6)
-                echo -e "\n${CYAN}── زمان‌بندی پشتیبان رمزگذاری‌شده ──${NC}"
-                echo "  1) هر چند ساعت"
-                echo "  2) روزانه در ساعت مشخص"
-                echo "  3) غیرفعال‌سازی پشتیبان زمان‌بندی‌شده"
-                read -r -p "انتخاب نوع زمان‌بندی [1-3]: " S_CHOICE || return 0
+                echo -e "\n${CYAN}── Encrypted backup schedule ──${NC}"
+                echo "  1) Every few hours"
+                echo "  2) Daily at a specified time"
+                echo "  3) Disable scheduled backup"
+                read -r -p "Choose the type of schedule [1-3]: " S_CHOICE || return 0
                 case "$S_CHOICE" in
                     1)
-                        read -r -p "فاصله بر حسب ساعت (مثلاً 6): " N_HOURS || return 0
+                        read -r -p "Distance in hours (e.g. 6): " N_HOURS || return 0
                         if [[ "$N_HOURS" =~ ^[0-9]+$ ]] && (( N_HOURS >= 1 && N_HOURS <= 168 )); then
                             python3 -c '
 import json
@@ -6247,13 +6247,13 @@ try:
 except Exception:
     pass
 ' 2>/dev/null
-                            echo -e "${GREEN}[✔️] پشتیبان هر ${N_HOURS} ساعت زمان‌بندی شد.${NC}"
+                            echo -e "${GREEN}[✔️] The backup of each ${N_HOURS} The time was set.${NC}"
                         else
-                            echo -e "${RED}[!] ساعت باید بین 1 و 168 باشد.${NC}"
+                            echo -e "${RED}[!] The hour must be between 1 and 168 be.${NC}"
                         fi
                         ;;
                     2)
-                        read -r -p "ساعت روزانه با قالب HH:MM (مثلاً 03:00): " DAILY_T || return 0
+                        read -r -p "Daily clock with template HH:MM (e.g. 03:00): " DAILY_T || return 0
                         if [[ "$DAILY_T" =~ ^([01][0-9]|2[0-3]):[0-5][0-9]$ ]]; then
                             python3 -c '
 import json
@@ -6271,9 +6271,9 @@ try:
 except Exception:
     pass
 ' 2>/dev/null
-                            echo -e "${GREEN}[✔️] پشتیبان روزانه در ساعت ${DAILY_T} زمان‌بندی شد.${NC}"
+                            echo -e "${GREEN}[✔️] Daily hourly backup ${DAILY_T} Scheduled.${NC}"
                         else
-                            echo -e "${RED}[!] قالب ساعت نامعتبر است؛ از HH:MM مثل 03:00 استفاده کنید.${NC}"
+                            echo -e "${RED}[!] The clock format is invalid; from HH:MM like 03:00 use.${NC}"
                         fi
                         ;;
                     3)
@@ -6293,28 +6293,28 @@ try:
 except Exception:
     pass
 ' 2>/dev/null
-                        echo -e "${GREEN}[✔️] پشتیبان زمان‌بندی‌شده غیرفعال شد.${NC}"
+                        echo -e "${GREEN}[✔️] Scheduled backup disabled.${NC}"
                         ;;
                     *)
-                        echo -e "${RED}[!] گزینه نامعتبر است.${NC}"
+                        echo -e "${RED}[!] Invalid option.${NC}"
                         ;;
                 esac
-                read -r -p "برای ادامه Enter بزنید..." _ || return 0
+                read -r -p "to continue Enter hit..." _ || return 0
                 ;;
             7)
-                echo -e "\n${CYAN}── بازگردانی پشتیبان ──${NC}"
+                echo -e "\n${CYAN}── Restore backup ──${NC}"
                 local BAKS=()
                 if [[ -d "$BACKUP_DIR" ]]; then
                     mapfile -t BAKS < <(ls -1t "$BACKUP_DIR"/navatunnel-backup-*.enc 2>/dev/null)
                 fi
                 if [[ ${#BAKS[@]} -eq 0 ]]; then
-                    echo -e "${YELLOW}[!] در ${BACKUP_DIR} پشتیبان پیدا نشد.${NC}"
-                    read -r -p "مسیر کامل فایل پشتیبان را وارد کنید [Enter: لغو]: " MAN_FILE || return 0
+                    echo -e "${YELLOW}[!] in ${BACKUP_DIR} Backup not found.${NC}"
+                    read -r -p "Enter the full path of the backup file [Enter: Cancel]: " MAN_FILE || return 0
                     if [[ -n "$MAN_FILE" ]]; then
                         backup_restore "$MAN_FILE"
                     fi
                 else
-                    echo "پشتیبان‌های موجود:"
+                    echo "Backups available:"
                     local bidx=1
                     for b in "${BAKS[@]}"; do
                         local bsz
@@ -6322,30 +6322,30 @@ except Exception:
                         echo "  $bidx) $(basename "$b") ($bsz)"
                         ((bidx++))
                     done
-                    read -r -p "انتخاب پشتیبان برای بازگردانی [1-$((bidx-1))]: " PICK_B || return 0
+                    read -r -p "Select a backup to restore [1-$((bidx-1))]: " PICK_B || return 0
                     if [[ "$PICK_B" =~ ^[0-9]+$ ]] && (( PICK_B >= 1 && PICK_B < bidx )); then
                         local SELECTED="${BAKS[$((PICK_B-1))]}"
-                        read -r -p "پشتیبان $(basename "$SELECTED") بازگردانی شود؟ تنظیمات فعلی جایگزین و سرویس‌ها ری‌استارت می‌شوند. [y/N]: " CONFIRM_R || return 0
+                        read -r -p "Backup $(basename "$SELECTED") be returned? Current settings are overwritten and services are restarted. [y/N]: " CONFIRM_R || return 0
                         if [[ "$CONFIRM_R" =~ ^[Yy]$ ]]; then
                             backup_restore "$SELECTED"
                         else
-                            echo -e "${YELLOW}[*] بازگردانی لغو شد.${NC}"
+                            echo -e "${YELLOW}[*] The restore was cancelled.${NC}"
                         fi
                     else
-                        echo -e "${RED}[!] انتخاب نامعتبر است.${NC}"
+                        echo -e "${RED}[!] The selection is invalid.${NC}"
                     fi
                 fi
-                read -r -p "برای ادامه Enter بزنید..." _ || return 0
+                read -r -p "to continue Enter hit..." _ || return 0
                 ;;
             8)
                 watchdog_status_full
-                read -r -p "برای ادامه Enter بزنید..." _ || return 0
+                read -r -p "to continue Enter hit..." _ || return 0
                 ;;
             0)
                 return 0
                 ;;
             *)
-                echo -e "${RED}[!] گزینه نامعتبر است.${NC}"
+                echo -e "${RED}[!] Invalid option.${NC}"
                 sleep 1
                 ;;
         esac
@@ -6362,7 +6362,7 @@ cli_watchdog() {
         test) watchdog_test ;;
         tick) watchdog_tick ;;
         check) watchdog_check ;;
-        *) echo -e "${RED}[!] دستور پایش $SUB ناشناخته است؛ از on|off|status|test|tick استفاده کنید.${NC}"; return 1 ;;
+        *) echo -e "${RED}[!] Unknown subcommand $SUB; use on|off|status|test|tick.${NC}"; return 1 ;;
     esac
 }
 
@@ -6373,11 +6373,11 @@ cli_backup() {
         now) backup_now "$@" ;;
         restore) backup_restore "$@" ;;
         status)
-            echo -e "${CYAN}=== پشتیبان‌های NavaTunnel (${BACKUP_DIR}) ===${NC}"
+            echo -e "${CYAN}=== backups NavaTunnel (${BACKUP_DIR}) ===${NC}"
             if [[ -d "$BACKUP_DIR" ]]; then
-                ls -lh "$BACKUP_DIR"/navatunnel-backup-*.enc 2>/dev/null || echo "(پشتیبان پیدا نشد)"
+                ls -lh "$BACKUP_DIR"/navatunnel-backup-*.enc 2>/dev/null || echo "(Backup not found)"
             else
-                echo "(پوشه پشتیبان موجود نیست)"
+                echo "(The backup folder does not exist)"
             fi
             ;;
         schedule)
@@ -6386,7 +6386,7 @@ cli_backup() {
         if [[ "$1" == --* && $# -lt 2 ]]; then
             case "$1" in
                 --force|--show-token|--encrypt|--compress|--dry-run|--off|--help) ;;
-                *) echo "مقدار این گزینه وارد نشده است: $1" >&2; return 1 ;;
+                *) echo "The value of this option is not entered: $1" >&2; return 1 ;;
             esac
         fi
                 case "$1" in
@@ -6415,9 +6415,9 @@ try:
 except Exception:
     pass
 ' 2>/dev/null
-                    echo -e "${GREEN}[✔️] پشتیبان هر ${HOURS} ساعت زمان‌بندی شد.${NC}"
+                    echo -e "${GREEN}[✔️] The backup of each ${HOURS} The time was set.${NC}"
                 else
-                    echo -e "${RED}[!] فاصله ساعت $HOURS نامعتبر است؛ بازه 1 تا 168${NC}"; return 1
+                    echo -e "${RED}[!] hour interval $HOURS is invalid; interval 1 until 168${NC}"; return 1
                 fi
             elif [[ "$MODE" == "daily" ]]; then
                 if [[ "$DAILY" =~ ^([01][0-9]|2[0-3]):[0-5][0-9]$ ]]; then
@@ -6437,9 +6437,9 @@ try:
 except Exception:
     pass
 ' 2>/dev/null
-                    echo -e "${GREEN}[✔️] پشتیبان روزانه در ساعت ${DAILY} زمان‌بندی شد.${NC}"
+                    echo -e "${GREEN}[✔️] Daily hourly backup ${DAILY} Scheduled.${NC}"
                 else
-                    echo -e "${RED}[!] ساعت روزانه $DAILY نامعتبر است؛ قالب HH:MM مثل 03:00${NC}"; return 1
+                    echo -e "${RED}[!] daily hours $DAILY is invalid; template HH:MM like 03:00${NC}"; return 1
                 fi
             elif [[ "$MODE" == "off" ]]; then
                 python3 -c '
@@ -6458,35 +6458,35 @@ try:
 except Exception:
     pass
 ' 2>/dev/null
-                echo -e "${GREEN}[✔️] پشتیبان زمان‌بندی‌شده غیرفعال شد.${NC}"
+                echo -e "${GREEN}[✔️] Scheduled backup disabled.${NC}"
             else
-                echo -e "${RED}[!] روش استفاده: NavaTunnel backup schedule [--every N | --daily HH:MM | --off]${NC}"; return 1
+                echo -e "${RED}[!] Usage: NavaTunnel backup schedule [--every N | --daily HH:MM | --off]${NC}"; return 1
             fi
             ;;
         *)
-            echo -e "${RED}[!] دستور پشتیبان $SUB ناشناخته است؛ از now|restore|schedule|status استفاده کنید.${NC}"
+            echo -e "${RED}[!] Backup command $SUB is unknown; from now|restore|schedule|status use.${NC}"
             return 1
             ;;
     esac
 }
 
 update_all() {
-    echo -e "${CYAN}[*] در حال به‌روزرسانی اسکریپت NavaTunnel...${NC}"
+    echo -e "${CYAN}[*] Updating script NavaTunnel...${NC}"
     TMP_U="$(mktemp -d)"
     trap 'rm -rf "$TMP_U"' RETURN
     # 1. fresh script from main with mirror fallbacks
     if ! download_with_fallback "$TMP_U/NavaTunnel.sh" "${NAVATUNNEL_URL_BASE}/NavaTunnel.sh" 30; then
-        echo -e "${RED}[!] دریافت نسخه جدید ناموفق بود؛ تغییری انجام نشد.${NC}"
+        echo -e "${RED}[!] Failed to get the new version; No change was made.${NC}"
         return 1
     fi
-    bash -n "$TMP_U/NavaTunnel.sh" || { echo -e "${RED}[!] ساختار اسکریپت دریافتی نامعتبر بود؛ تغییری انجام نشد.${NC}"; return 1; }
+    bash -n "$TMP_U/NavaTunnel.sh" || { echo -e "${RED}[!] The received script structure was invalid; No change was made.${NC}"; return 1; }
     if cmp -s "$TMP_U/NavaTunnel.sh" "$0" 2>/dev/null || cmp -s "$TMP_U/NavaTunnel.sh" ./NavaTunnel.sh 2>/dev/null; then
-        echo -e "${GREEN}[✔️] اسکریپت NavaTunnel.sh از قبل آخرین نسخه است.${NC}"
+        echo -e "${GREEN}[✔️] NavaTunnel.sh is already up to date.${NC}"
     else
-        echo -e "${GREEN}[✔️] نسخه جدید NavaTunnel.sh دریافت و ساختار آن بررسی شد.${NC}"
+        echo -e "${GREEN}[✔️] New NavaTunnel.sh downloaded and syntax checked.${NC}"
     fi
     if ! download_with_fallback "$TMP_U/NavaTunnel-traffic.sh" "${NAVATUNNEL_URL_BASE}/NavaTunnel-traffic.sh" 30 || ! bash -n "$TMP_U/NavaTunnel-traffic.sh"; then
-        echo "به‌روزرسانی ابزار ترافیک ناموفق بود؛ اسکریپت‌ها جایگزین نشدند." >&2
+        echo "Failed to update Traffic Tool; Scripts were not replaced." >&2
         return 1
     fi
     install -m 755 "$TMP_U/NavaTunnel-traffic.sh" /usr/local/bin/NavaTunnel-traffic.sh || return 1
@@ -6544,7 +6544,7 @@ except Exception:
             systemctl enable --now navatunnel-watchdog.timer >/dev/null 2>&1 || true
         fi
     fi
-    echo -e "${GREEN}[✔️] به‌روزرسانی انجام شد؛ برای منوی جدید اسکریپت را دوباره اجرا کنید.${NC}"
+    echo -e "${GREEN}[✔️] Update done; Run the script again for the new menu.${NC}"
 }
 
 cli_carrier() {
@@ -6569,22 +6569,22 @@ cli_carrier() {
             fi
 
             echo -e "\n${CYAN}==========================================================${NC}"
-            echo -e "${CYAN}         حامل تونل و تغییر خودکار مسیر         ${NC}"
+            echo -e "${CYAN}         Tunnel carrier and automatic route change         ${NC}"
             echo -e "${CYAN}==========================================================${NC}"
-            echo -e "حالت تغییر مسیر:    ${YELLOW}$(fa_state "${MODE}")${NC} (خودکار، مستقیم یا دستی)"
-            echo -e "حامل فعال:   ${GREEN}$(fa_state "${ACT}")${NC}"
-            echo -e "پورت‌های FOU:    UDP ${P1} / UDP ${P2} (FOU کرنل و پروتکل 47)"
-            echo -e "سلامت تونل:    ${PING_OUT}"
+            echo -e "Reroute mode:    ${YELLOW}$(display_state "${MODE}")${NC} (Automatic, direct or manual)"
+            echo -e "active carrier:   ${GREEN}$(display_state "${ACT}")${NC}"
+            echo -e "ports FOU:    UDP ${P1} / UDP ${P2} (FOU Kernel and protocol 47)"
+            echo -e "tunnel health:    ${PING_OUT}"
             python3 -c '
 import json
 try:
     with open("'"$CARRIER_FILE"'") as f:
         d = json.load(f)
     cands = ", ".join(d.get("candidates", []))
-    print(f"حامل‌های پیشنهادی:       {cands}")
-    print("تعداد تغییر مسیر:   {}".format(d.get("switch_count", 0)))
+    print(f"Recommended carriers:       {cands}")
+    print("Number of redirects:   {}".format(d.get("switch_count", 0)))
     last = d.get("last_switch", "") or "never"
-    print(f"آخرین تغییر مسیر:      {last}")
+    print(f"Last change of route:      {last}")
 except Exception:
     pass
 ' 2>/dev/null
@@ -6594,31 +6594,31 @@ except Exception:
             local TARGET="${2:-direct}"
             [[ "$TARGET" == "auto" ]] && TARGET="direct"
             carrier_set_mode "$TARGET" || return 1
-            echo -e "${GREEN}[✔️] حالت انتقال انتخاب شد: ${TARGET}${NC}"
+            echo -e "${GREEN}[✔️] Transmission mode is selected: ${TARGET}${NC}"
             carrier_apply "$TARGET" || return 1
-            echo -e "${GREEN}[✔️] حامل فعال اعمال شد: ${TARGET}${NC}"
+            echo -e "${GREEN}[✔️] Active carrier applied: ${TARGET}${NC}"
             ;;
         set|set-active|apply)
             local TARGET="${2:-direct}"
             carrier_apply "$TARGET" || return 1
-            echo -e "${GREEN}[✔️] حامل فعال تغییر کرد به: ${TARGET}${NC}"
+            echo -e "${GREEN}[✔️] Active carrier changed to: ${TARGET}${NC}"
             ;;
         next|cycle)
             local NEW_C
             NEW_C=$(carrier_cycle_next) || return 1
-            echo -e "${GREEN}[✔️] حامل بعدی انتخاب شد: ${NEW_C}${NC}"
+            echo -e "${GREEN}[✔️] The next carrier is selected: ${NEW_C}${NC}"
             ;;
         set-ports)
             local P1="${2:-443}" P2="${3:-55555}"
             carrier_set_fou_ports "$P1" "$P2" || return 1
             carrier_init_kernel
-            echo -e "${GREEN}[✔️] پورت‌های FOU به ${P1} و ${P2} تغییر کردند${NC}"
+            echo -e "${GREEN}[✔️] ports FOU to ${P1} and ${P2} they changed${NC}"
             ;;
         init|kernel-init)
             carrier_init_kernel
             ;;
         *)
-            echo "روش استفاده: NavaTunnel carrier [status|mode <direct|fou:PORT>|set <direct|fou:PORT>|next|cycle|set-ports <P1> <P2>]"
+            echo "Usage: NavaTunnel carrier [status|mode <direct|fou:PORT>|set <direct|fou:PORT>|next|cycle|set-ports <P1> <P2>]"
             return 1
             ;;
     esac
@@ -6627,21 +6627,21 @@ except Exception:
 menu_carrier() {
     ui_clear
     cli_carrier status
-    echo -e "${YELLOW}انتخاب عمل:${NC}"
-    echo "  1) انتخاب GRE مستقیم با پروتکل 47"
-    echo "  2) انتخاب FOU روی UDP پورت 443"
-    echo "  3) انتخاب حامل بعدی"
-    echo "  0) بازگشت به منوی اصلی"
+    echo -e "${YELLOW}Select action:${NC}"
+    echo "  1) Select GRE directly with the protocol 47"
+    echo "  2) Select FOU over UDP port 443"
+    echo "  3) Choose the next carrier"
+    echo "  0) Return to the main menu"
     echo ""
-    read -r -p "انتخاب گزینه [0-3]: " C_OPT || return 0
+    read -r -p "Select option [0-3]: " C_OPT || return 0
     case "$C_OPT" in
         1) cli_carrier set direct ;;
         2) cli_carrier set fou:443 ;;
         3) cli_carrier next ;;
         0) return 0 ;;
-        *) echo -e "${RED}[!] گزینه نامعتبر است.${NC}" ;;
+        *) echo -e "${RED}[!] Invalid option.${NC}" ;;
     esac
-    read -r -p "برای بازگشت به منو Enter بزنید..." || return 0
+    read -r -p "Press Enter to return to the menu..." || return 0
 }
 
 # Clear only interactive screens; never add control bytes to CLI output.
@@ -6652,7 +6652,7 @@ ui_clear() {
 
 pause_prompt() {
     echo ""
-    read -r -p "برای بازگشت به منو Enter بزنید..." _dummy || return 0
+    read -r -p "Press Enter to return to the menu..." _dummy || return 0
 }
 
 show_banner() {
@@ -6662,8 +6662,8 @@ show_banner() {
 EOF
     echo -e "${NC}"
     echo -e "${CYAN}==============================================================${NC}"
-    echo -e "${GREEN}${BOLD}     NavaTunnel 6501 — مدیریت تونل ایران و خارج${NC}"
-    echo -e "${CYAN}     تونل GRE لایه 3 و اتصال معکوس FRP${NC}"
+    echo -e "${GREEN}${BOLD}     NavaTunnel 6501 — Iran and foreign tunnel management${NC}"
+    echo -e "${CYAN}     Layer 3 GRE tunnel and FRP reverse connection${NC}"
     echo -e "${CYAN}==============================================================${NC}"
 }
 
@@ -6696,16 +6696,16 @@ try:
         address=field('serverAddr',header); port=field('serverPort',header)
         protocol=field('transport.protocol',header,'tcp')
         proxies=[dict(type=field('type',part),localIP=field('localIP',part),localPort=field('localPort',part),remotePort=field('remotePort',part)) for part in sections]
-    print('تونل سرور خارج | FRPC')
-    print('مقصد ایران (IP داخلی GRE): %s:%s'%(address,port))
-    print('پروتکل FRP: %s | سرویس frpc: %s'%(protocol,dict(active='فعال',inactive='غیرفعال',failed='ناموفق',unknown='نامشخص',activating='در حال راه‌اندازی').get(os.environ['FRPC_STATE'],os.environ['FRPC_STATE'])))
-    print('GRE: %s | %s'%(sys.argv[2],os.environ['GRE_ADDR'].strip() or 'اینترفیس IPv4 فعال پیدا نشد'))
-    print('جبران افت بسته (FEC): '+('فعال' if protocol=='kcp' else 'غیرفعال'))
+    print('Out server tunnel | FRPC')
+    print('Destination Iran (IP Internal GRE): %s:%s'%(address,port))
+    print('FRP protocol: %s | service frpc: %s'%(protocol,dict(active='Enabled',inactive='Disabled',failed='Failed',unknown='Unknown',activating='Launching').get(os.environ['FRPC_STATE'],os.environ['FRPC_STATE'])))
+    print('GRE: %s | %s'%(sys.argv[2],os.environ['GRE_ADDR'].strip() or 'Interface IPv4 Active not found'))
+    print('Loss recovery (FEC): '+('Enabled' if protocol=='kcp' else 'Disabled'))
     for proxy in proxies:
-        print('  %s | %s:%s -> پورت ایران %s'%(proxy.get('type','?'),proxy.get('localIP','127.0.0.1'),proxy.get('localPort','?'),proxy.get('remotePort','?')))
-    if not proxies: print('هیچ پورت پروکسی در تنظیمات ثبت نشده است.')
+        print('  %s | %s:%s -> Port of Iran %s'%(proxy.get('type','?'),proxy.get('localIP','127.0.0.1'),proxy.get('localPort','?'),proxy.get('remotePort','?')))
+    if not proxies: print('No proxy port is registered in the settings.')
 except (OSError,ValueError) as error:
-    print('خواندن تنظیمات تونل خارج ناموفق بود: '+str(error),file=sys.stderr)
+    print('Failed to read outer tunnel settings: '+str(error),file=sys.stderr)
     sys.exit(1)
 PYCODE
 }
@@ -6716,7 +6716,7 @@ menu_list_tunnels() {
     local count found=0
     count=$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1])).get("peers",[])))' "$PEERS_FILE") || return 1
     if ((count)); then
-        echo 'تونل‌های سرور ایران | FRPS'
+        echo 'Iran server tunnels | FRPS'
         peer_list_pretty || return 1
         found=1
     fi
@@ -6724,19 +6724,19 @@ menu_list_tunnels() {
         foreign_tunnel_summary || return 1
         found=1
     fi
-    ((found)) || echo 'هیچ تونلی روی این سرور ثبت نشده است.'
+    ((found)) || echo 'No tunnel is registered on this server.'
 }
 
 menu_connect_foreign() {
     ui_clear
     local bundle protocol recovery confirm
-    read -r -p 'کد اتصال را بچسبانید [Enter: لغو]: ' bundle || return 0
+    read -r -p 'Paste the connection code [Enter: Cancel]: ' bundle || return 0
     [[ -n "$bundle" ]] || return 0
-    bundle_parse "$bundle" || { echo 'کد اتصال نامعتبر است.'; return 1; }
+    bundle_parse "$bundle" || { echo 'The connection code is invalid.'; return 1; }
     protocol=$(menu_protocol_prompt "$B_FRP_TRANSPORT") || return 0
     recovery=off; [[ "$protocol" == kcp ]] && recovery=on
     if tunnel_present; then
-        read -r -p 'تونل فعلی خارج با این تنظیمات جایگزین شود؟ [y/N]: ' confirm || return 0
+        read -r -p 'Replace the existing foreign tunnel with this configuration? [y/N]: ' confirm || return 0
         [[ "$confirm" == y || "$confirm" == Y ]] || return 0
         cli_setup_foreign --bundle "$bundle" --frp-transport "$protocol" --loss-recovery "$recovery" --force
     else
@@ -6749,28 +6749,28 @@ menu_foreign_tunnel() {
     while true; do
         ui_clear
         foreign_tunnel_summary || return 1
-        echo '1) شروع همین تونل'
-        echo '2) توقف همین تونل'
-        echo '3) ری‌استارت همین تونل'
-        echo '4) نمایش وضعیت'
-        echo '5) مصرف و تنظیمات ترافیک همین تونل'
-        echo '6) تغییر تنظیمات یا پروتکل با کد اتصال'
-        echo '7) تغییر دائمی MTU همین تونل'
-        echo '0) بازگشت'
-        read -r -p 'انتخاب: ' option || return 0
+        echo '1) Start this tunnel'
+        echo '2) Stop this tunnel'
+        echo '3) Restart this tunnel'
+        echo '4) Show status'
+        echo '5) Traffic usage and settings for this tunnel'
+        echo '6) Change settings or protocol with connection code'
+        echo '7) Set persistent MTU for this tunnel'
+        echo '0) Back'
+        read -r -p 'Select: ' option || return 0
         case "$option" in
             4) systemctl --no-pager status frpc "${TUNNEL_NAME}.service"; pause_prompt ;;
             3)
                 if systemctl restart "${TUNNEL_NAME}.service" && systemctl restart frpc; then
-                    echo 'تونل خارج ری‌استارت شد.'
-                else echo 'ری‌استارت ناموفق بود؛ وضعیت سرویس را بررسی کنید.'; fi ;;
+                    echo 'Foreign tunnel restarted.'
+                else echo 'Restart failed; Check the service status.'; fi ;;
             5) menu_tunnel_traffic "$TUNNEL_NAME" ;;
             6) menu_connect_foreign ;;
             7) menu_mtu "$TUNNEL_NAME" ;;
             2) cli_tunnel_power stop --foreign ;;
             1) cli_tunnel_power start --foreign ;;
             0) return 0 ;;
-            *) echo 'گزینه نامعتبر است.' ;;
+            *) echo 'Invalid option.' ;;
         esac
         case "$option" in 3|6|7|2|1) pause_prompt ;; 4|5) ;; *) pause_prompt ;; esac
     done
@@ -6783,12 +6783,12 @@ menu_manage_tunnel() {
     count=$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1])).get("peers",[])))' "$PEERS_FILE") || return 1
     if [[ -f "${CONFIG_DIR}/frpc.toml" ]]; then
         if ((count)); then
-            echo 'این سرور هم تونل ایران و هم اتصال خارج دارد.'
-            echo '1) مدیریت تونل‌های ایران'
-            echo '2) مدیریت اتصال خارج'
-            echo '0) بازگشت'
-            read -r -p 'انتخاب: ' option || return 0
-            case "$option" in 1) menu_edit_peer;; 2) menu_foreign_tunnel;; 0) return 0;; *) echo 'گزینه نامعتبر است.';; esac
+            echo 'This server has both Iran tunnel and external connection.'
+            echo '1) Manage Iran tunnels'
+            echo '2) Manage foreign connection'
+            echo '0) Back'
+            read -r -p 'Select: ' option || return 0
+            case "$option" in 1) menu_edit_peer;; 2) menu_foreign_tunnel;; 0) return 0;; *) echo 'Invalid option.';; esac
         else menu_foreign_tunnel; fi
     else menu_edit_peer; fi
 }
@@ -6797,14 +6797,14 @@ menu_tunnel() {
     local option
     while true; do
         ui_clear
-        echo '1) ساخت تونل روی ایران (سرور اول یا سرورهای بیشتر)'
-        echo '2) اتصال سرور خارج با کد اتصال'
-        echo '3) انتخاب و مدیریت یک تونل'
-        echo '4) فهرست و وضعیت تونل‌ها'
-        echo '5) نصب دستی روی خارج (پیشرفته)'
-        echo '6) تغییر IP سرور ایران (همه تونل‌ها)'
-        echo '0) بازگشت'
-        read -r -p 'انتخاب: ' option || return 0
+        echo '1) Create tunnel on Iran (first or additional foreign server)'
+        echo '2) Connect foreign server using a connection code'
+        echo '3) Select and manage a tunnel'
+        echo '4) List tunnels and status'
+        echo '5) Manual foreign setup (advanced)'
+        echo '6) Change Iran server IP (all tunnels)'
+        echo '0) Back'
+        read -r -p 'Select: ' option || return 0
         case "$option" in
             1) menu_add_peer; pause_prompt ;;
             2) menu_connect_foreign; pause_prompt ;;
@@ -6813,7 +6813,7 @@ menu_tunnel() {
             5) setup_foreign_server; pause_prompt ;;
             6) menu_iran_ip; pause_prompt ;;
             0) return 0 ;;
-            *) echo 'گزینه نامعتبر است.'; pause_prompt ;;
+            *) echo 'Invalid option.'; pause_prompt ;;
         esac
     done
 }
@@ -6822,18 +6822,18 @@ menu_optimization() {
     while true; do
         ui_clear
         show_banner
-        echo -e "${CYAN}--- [2] کارایی و امنیت ---${NC}"
-        echo "  1) بهینه‌سازی شبکه، BBR، بافر TCP و MTU"
-        echo "  2) انتخاب حامل GRE مستقیم یا FOU"
-        echo "  3) محافظ DPI و محدودیت نرخ اسکن پورت‌ها"
-        echo "  4) تولید ترافیک پوششی هنگام بیکاری"
-        echo "  5) پایش تونل، تغییر خودکار مسیر و هشدار تلگرام"
-        echo "  6) تنظیمات کارایی، رمزگذاری، فشرده‌سازی و TLS"
-        echo "  7) آزادسازی حافظه کش و تنظیم swap"
-        echo "  8) بازگردانی تنظیمات شبکه"
-        echo "  0) بازگشت به منوی اصلی"
+        echo -e "${CYAN}--- [2] Efficiency and security ---${NC}"
+        echo "  1) Network optimization, BBR, TCP buffers and MTU"
+        echo "  2) Select direct GRE or FOU carrier"
+        echo "  3) DPI shield / SYN rate limits for service ports"
+        echo "  4) Configure random ICMP cover traffic"
+        echo "  5) Tunnel watchdog, automatic carrier switching and Telegram alerts"
+        echo "  6) Performance settings, encryption, compression and TLS"
+        echo "  7) Free cache memory and configure swap"
+        echo "  8) Restore network settings"
+        echo "  0) Return to the main menu"
         echo ""
-        read -r -p "انتخاب گزینه [0-8]: " O_OPT || return 0
+        read -r -p "Select option [0-8]: " O_OPT || return 0
         case "$O_OPT" in
             1) tune_apply; pause_prompt ;;
             2) menu_carrier ;;
@@ -6844,7 +6844,7 @@ menu_optimization() {
             7) free_ram; pause_prompt ;;
             8) tune_restore; pause_prompt ;;
             0) return 0 ;;
-            *) echo -e "${RED}[!] گزینه نامعتبر است.${NC}"; sleep 1 ;;
+            *) echo -e "${RED}[!] Invalid option.${NC}"; sleep 1 ;;
         esac
     done
 }
@@ -6853,73 +6853,73 @@ menu_diagnostics_backup() {
     while true; do
         ui_clear
         show_banner
-        echo -e "${CYAN}--- [3] بررسی شبکه و پشتیبان‌گیری ---${NC}"
-        echo "  1) بررسی کامل سلامت سیستم و تونل"
-        echo "  2) بررسی پورت‌های فعال و جدول مسیر"
-        echo "  3) نمایش لاگ زنده FRP و پایش"
-        echo "  4) تست فشار اتصال‌های هم‌زمان"
-        echo "  5) پشتیبان‌گیری رمزگذاری‌شده از تنظیمات"
-        echo "  6) بازگردانی پشتیبان از فایل"
-        echo "  7) زمان‌بندی پشتیبان خودکار ساعتی یا روزانه"
-        echo "  0) بازگشت به منوی اصلی"
+        echo -e "${CYAN}--- [3] Network check and backup ---${NC}"
+        echo "  1) Full system and tunnel health check"
+        echo "  2) Check active ports and route table"
+        echo "  3) Show live FRP and watchdog logs"
+        echo "  4) Concurrent connection stress test"
+        echo "  5) Encrypted configuration backup"
+        echo "  6) Restore backup file"
+        echo "  7) Schedule automatic backups hourly or daily"
+        echo "  0) Return to the main menu"
         echo ""
-        read -r -p "انتخاب گزینه [0-7]: " D_OPT || return 0
+        read -r -p "Select option [0-7]: " D_OPT || return 0
         case "$D_OPT" in
             1) doctor_health_check; pause_prompt ;;
             2)
-                echo -e "\n${CYAN}=== پورت‌های فعال FRP ===${NC}"
+                echo -e "\n${CYAN}=== Active ports FRP ===${NC}"
                 if command -v ss >/dev/null 2>&1; then
                     ss -tulpn | grep -E "frps|frpc" || ss -tulpn | head -15
                 else
                     netstat -tulpn 2>/dev/null | grep -E "frps|frpc" || true
                 fi
-                echo -e "\n${CYAN}=== جدول مسیر و هدایت IP ===${NC}"
+                echo -e "\n${CYAN}=== IP routing table ===${NC}"
                 ip route show
-                echo -e "${CYAN}هدایت IP:${NC} $(sysctl -n net.ipv4.ip_forward 2>/dev/null || cat /proc/sys/net/ipv4/ip_forward 2>/dev/null)"
+                echo -e "${CYAN}IP forwarding:${NC} $(sysctl -n net.ipv4.ip_forward 2>/dev/null || cat /proc/sys/net/ipv4/ip_forward 2>/dev/null)"
                 pause_prompt
                 ;;
             3) show_logs ;;
             4)
-                read -r -p "IP یا نام مقصد [127.0.0.1]: " S_HOST || return 0
+                read -r -p "IP or destination name [127.0.0.1]: " S_HOST || return 0
                 S_HOST=${S_HOST:-127.0.0.1}
-                read -r -p "پورت مقصد [443]: " S_PORT || return 0
+                read -r -p "Destination port [443]: " S_PORT || return 0
                 S_PORT=${S_PORT:-443}
-                read -r -p "تعداد اتصال هم‌زمان [50]: " S_CONNS || return 0
+                read -r -p "Number of simultaneous connections [50]: " S_CONNS || return 0
                 S_CONNS=${S_CONNS:-50}
                 cli_stress_test "$S_HOST" "$S_PORT" "$S_CONNS"
                 pause_prompt
                 ;;
             5) backup_now; pause_prompt ;;
             6)
-                echo -e "\n${CYAN}=== پشتیبان‌های موجود ===${NC}"
+                echo -e "\n${CYAN}=== Backups available ===${NC}"
                 cli_backup status
                 echo ""
-                read -r -p "مسیر کامل فایل پشتیبان برای بازگردانی: " R_FILE || return 0
+                read -r -p "The full path of the backup file to restore: " R_FILE || return 0
                 if [[ -n "$R_FILE" && -f "$R_FILE" ]]; then
                     backup_restore "$R_FILE"
                 else
-                    echo -e "${RED}[!] فایل پیدا نشد: '$R_FILE'${NC}"
+                    echo -e "${RED}[!] File not found: '$R_FILE'${NC}"
                 fi
                 pause_prompt
                 ;;
             7)
                 ui_clear
-                echo "زمان‌بندی پشتیبان:"
-                echo "  1) هر چند ساعت (مثلاً 6)"
-                echo "  2) روزانه در ساعت مشخص (مثلاً 03:00)"
-                echo "  3) غیرفعال‌سازی پشتیبان خودکار"
-                echo "  0) لغو"
-                read -r -p "انتخاب [0-3]: " B_SCHED || return 0
+                echo "Backup schedule:"
+                echo "  1) Every few hours (e.g. 6)"
+                echo "  2) Daily at a specified time (e.g. 03:00)"
+                echo "  3) Disable automatic backup"
+                echo "  0) Cancel"
+                read -r -p "Select [0-3]: " B_SCHED || return 0
                 case "$B_SCHED" in
-                    1) read -p "فاصله ساعتی [1-168]: " B_H; cli_backup schedule --every "$B_H" ;;
-                    2) read -p "ساعت روزانه HH:MM (مثلاً 03:00): " B_D; cli_backup schedule --daily "$B_D" ;;
+                    1) read -p "hourly interval [1-168]: " B_H; cli_backup schedule --every "$B_H" ;;
+                    2) read -p "daily hours HH:MM (e.g. 03:00): " B_D; cli_backup schedule --daily "$B_D" ;;
                     3) cli_backup schedule --off ;;
                     *) ;;
                 esac
                 pause_prompt
                 ;;
             0) return 0 ;;
-            *) echo -e "${RED}[!] گزینه نامعتبر است.${NC}"; sleep 1 ;;
+            *) echo -e "${RED}[!] Invalid option.${NC}"; sleep 1 ;;
         esac
     done
 }
@@ -6928,15 +6928,15 @@ menu_maintenance() {
     while true; do
         ui_clear
         show_banner
-        echo -e "${CYAN}--- [4] نگهداری و به‌روزرسانی ---${NC}"
-        echo "  1) به‌روزرسانی کامل به آخرین نسخه"
-        echo "  2) دریافت و بررسی فایل‌های اجرایی FRP"
-        echo "  3) نصب و بررسی پیش‌نیازهای سیستم"
-        echo "  4) بررسی و بارگذاری ماژول‌های GRE و FOU"
-        echo "  5) نمایش نسخه سیستم و وضعیت تنظیمات"
-        echo "  0) بازگشت به منوی اصلی"
+        echo -e "${CYAN}--- [4] Maintenance and updates ---${NC}"
+        echo "  1) Full update to latest version"
+        echo "  2) Download and verify FRP binaries"
+        echo "  3) Install and check system requirements"
+        echo "  4) Check and load GRE and FOU modules"
+        echo "  5) Display system version and settings status"
+        echo "  0) Return to the main menu"
         echo ""
-        read -r -p "انتخاب گزینه [0-5]: " M_OPT || return 0
+        read -r -p "Select option [0-5]: " M_OPT || return 0
         case "$M_OPT" in
             1)
                 backup_configs "pre_update"
@@ -6945,45 +6945,45 @@ menu_maintenance() {
                 pause_prompt
                 ;;
             2)
-                echo -e "${CYAN}[*] در حال دریافت و ذخیره فایل‌های اجرایی...${NC}"
-                install_frp_binaries "all" && echo -e "${GREEN}[✔️] فایل‌های اجرایی بررسی و آماده شدند.${NC}"
+                echo -e "${CYAN}[*] Downloading and saving executable files...${NC}"
+                install_frp_binaries "all" && echo -e "${GREEN}[✔️] The executable files were checked and prepared.${NC}"
                 pause_prompt
                 ;;
             3)
                 rm -f "${NAVATUNNEL_STATE_DIR}/.deps_installed" 2>/dev/null
                 ensure_dependencies_smart || return 1
-                echo -e "${GREEN}[✔️] پیش‌نیازهای سیستم بررسی و به‌روز شدند.${NC}"
+                echo -e "${GREEN}[✔️] System prerequisites were checked and updated.${NC}"
                 pause_prompt
                 ;;
             4)
-                echo -e "${CYAN}[*] در حال بررسی فعال‌بودن ماژول‌های GRE و FOU...${NC}"
-                modprobe ip_gre 2>/dev/null && modprobe fou 2>/dev/null && echo -e "${GREEN}[✔️] ماژول‌های ip_gre و fou بارگذاری شدند.${NC}" || echo -e "${YELLOW}[!] بارگذاری با modprobe ممکن نبود؛ شاید ماژول داخل کرنل باشد.${NC}"
+                echo -e "${CYAN}[*] Checking if modules are enabled GRE and FOU...${NC}"
+                modprobe ip_gre 2>/dev/null && modprobe fou 2>/dev/null && echo -e "${GREEN}[✔️] modules ip_gre and fou were loaded.${NC}" || echo -e "${YELLOW}[!] Load with modprobe It was not possible; Maybe the module is inside the kernel.${NC}"
                 pause_prompt
                 ;;
             5)
-                echo -e "\n${CYAN}=== اطلاعات نسخه سیستم ===${NC}"
-                echo "اسکریپت NavaTunnel: ${NAVATUNNEL_SCRIPT}"
+                echo -e "\n${CYAN}=== System version information ===${NC}"
+                echo "Script NavaTunnel: ${NAVATUNNEL_SCRIPT}"
                 tune_status
                 pause_prompt
                 ;;
             0) return 0 ;;
-            *) echo -e "${RED}[!] گزینه نامعتبر است.${NC}"; sleep 1 ;;
+            *) echo -e "${RED}[!] Invalid option.${NC}"; sleep 1 ;;
         esac
     done
 }
 
 menu_uninstall() {
     ui_clear
-    echo "1) حذف اجزای تونل"
-    echo "2) حذف نصب NavaTunnel و همه اجزای تونل"
-    echo "0) بازگشت"
+    echo "1) Removal of tunnel components"
+    echo "2) Uninstall NavaTunnel and all tunnel components"
+    echo "0) Back"
     local choice
-    read -r -p "انتخاب گزینه [0-2]: " choice || return 0
+    read -r -p "Select option [0-2]: " choice || return 0
     case "$choice" in
         1) remove_tunnel; pause_prompt ;;
         2) uninstall_all; pause_prompt ;;
         0) return 0 ;;
-        *) echo "گزینه نامعتبر است." ;;
+        *) echo "Invalid option." ;;
     esac
 }
 
@@ -7006,7 +7006,7 @@ ensure_traffic_helper() {
             tmp=$(mktemp) || return 1
             if ! download_with_fallback "$tmp" "${NAVATUNNEL_URL_BASE}/NavaTunnel-traffic.sh" 30 || ! bash -n "$tmp"; then
                 rm -f "$tmp"
-                echo "دریافت ابزار ترافیک ناموفق بود." >&2
+                echo "Failed to get traffic tool." >&2
                 return 1
             fi
             install -m 755 "$tmp" "$target" || { rm -f "$tmp"; return 1; }
@@ -7014,7 +7014,7 @@ ensure_traffic_helper() {
         fi
     fi
     command -v python3 >/dev/null && command -v iptables >/dev/null || {
-        echo "شمارش ترافیک به python3 و iptables نیاز دارد." >&2; return 1;
+        echo "Traffic accounting requires python3 and iptables." >&2; return 1;
     }
 }
 
@@ -7022,7 +7022,7 @@ install_traffic_monitor() {
     [[ -f /etc/systemd/system/NavaTunnel-traffic.timer && -f /etc/systemd/system/NavaTunnel-traffic.service ]] && return 0
     cat > /etc/systemd/system/NavaTunnel-traffic.service <<'EOF'
 [Unit]
-Description=شمارش ترافیک و اعمال سقف NavaTunnel
+Description=Traffic counting and capping NavaTunnel
 After=network-pre.target
 Before=network.target
 
@@ -7035,7 +7035,7 @@ WantedBy=multi-user.target
 EOF
     cat > /etc/systemd/system/NavaTunnel-traffic.timer <<'EOF'
 [Unit]
-Description=شمارش ترافیک NavaTunnel در هر 10 ثانیه
+Description=Traffic count NavaTunnel in every 10 seconds
 
 [Timer]
 OnBootSec=1s
@@ -7098,19 +7098,19 @@ if registry.exists():
     labels={t.get('gre_if'):t.get('name','') for t in json.loads(registry.read_text()).get('peers',[])}
 for name,t in sorted(data.items()):
     used=t.get('download',0) if t.get('mode')=='download' else t.get('upload',0) if t.get('mode')=='upload' else t.get('download',0)+t.get('upload',0)
-    quota='نامحدود' if not t.get('limit') else '%.2f GB'%(t['limit']/10**9)
+    quota='Unlimited' if not t.get('limit') else '%.2f GB'%(t['limit']/10**9)
     target=t.get('interface') or t.get('peer',''); label=labels.get(target) or name
-    print('%s\t%s | %s | %.2f GB / %s | %s | %s'%(name,label,target,used/10**9,quota,dict(download='دانلود',upload='آپلود',both='هر دو').get(t.get('mode','both'),'هر دو'),'مسدود' if t.get('blocked') else 'باز'))
+    print('%s\t%s | %s | %.2f GB / %s | %s | %s'%(name,label,target,used/10**9,quota,dict(download='Download',upload='Upload',both='Both').get(t.get('mode','both'),'Both'),'Blocked' if t.get('blocked') else 'Open'))
 PYCODE
 ) || return 1
     while IFS=$'\t' read -r id label; do
         [[ -n "$id" ]] || continue
         ids+=("$id"); i=$((i+1)); printf '%s) %s\n' "$i" "$label" >&2
     done <<< "$rows"
-    ((i)) || { echo 'شمارنده‌ای ثبت نشده؛ گزینه شناسایی تونل‌ها را اجرا کنید.' >&2; pause_prompt >&2; return 1; }
-    echo '0) بازگشت' >&2
+    ((i)) || { echo 'an unregistered counter; Run the detect tunnels option.' >&2; pause_prompt >&2; return 1; }
+    echo '0) Back' >&2
     while true; do
-        read -r -p 'شماره تونل: ' choice || return 1
+        read -r -p 'Tunnel number: ' choice || return 1
         if [[ "$choice" =~ ^[0-9]{1,6}$ ]]; then
             choice=$((10#$choice))
             ((choice==0)) && return 1
@@ -7119,18 +7119,18 @@ PYCODE
                 return 0
             fi
         fi
-        echo 'شماره تونل نامعتبر است؛ از فهرست انتخاب کنید یا 0 بزنید.' >&2
+        echo 'Invalid tunnel number; choose from the list or enter 0.' >&2
     done
 }
 
 menu_traffic_mode() {
     ui_clear >&2
     local choice
-    echo '1) دانلود (دریافت این سرور)' >&2
-    echo '2) آپلود (ارسال این سرور)' >&2
-    echo '3) هر دو' >&2
-    echo '0) لغو' >&2
-    read -r -p 'نحوه محاسبه [Enter: هر دو]: ' choice || return 1
+    echo '1) Download (received by this server)' >&2
+    echo '2) Upload (sent by this server)' >&2
+    echo '3) Both' >&2
+    echo '0) Cancel' >&2
+    read -r -p 'Accounting mode [Enter: Both]: ' choice || return 1
     case "$choice" in 1) echo download;; 2) echo upload;; 3|'') echo both;; *) return 1;; esac
 }
 
@@ -7138,28 +7138,28 @@ menu_traffic() {
     local option id limit mode target confirm
     while true; do
         ui_clear
-        echo 'ترافیک از دید همین سرور محاسبه می‌شود.'
-        echo '1) شناسایی تونل‌ها و نمایش مصرف'
-        echo '2) تعیین سقف مصرف'
-        echo '3) ریست مصرف و رفع مسدودی'
-        echo '4) نحوه محاسبه دانلود/آپلود'
-        echo '5) ثبت دستی اینترفیس'
-        echo '6) ثبت IP اختصاصی'
-        echo '7) حذف شمارنده'
-        echo '0) بازگشت'
-        read -r -p 'انتخاب: ' option || return 0
+        echo 'Traffic is calculated from the perspective of this server.'
+        echo '1) Discover tunnels and show usage'
+        echo '2) Set traffic limit'
+        echo '3) Reset usage and unblock'
+        echo '4) Select download/upload accounting mode'
+        echo '5) Manual interface registration'
+        echo '6) Register a dedicated peer IP'
+        echo '7) Remove counter'
+        echo '0) Back'
+        read -r -p 'Select: ' option || return 0
         case "$option" in
             1) cli_traffic discover >/dev/null && cli_traffic list ;;
             2)
                 id=$(menu_select_traffic) || continue
-                read -r -p 'سقف مصرف به GB (مثلاً 100؛ یا 100GB؛ 0=نامحدود؛ Enter=لغو): ' limit || return 0
+                read -r -p 'Limit in GB (e.g. 100 or 100GB; 0=unlimited; Enter=cancel): ' limit || return 0
                 [[ -n "$limit" ]] || continue
                 [[ "$limit" =~ ^[0-9]+([.][0-9]+)?$ && "$limit" != 0 ]] && limit="${limit}GB"
                 mode=$(menu_traffic_mode) || continue
                 cli_traffic limit "$id" "$limit" --mode "$mode" ;;
             3|7)
                 id=$(menu_select_traffic) || continue
-                read -r -p 'مصرف پاک و محدودیت مسدودی برداشته شود؟ [y/N]: ' confirm || return 0
+                read -r -p 'Reset usage and unblock? [y/N]: ' confirm || return 0
                 [[ "$confirm" == y || "$confirm" == Y ]] || continue
                 if [[ "$option" == 3 ]]; then cli_traffic reset "$id"; else cli_traffic remove "$id"; fi ;;
             4)
@@ -7167,38 +7167,38 @@ menu_traffic() {
                 mode=$(menu_traffic_mode) || continue
                 cli_traffic mode "$id" "$mode" ;;
             5|6)
-                read -r -p 'نام شمارنده [Enter: لغو]: ' id || return 0
+                read -r -p 'Counter name [Enter: Cancel]: ' id || return 0
                 [[ -n "$id" ]] || continue
                 if [[ "$option" == 5 ]]; then
-                    read -r -p 'نام اینترفیس (مثلاً gre-tunnel): ' target || return 0
+                    read -r -p 'Interface name (e.g. gre-tunnel): ' target || return 0
                     cli_traffic add "$id" --interface "$target"
                 else
-                    read -r -p 'IPv4 اختصاصی (تمام ترافیک این IP شمرده می‌شود): ' target || return 0
+                    read -r -p 'Dedicated IPv4 (all traffic to/from this IP is counted): ' target || return 0
                     cli_traffic add "$id" --peer "$target"
                 fi ;;
             0) return 0 ;;
-            *) echo 'گزینه نامعتبر است.' ;;
+            *) echo 'Invalid option.' ;;
         esac
         pause_prompt
     done
 }
 
 menu_loop() {
-    trap 'echo -e "\n\n${CYAN}[*] خروج از مدیریت NavaTunnel؛ خدانگهدار!${NC}"; exit 0' INT
+    trap 'echo -e "\n\n${CYAN}[*] Exiting NavaTunnel. Goodbye!${NC}"; exit 0' INT
     while true; do
         ui_clear
         show_banner
         echo ""
-        echo "منوی اصلی"
-        echo "  1) ساخت و مدیریت تونل‌ها"
-        echo "  2) تنظیمات پیشرفته سرعت و امنیت"
-        echo "  3) بررسی وضعیت و پشتیبان‌گیری"
-        echo "  4) به‌روزرسانی و نگهداری"
-        echo "  5) حذف نصب"
-        echo "  6) مصرف ترافیک، سقف و ریست"
-        echo "  0) خروج"
+        echo "Main menu"
+        echo "  1) Create and manage tunnels"
+        echo "  2) Advanced settings for speed and security"
+        echo "  3) Status check and backup"
+        echo "  4) Update and maintenance"
+        echo "  5) Uninstall"
+        echo "  6) Traffic usage, limits and reset"
+        echo "  0) Exit"
         echo ""
-        read -r -p "انتخاب گزینه [0-6]: " MAIN_OPT || return 0
+        read -r -p "Select option [0-6]: " MAIN_OPT || return 0
         case "$MAIN_OPT" in
             1) menu_tunnel ;;
             2) menu_optimization ;;
@@ -7207,11 +7207,11 @@ menu_loop() {
             5) menu_uninstall ;;
             6) menu_traffic ;;
             0|8|exit|q)
-                echo -e "${CYAN}خروج از مدیریت NavaTunnel؛ خدانگهدار!${NC}"
+                echo -e "${CYAN}Exiting NavaTunnel. Goodbye!${NC}"
                 exit 0
                 ;;
             *)
-                echo -e "${RED}[!] گزینه نامعتبر است.${NC}"
+                echo -e "${RED}[!] Invalid option.${NC}"
                 sleep 1
                 ;;
         esac
@@ -7227,51 +7227,51 @@ main_menu() {
 # Menu and CLI run the same tunnel setup steps.
 usage_cli() {
     cat <<EOF
-روش استفاده:
-  NavaTunnel                                    # منوی تعاملی مدیریت
-  NavaTunnel menu                               # منوی مدیریت با همه گزینه‌ها
+Usage:
+  NavaTunnel                                    # Interactive management menu
+  NavaTunnel menu                               # Admin menu with all options
   NavaTunnel traffic discover | list
-  NavaTunnel traffic add ID --interface gre-tunnel   # یا --peer برای IP اختصاصی مقابل
+  NavaTunnel traffic add ID --interface gre-tunnel   # or --peer for a dedicated peer IP
   NavaTunnel traffic limit ID 100GB --mode download|upload|both
   NavaTunnel traffic status ID | reset ID | remove ID
   NavaTunnel traffic mode ID download|upload|both
   NavaTunnel setup-iran    --local-pub IP --remote-pub IP [--frp-port N] [--local-gre IP] [--peer-gre IP] [--token T] [--chaff low|mid|off] [--force]
   NavaTunnel setup-foreign --local-pub IP --remote-pub IP [--frp-port N] --token T --ports "443, 2083" [--local-gre IP] [--peer-gre IP] [--chaff low|mid|off] [--force]
-                       # یا: NavaTunnel setup-foreign --bundle hsh1_...
+                       # or: NavaTunnel setup-foreign --bundle hsh1_...
   NavaTunnel status | remove-tunnel [--force]
-  NavaTunnel uninstall [--force]                   # حذف کامل تونل و خود NavaTunnel
+  NavaTunnel uninstall [--force]                   # Complete removal of the tunnel and itself NavaTunnel
   NavaTunnel add-peer --local-pub IP --remote-pub IP [--frp-port N] --token T --local-gre IP --peer-gre IP --ports "443, 2083" [--name LABEL] [--bundle hsh1_...] [--chaff low|mid|off]
   NavaTunnel remove-peer --id N [--force] | edit-peer --id N [--name L] [--remote-pub IP] [--carrier C] [--ports "..."] | edit-peer-ports --id N --ports "443, 2083" | peer-list | peer-token --id N
-  NavaTunnel iran-ip --ip IP                       # تغییر آدرس عمومی ایران برای همه تونل‌ها
+  NavaTunnel iran-ip --ip IP                       # Changing the public address of Iran for all tunnels
   NavaTunnel mtu --interface gre-tunnel --value 1300
   NavaTunnel tunnel-power start|stop --id N | --foreign
   NavaTunnel peer-control-port --id N --port N|auto
   NavaTunnel peer-protocol --id N --protocol tcp|kcp|quic|websocket|wss
-  NavaTunnel loss-recovery --id N --mode on|off  # ذخیره انتخاب جبران افت بسته؛ کد جدید را روی خارج اعمال کنید
-  NavaTunnel logs | restart   # (با bash NavaTunnel.sh هم اجرا می‌شود)
+  NavaTunnel loss-recovery --id N --mode on|off  # Save loss recovery selection; apply the new code on the foreign server
+  NavaTunnel logs | restart   # Also available via bash NavaTunnel.sh
   NavaTunnel optimize | restore | tune-status
-  NavaTunnel carrier [status|mode auto|direct|fou:P|set direct|fou:P|next] # تغییر خودکار حامل
+  NavaTunnel carrier [status|mode auto|direct|fou:P|set direct|fou:P|next] # Automatic carrier change
   NavaTunnel perf status|enc on|off|comp on|off|tls on|off|chaff off|low|mid|custom|dpi on|off|apply
   NavaTunnel chaff configure --min-ms 400 --max-ms 2800 --min-bytes 64 --max-bytes 1200
   NavaTunnel dpi-shield configure --rate 60/sec --burst 120
-  NavaTunnel chaff on|off|status                   # ترافیک پوششی هنگام بیکاری
-  NavaTunnel dpi-shield on|off|status              # محدودیت نرخ پورت‌ها در برابر اسکن پرتعداد
-  NavaTunnel watchdog on|off|status|test|tick      # پایش تونل و هشدار
+  NavaTunnel chaff on|off|status                   # Random ICMP cover traffic
+  NavaTunnel dpi-shield on|off|status              # SYN rate limits against excessive scanning
+  NavaTunnel watchdog on|off|status|test|tick      # Tunnel monitoring and warning
   NavaTunnel backup now [--keep N] | restore <f> | schedule ... | status
-  NavaTunnel tgsend "msg"                          # ارسال دستی هشدار تلگرام
-  NavaTunnel doctor [server|stop-server|fix]       # بررسی تأخیر، نوسان، MTU و سرعت
-  NavaTunnel stress-test [host] [port] [conns]     # تست فشار اتصال هم‌زمان
-  NavaTunnel update | update-all                   # به‌روزرسانی اسکریپت
-  NavaTunnel download-cores                        # دریافت فایل‌های اجرایی FRP
-  NavaTunnel free-ram                              # محدودیت لاگ، آزادسازی کش و یک گیگابایت swap
+  NavaTunnel tgsend "msg"                          # Sending Telegram alerts manually
+  NavaTunnel doctor [server|stop-server|fix]       # Check latency, jitter, MTU and speed
+  NavaTunnel stress-test [host] [port] [conns]     # Concurrent connection stress test
+  NavaTunnel update | update-all                   # Script update
+  NavaTunnel download-cores                        # Download FRP binaries
+  NavaTunnel free-ram                              # Log limit, cache release and 1 gigabyte swap
 
-جبران افت بسته:
-  فرمان‌های add-peer و setup-foreign گزینه --loss-recovery on|off دارند؛ پیش‌فرض خاموش است.
-  حالت on پروتکل KCP/FEC را روی خارج انتخاب می‌کند و مصرف افزوده دارد.
+Loss recovery:
+  add-peer and setup-foreign accept --loss-recovery on|off; the default is off.
+  Enabling recovery selects KCP/FEC on the foreign client and increases traffic usage.
 
-کدهای اتصال:
+Connection codes:
   FRP:              hsh1_<IRAN_PUB>_<FRP_PORT>_<IRAN_GRE>_<FOREIGN_GRE>_<TOKEN>[_<PORTS>]
-  کد راه‌اندازی با BUNDLE چاپ می‌شود؛ آن را در --bundle وارد کنید.
+  The connection code is printed with BUNDLE; pass it to --bundle.
 EOF
 }
 
@@ -7282,7 +7282,7 @@ cli_setup_iran() {
         if [[ "$1" == --* && $# -lt 2 ]]; then
             case "$1" in
                 --force|--show-token|--encrypt|--compress|--dry-run|--off|--help) ;;
-                *) echo "مقدار این گزینه وارد نشده است: $1" >&2; return 1 ;;
+                *) echo "The value of this option is not entered: $1" >&2; return 1 ;;
             esac
         fi
         case "$1" in
@@ -7296,25 +7296,25 @@ cli_setup_iran() {
             --chaff) CHAFF_PROFILE="$2"; shift 2 ;;
             --force) FORCE=1; shift ;;
             -h|--help) usage_cli; return 0 ;;
-            *) echo -e "${RED}[!] گزینه ناشناخته: $1${NC}"; usage_cli; return 1 ;;
+            *) echo -e "${RED}[!] Unknown option: $1${NC}"; usage_cli; return 1 ;;
         esac
     done
     CHAFF_PROFILE="${CHAFF_PROFILE:-$(perf_get_chaff)}"
     case "$CHAFF_PROFILE" in
         low|mid|off) ;;
-        *) echo -e "${YELLOW}[!] حالت ترافیک پوششی ${CHAFF_PROFILE} ناشناخته است؛ غیرفعال انتخاب شد.${NC}"; CHAFF_PROFILE="off" ;;
+        *) echo -e "${YELLOW}[!] Cover traffic mode ${CHAFF_PROFILE} is unknown; Disabled is selected.${NC}"; CHAFF_PROFILE="off" ;;
     esac
     LOCAL_PUB=${LOCAL_PUB:-$(ip route get 1.1.1.1 2>/dev/null | awk '/src/ {for (i=1; i<=NF; i++) if ($i=="src") {print $(i+1); exit}}')}
     [[ -z "$LOCAL_PUB" ]] && LOCAL_PUB=$(curl -sSL --max-time 5 https://api.ipify.org 2>/dev/null)
     FRP_PORT=${FRP_PORT:-$(gen_random_port)}
     validate_setup_common "$LOCAL_PUB" "$REMOTE_PUB" "$FRP_PORT" "$LOCAL_GRE" || return 1
-    is_valid_ip "$PEER_GRE" || { echo -e "${RED}[!] IP داخلی GRE سرور مقابل نامعتبر است: '$PEER_GRE'${NC}"; return 1; }
+    is_valid_ip "$PEER_GRE" || { echo -e "${RED}[!] Invalid peer GRE IP: '$PEER_GRE'${NC}"; return 1; }
     if [[ -z "$TOKEN" ]]; then
         TOKEN=$(gen_token32)
-        echo -e "${CYAN}[*] توکن ساخته‌شده: ${TOKEN}${NC}"
+        echo -e "${CYAN}[*] Token created: ${TOKEN}${NC}"
     fi
     if tunnel_present && [[ "$FORCE" -ne 1 ]]; then
-        echo -e "${RED}[!] تونل از قبل وجود دارد؛ برای جایگزینی از --force استفاده کنید.${NC}"
+        echo -e "${RED}[!] Tunnel already exists; use --force to replace it.${NC}"
         return 1
     fi
     setup_iran_server_noninteractive "$LOCAL_PUB" "$REMOTE_PUB" "$FRP_PORT" "$TOKEN" "$LOCAL_GRE" "$PEER_GRE" "$PORTS"
@@ -7330,7 +7330,7 @@ cli_setup_foreign() {
         if [[ "$1" == --* && $# -lt 2 ]]; then
             case "$1" in
                 --force|--show-token|--encrypt|--compress|--dry-run|--off|--help) ;;
-                *) echo "مقدار این گزینه وارد نشده است: $1" >&2; return 1 ;;
+                *) echo "The value of this option is not entered: $1" >&2; return 1 ;;
             esac
         fi
         case "$1" in
@@ -7353,16 +7353,16 @@ cli_setup_foreign() {
             --chaff) CHAFF_PROFILE="$2"; shift 2 ;;
             --force) FORCE=1; shift ;;
             -h|--help) usage_cli; return 0 ;;
-            *) echo -e "${RED}[!] گزینه ناشناخته: $1${NC}"; usage_cli; return 1 ;;
+            *) echo -e "${RED}[!] Unknown option: $1${NC}"; usage_cli; return 1 ;;
         esac
     done
     CHAFF_PROFILE="${CHAFF_PROFILE:-$(perf_get_chaff)}"
     case "$CHAFF_PROFILE" in
         low|mid|off) ;;
-        *) echo -e "${YELLOW}[!] حالت ترافیک پوششی ${CHAFF_PROFILE} ناشناخته است؛ غیرفعال انتخاب شد.${NC}"; CHAFF_PROFILE="off" ;;
+        *) echo -e "${YELLOW}[!] Cover traffic mode ${CHAFF_PROFILE} is unknown; Disabled is selected.${NC}"; CHAFF_PROFILE="off" ;;
     esac
     if [[ -n "$BUNDLE" ]]; then
-        bundle_parse "$BUNDLE" || { echo -e "${RED}[!] کد --bundle نامعتبر است؛ قالب مورد انتظار ( hsh1_<IRAN_PUB>_<PORT>_<IRAN_GRE>_<FOREIGN_GRE>_<TOKEN>[_<PORTS>]).${NC}"; return 1; }
+        bundle_parse "$BUNDLE" || { echo -e "${RED}[!] Code --bundle is invalid; Expected format ( hsh1_<IRAN_PUB>_<PORT>_<IRAN_GRE>_<FOREIGN_GRE>_<TOKEN>[_<PORTS>]).${NC}"; return 1; }
         TOKEN=$B_TOKEN
         REMOTE_PUB=$B_IRAN_PUB
         # Bundle FRP server port is the absolute source of truth
@@ -7380,7 +7380,7 @@ cli_setup_foreign() {
         [[ -z "$PORTS" && -n "$B_PORTS" ]] && PORTS=$B_PORTS
         carrier_set_fou_ports "$B_FOU_P1" "$B_FOU_P2" 2>/dev/null || true
         carrier_init_kernel 2>/dev/null || true
-        echo -e "${CYAN}[*] کد اتصال اعمال شد؛ مقصد ایران ${REMOTE_PUB} و پورت FRP ${FRP_PORT} است.${NC}"
+        echo -e "${CYAN}[*] Connection code applied; Destination Iran ${REMOTE_PUB} and port FRP ${FRP_PORT} is.${NC}"
     fi
     # --bundle replaces --token as the required secret
     [[ -z "$TOKEN" && -n "$BUNDLE" ]] && TOKEN=$B_TOKEN
@@ -7390,18 +7390,18 @@ cli_setup_foreign() {
     LOCAL_GRE=${LOCAL_GRE:-$FOREIGN_GRE_DEF}
     PEER_GRE=${PEER_GRE:-$IRAN_GRE_DEF}
     validate_setup_common "$LOCAL_PUB" "$REMOTE_PUB" "$FRP_PORT" "$LOCAL_GRE" || return 1
-    is_valid_ip "$PEER_GRE" || { echo -e "${RED}[!] IP داخلی GRE سرور مقابل نامعتبر است: '$PEER_GRE'${NC}"; return 1; }
-    [[ -n "$TOKEN" ]] || { echo -e "${RED}[!] گزینه --token ضروری است؛ آن را از ایران کپی کنید.${NC}"; return 1; }
+    is_valid_ip "$PEER_GRE" || { echo -e "${RED}[!] Invalid peer GRE IP: '$PEER_GRE'${NC}"; return 1; }
+    [[ -n "$TOKEN" ]] || { echo -e "${RED}[!] --token is required; copy it from the Iran server.${NC}"; return 1; }
     local CLEANED="" p
     for p in $(echo "$PORTS" | tr ',' ' '); do
-        is_valid_port "$p" || { echo "پورت نامعتبر: $p" >&2; return 1; }
+        is_valid_port "$p" || { echo "Invalid port: $p" >&2; return 1; }
             CLEANED="$CLEANED $((10#$p))"
     done
     CLEANED=$(echo "$CLEANED" | xargs)
     if [[ -z "$CLEANED" ]]; then
         # Bundle had empty ports segment — non-interactive path cannot prompt;
         # Pass --ports explicitly when the bundle has no ports.
-        echo -e "${RED}[!] گزینه --ports باید حداقل یک پورت معتبر داشته باشد (مثلاً \"443, 2083\"). کد اتصال پورت ندارد؛ پورت‌ها را با --ports وارد کنید.${NC}"
+        echo -e "${RED}[!] --ports must contain at least one valid port (e.g. \"443, 2083\"). No port connection code; Ports with --ports enter.${NC}"
         return 1
     fi
 
@@ -7411,24 +7411,24 @@ cli_setup_foreign() {
     case "$LOSS_RECOVERY" in
         on)
             if [[ "$TRANSPORT_EXPLICIT" == 1 && "$FRP_TRANSPORT" != kcp ]]; then
-                echo 'جبران افت بسته به --frp-transport kcp نیاز دارد؛ پروتکل انتخاب‌شده ناسازگار است.' >&2; return 1
+                echo 'Loss recovery requires --frp-transport kcp; the selected protocol is incompatible.' >&2; return 1
             fi
             FRP_TRANSPORT=kcp ;;
         off)
             [[ "$TRANSPORT_EXPLICIT" != 1 && "$FRP_TRANSPORT" == kcp ]] && FRP_TRANSPORT=tcp
             if [[ "$LOSS_EXPLICIT" == 1 && "$TRANSPORT_EXPLICIT" == 1 && "$FRP_TRANSPORT" == kcp ]]; then
-                echo 'KCP شامل FEC است و با جبران افت بسته خاموش سازگار نیست.' >&2; return 1
+                echo 'KCP includes FEC and requires loss recovery to be enabled.' >&2; return 1
             fi ;;
         '') ;;
-        *) echo 'مقدار --loss-recovery باید on یا off باشد..' >&2; return 1 ;;
+        *) echo 'amount --loss-recovery must on or off be..' >&2; return 1 ;;
     esac
     case "$FRP_TRANSPORT" in
         tcp|kcp|quic|websocket|wss) ;;
-        *) echo -e "${YELLOW}[!] پروتکل FRP ${FRP_TRANSPORT} ناشناخته است؛ TCP انتخاب شد.${NC}"; FRP_TRANSPORT="tcp" ;;
+        *) echo -e "${YELLOW}[!] FRP protocol ${FRP_TRANSPORT} is unknown; TCP was selected.${NC}"; FRP_TRANSPORT="tcp" ;;
     esac
 
     if tunnel_present && [[ "$FORCE" -ne 1 ]]; then
-        echo -e "${RED}[!] تونل از قبل وجود دارد؛ برای جایگزینی از --force استفاده کنید.${NC}"
+        echo -e "${RED}[!] Tunnel already exists; use --force to replace it.${NC}"
         return 1
     fi
     setup_foreign_server_noninteractive "$LOCAL_PUB" "$REMOTE_PUB" "$FRP_PORT" "$TOKEN" "$LOCAL_GRE" "$PEER_GRE" "$CLEANED" "$RELAY_IP" "$PROXY_PROTOCOL" "$FRP_TRANSPORT" "$FRP_ENCRYPTION" "$FRP_COMPRESSION"
@@ -7441,7 +7441,7 @@ if [[ $# -gt 0 ]]; then
             shift
             case "${1:-}" in
                 inspect) shift; cli_bundle_inspect "$@" ;;
-                *) echo "روش استفاده: NavaTunnel bundle inspect <bundle> [--show-token]"; exit 1 ;;
+                *) echo "Usage: NavaTunnel bundle inspect <bundle> [--show-token]"; exit 1 ;;
             esac
             exit $?
             ;;
@@ -7477,7 +7477,7 @@ if [[ $# -gt 0 ]]; then
         update|update-all) update_all ;;
         peer-token)
             shift; ID=""
-            while [[ $# -gt 0 ]]; do case "$1" in --id) [[ $# -ge 2 ]] || { echo "مقدار این گزینه وارد نشده است: --id" >&2; exit 1; }; ID="$2"; shift 2 ;; *) echo "گزینه ناشناخته: $1" >&2; exit 1 ;; esac; done
+            while [[ $# -gt 0 ]]; do case "$1" in --id) [[ $# -ge 2 ]] || { echo "The value of this option is not entered: --id" >&2; exit 1; }; ID="$2"; shift 2 ;; *) echo "Unknown option: $1" >&2; exit 1 ;; esac; done
             peer_token "$ID" ;;
         status) check_status ;;
         doctor|test|diagnose) shift; cli_doctor "$@" ;;
@@ -7490,15 +7490,15 @@ if [[ $# -gt 0 ]]; then
         tune-status) tune_status ;;
         free-ram|optimize-ram) free_ram ;;
         download-cores|cores)
-            echo -e "${CYAN}[*] در حال دریافت و بررسی فایل‌های اجرایی FRP...${NC}"
-            install_frp_binaries "all" || { echo -e "${RED}[!] نصب فایل‌های اجرایی FRP ناموفق بود.${NC}"; exit 1; }
-            echo -e "${GREEN}[✔️] همه فایل‌های اجرایی frps و frpc در ${INSTALL_DIR} آماده‌اند.${NC}"
+            echo -e "${CYAN}[*] Receiving and checking executable files FRP...${NC}"
+            install_frp_binaries "all" || { echo -e "${RED}[!] FRP binary installation failed.${NC}"; exit 1; }
+            echo -e "${GREEN}[✔️] All executable files frps and frpc in ${INSTALL_DIR} are ready.${NC}"
             ;;
         remove-tunnel)
             if [[ "${2:-}" == "--force" ]]; then remove_tunnel_force; else remove_tunnel; fi ;;
         uninstall)
             if [[ "${2:-}" == "--force" ]]; then uninstall_all_force; else uninstall_all; fi ;;
-        *) echo -e "${RED}[!] دستور ناشناخته: $1${NC}"; usage_cli; exit 1 ;;
+        *) echo -e "${RED}[!] Unknown command: $1${NC}"; usage_cli; exit 1 ;;
     esac
     exit $?
 fi

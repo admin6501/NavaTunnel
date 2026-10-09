@@ -22,7 +22,7 @@ class ControlPortTests(ScriptHarness):
     def test_conflicting_manual_input_reprompts(self):
         result=self.run_shell("menu_control_port_prompt 0 <<<$'7010\\n7700'",self.stubs)
         self.assertEqual(result.stdout.strip(),'7700')
-        self.assertIn('تداخل',result.stderr)
+        self.assertIn('conflicts',result.stderr)
 
     def test_invalid_range_companion_and_service_conflicts(self):
         for port in ('0','65536','bad','7010','7009','7011','443','8442'):
@@ -67,7 +67,7 @@ if [[ "$1" == restart ]] && grep -q 'bindPort = 7900' "'''+str(self.config/'frps
 return 0;
 }''')
         self.assertNotEqual(result.returncode,0)
-        self.assertIn('بازیابی شد',result.stderr)
+        self.assertIn('previous settings were restored',result.stderr)
         for p,content in old.items(): self.assertEqual(p.read_bytes(),content)
 
     def test_port_65535_wraps_quic_companion(self):
@@ -93,7 +93,7 @@ cli_add_peer() { echo "SETUP:$*"; }
 ''')
         self.assertEqual(result.returncode,0,result.stderr)
         self.assertIn('--frp-port 7900',result.stdout)
-        self.assertIn('تونل ساخته شد',result.stdout)
+        self.assertIn('The tunnel was built',result.stdout)
 
     def test_menu_edit_control_port_is_scoped_to_selected_peer(self):
         result=self.run_shell("menu_edit_peer <<<$'2\\n13\\n7900\\n\\n0'",self.stubs)

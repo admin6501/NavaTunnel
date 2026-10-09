@@ -13,17 +13,17 @@ class ConnectionCodeTests(ScriptHarness):
         self.assertIn('11002-11003-8080-2067-2095-8443-8888-443-2087-2096-51820-51821-206-23913',result.stdout)
         command=result.stdout.index('NavaTunnel setup-foreign')
         paused=result.stdout.index('CODE_PAUSED',command)
-        next_menu=result.stdout.index('تونل: moshtari2',command)
+        next_menu=result.stdout.index('Tunnel: moshtari2',command)
         self.assertLess(paused,next_menu)
 
     def test_missing_connection_data_returns_explicit_error(self):
         self.peers[1].pop('local_gre');self.write_peers()
         result=self.run_shell('peer_token 2')
         self.assertNotEqual(result.returncode,0)
-        self.assertIn('اطلاعات اتصال',result.stderr)
+        self.assertIn('Connection information',result.stderr)
         self.assertNotIn('BUNDLE:',result.stdout)
         result=self.run_shell("menu_edit_peer <<<$'2\\n8\\n0'",'pause_prompt() { echo CODE_PAUSED; }')
-        self.assertIn('دریافت کد اتصال ناموفق',result.stdout)
+        self.assertIn('Failed to get connection code',result.stdout)
         self.assertNotIn('NavaTunnel setup-foreign',result.stdout)
 
     def test_invalid_ports_do_not_produce_connection_command(self):

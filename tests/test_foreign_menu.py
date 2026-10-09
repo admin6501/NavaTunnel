@@ -26,7 +26,7 @@ remotePort = 53835
     def test_foreign_config_is_listed_without_hub_registry(self):
         result=self.run_shell('menu_list_tunnels','systemctl() { echo active; }')
         self.assertEqual(result.returncode,0,result.stderr)
-        for value in ('FRPC','10.200.0.2:35305','kcp','23298','53835','فعال'):
+        for value in ('FRPC','10.200.0.2:35305','kcp','23298','53835','Enabled'):
             self.assertIn(value,result.stdout)
         self.assertNotIn('SECRET_NOT_FOR_DISPLAY',result.stdout)
         self.assertNotIn('No peer tunnels',result.stdout)
@@ -41,8 +41,8 @@ remotePort = 53835
         result=self.run_shell("menu_tunnel <<<$'3\\n0\\n0'")
         self.assertEqual(result.returncode,0,result.stderr)
         self.assertIn('FRPC',result.stdout)
-        self.assertIn('ری‌استارت همین تونل',result.stdout)
-        self.assertNotIn('ابتدا یک تونل بسازید',result.stderr)
+        self.assertIn('Restart this tunnel',result.stdout)
+        self.assertNotIn('First, build a tunnel',result.stderr)
 
     def test_foreign_restart_does_not_restart_hub_services(self):
         result=self.run_shell("menu_manage_tunnel <<<$'3\\n0'",'systemctl() { echo "$*"; }')
@@ -63,11 +63,11 @@ remotePort = 53835
     def test_missing_and_invalid_client_config(self):
         self.client.unlink()
         result=self.run_shell('menu_list_tunnels')
-        self.assertIn('هیچ تونلی',result.stdout)
+        self.assertIn('No tunnel',result.stdout)
         self.client.write_text('invalid TOML [')
         result=self.run_shell('foreign_tunnel_summary')
         self.assertNotEqual(result.returncode,0)
-        self.assertIn('ناموفق',result.stderr)
+        self.assertIn('Failed',result.stderr)
 
     def test_eof_exits_foreign_manager_without_mutation(self):
         before=self.client.read_text()

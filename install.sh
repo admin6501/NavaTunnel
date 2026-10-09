@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # NavaTunnel one-line installer — resilient multi-mirror download & auto-setup.
-# روش استفاده: bash <(curl -fsSL https://raw.githubusercontent.com/admin6501/NavaTunnel/main/install.sh)
+# Usage: bash <(curl -fsSL https://raw.githubusercontent.com/admin6501/NavaTunnel/main/install.sh)
 set -euo pipefail
 
 if [[ $EUID -ne 0 ]]; then
-    echo "اسکریپت را با دسترسی روت یا sudo اجرا کنید." >&2
+    echo "Run this script as root or with sudo." >&2
     exit 1
 fi
 
@@ -19,9 +19,9 @@ cat << 'EOF'
 EOF
 echo -e "\033[0m"
 echo -e "\033[0;36m==============================================================\033[0m"
-echo -e "\033[1;32m     نصب‌کننده تونل معکوس NavaTunnel\033[0m"
+echo -e "\033[1;32m     NavaTunnel reverse tunnel installer\033[0m"
 echo -e "\033[0;36m==============================================================\033[0m"
-echo -e "\033[0;33m[*] در حال دریافت اسکریپت اصلی مدیریت...\033[0m"
+echo -e "\033[0;33m[*] Downloading the main management script...\033[0m"
 
 URLS=(
     "https://raw.githubusercontent.com/admin6501/NavaTunnel/main/NavaTunnel.sh"
@@ -41,7 +41,7 @@ for U in "${URLS[@]}"; do
 done
 
 if [[ "$DOWNLOADED" -ne 1 ]]; then
-    echo "دریافت NavaTunnel.sh از گیت‌هاب و نشانی‌های جایگزین ناموفق بود." >&2
+    echo "Failed to download NavaTunnel.sh from GitHub and fallback mirrors." >&2
     exit 1
 fi
 
@@ -59,6 +59,6 @@ ln -sf /usr/local/bin/NavaTunnel.sh /usr/local/bin/gre.sh 2>/dev/null || true
 
 bash /usr/local/bin/NavaTunnel "$@"
 
-echo -e "\033[1;32mنصب NavaTunnel پایان یافت\033[0m"
+echo -e "\033[1;32mNavaTunnel installation completed\033[0m"
 echo ""
 

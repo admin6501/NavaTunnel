@@ -47,44 +47,44 @@ class MenuNavigationTests(ScriptHarness):
         out=self.terminal('menu_loop','1\n3\n2\n0\n0\n0\n')
         screens=out.split('\x1b[2J\x1b[H')
         self.assertGreaterEqual(len(screens),6)
-        self.assertIn('تونل: same-name',out)
+        self.assertIn('Tunnel: same-name',out)
         parent=screens[-2]
-        self.assertIn('1) ساخت تونل روی ایران',parent)
-        self.assertNotIn('آخرین مصرف',parent)
-        self.assertNotIn('تغییر پورت‌های سرویس',parent)
-        self.assertIn('منوی اصلی',screens[-1])
-        self.assertNotIn('تونل:',screens[-1])
+        self.assertIn('1) Create tunnel on Iran',parent)
+        self.assertNotIn('last use',parent)
+        self.assertNotIn('Change service ports',parent)
+        self.assertIn('Main menu',screens[-1])
+        self.assertNotIn('Tunnel:',screens[-1])
 
     def test_global_iran_ip_is_not_on_selected_tunnel(self):
         out=self.terminal('menu_edit_peer','2\n0\n')
-        self.assertNotIn('تغییر IP سرور ایران',out)
-        self.assertIn('13) تغییر پورت کنترل FRP همین تونل',out)
-        self.assertIn('12) تغییر دائمی MTU',out)
+        self.assertNotIn('change IP Iran server',out)
+        self.assertIn('13) Change FRP control port for this tunnel',out)
+        self.assertIn('12) Set persistent MTU',out)
         entries=[line for line in out.split('\x1b[2J\x1b[H')[-1].splitlines() if line.startswith(('1)','2)','3)'))]
-        self.assertEqual(entries[:3],['1) شروع همین تونل','2) توقف همین تونل','3) ری‌استارت همین تونل'])
+        self.assertEqual(entries[:3],['1) Start this tunnel','2) Stop this tunnel','3) Restart this tunnel'])
         parent=self.terminal('menu_tunnel','0\n')
-        self.assertEqual(parent.count('6) تغییر IP سرور ایران'),1)
+        self.assertEqual(parent.count('6) Change Iran server IP'),1)
 
     def test_traffic_submenu_return_removes_traffic_actions(self):
         out=self.terminal('menu_edit_peer','2\n9\n0\n0\n')
         screens=out.split('\x1b[2J\x1b[H')
-        self.assertIn('1) تازه‌سازی مصرف',out)
-        self.assertIn('4) تغییر پورت‌های سرویس',screens[-1])
-        self.assertNotIn('1) تازه‌سازی مصرف',screens[-1])
+        self.assertIn('1) Refresh usage',out)
+        self.assertIn('4) Change service ports',screens[-1])
+        self.assertNotIn('1) Refresh usage',screens[-1])
 
     def test_loss_submenu_and_cancelled_protocol_return_cleanly(self):
         out=self.terminal('menu_edit_peer','2\n10\n0\n11\n0\n0\n')
         screens=out.split('\x1b[2J\x1b[H')
-        self.assertIn('1) فعال‌سازی جبران افت بسته',out)
-        self.assertIn('1) TCP (پیش‌فرض)',out)
-        self.assertIn('4) تغییر پورت‌های سرویس',screens[-1])
-        self.assertNotIn('1) TCP (پیش‌فرض)',screens[-1])
+        self.assertIn('1) Enable loss recovery',out)
+        self.assertIn('1) TCP (Default)',out)
+        self.assertIn('4) Change service ports',screens[-1])
+        self.assertNotIn('1) TCP (Default)',screens[-1])
 
     def test_invalid_tunnel_row_reprompts_without_selecting_another(self):
         result=self.run_shell("menu_select_peer <<<$'bad\\n99\\n000002'")
         self.assertEqual(result.returncode,0,result.stderr)
         self.assertEqual(result.stdout.strip(),'2')
-        self.assertEqual(result.stderr.count('شماره تونل نامعتبر'),2)
+        self.assertEqual(result.stderr.count('Invalid tunnel number'),2)
 
     def test_traffic_selector_reprompts_and_keeps_stdout_machine_readable(self):
         result=self.run_shell("menu_select_traffic <<<$'bad\\n9\\n1'")
@@ -96,19 +96,19 @@ class MenuNavigationTests(ScriptHarness):
         self.peers=[];self.write_peers()
         (self.config/'frpc.toml').write_text('serverAddr="10.200.0.2"\nserverPort=7000\ntransport.protocol="tcp"\n')
         out=self.terminal('menu_tunnel','3\n0\n0\n')
-        self.assertIn('تونل سرور خارج | FRPC',out)
-        foreign_screen=next(s for s in out.split('\x1b[2J\x1b[H') if 'تونل سرور خارج | FRPC' in s)
+        self.assertIn('Out server tunnel | FRPC',out)
+        foreign_screen=next(s for s in out.split('\x1b[2J\x1b[H') if 'Out server tunnel | FRPC' in s)
         entries=[line for line in foreign_screen.splitlines() if line.startswith(('1)','2)','3)'))]
-        self.assertEqual(entries[:3],['1) شروع همین تونل','2) توقف همین تونل','3) ری‌استارت همین تونل'])
+        self.assertEqual(entries[:3],['1) Start this tunnel','2) Stop this tunnel','3) Restart this tunnel'])
         last=out.split('\x1b[2J\x1b[H')[-1]
-        self.assertIn('1) ساخت تونل روی ایران',last)
-        self.assertNotIn('تونل سرور خارج | FRPC',last)
+        self.assertIn('1) Create tunnel on Iran',last)
+        self.assertNotIn('Out server tunnel | FRPC',last)
 
     def test_refresh_clears_previous_traffic_snapshot(self):
         out=self.terminal('menu_tunnel_traffic gre-t2','1\n0\n')
         screens=out.split('\x1b[2J\x1b[H')
-        self.assertEqual(screens[-1].count('ترافیک همین تونل:'),1)
-        self.assertEqual(screens[-1].count('1) تازه‌سازی مصرف'),1)
+        self.assertEqual(screens[-1].count('Traffic for this tunnel:'),1)
+        self.assertEqual(screens[-1].count('1) Refresh usage'),1)
 
     def test_noninteractive_clear_does_not_emit_terminal_codes(self):
         result=self.run_shell('ui_clear; echo clean')
@@ -131,24 +131,24 @@ init_watchdog_json() { :; }; doctor_health_check() { :; };
     def test_main_sections_return_to_main_without_old_actions(self):
         out=self.terminal('menu_loop','2\n0\n3\n0\n4\n0\n5\n0\n6\n0\n0\n')
         last=out.split('\x1b[2J\x1b[H')[-1]
-        self.assertIn('منوی اصلی',last)
-        for old in ('زمان‌بندی پشتیبان','دریافت و بررسی فایل‌های اجرایی','ثبت دستی اینترفیس','حذف اجزای تونل'):
+        self.assertIn('Main menu',last)
+        for old in ('Backup schedule','Download and check executable files','Manual interface registration','Removal of tunnel components'):
             self.assertNotIn(old,last)
 
     def test_gre_submenu_is_its_own_screen(self):
         out=self.terminal('menu_edit_peer','2\n7\n0\n0\n')
-        screen=next(s for s in out.split('\x1b[2J\x1b[H') if '1) GRE مستقیم' in s)
-        self.assertNotIn('4) تغییر پورت‌های سرویس',screen)
-        self.assertNotIn('دانلود:',screen)
+        screen=next(s for s in out.split('\x1b[2J\x1b[H') if '1) GRE Direct' in s)
+        self.assertNotIn('4) Change service ports',screen)
+        self.assertNotIn('Download:',screen)
 
     def test_failed_edit_result_is_shown_before_next_redraw(self):
         out=self.terminal('menu_edit_peer','2\n6\ninvalid\n\n0\n',interactive=True)
         screens=out.split('\x1b[2J\x1b[H')
-        error_screen=next(s for s in screens if 'IP عمومی سرور مقابل نامعتبر' in s)
-        self.assertIn('مقدار جدید:',error_screen)
-        self.assertIn('برای بازگشت به منو Enter بزنید',error_screen)
-        self.assertNotIn('IP عمومی سرور مقابل نامعتبر',screens[-1])
-        self.assertIn('4) تغییر پورت‌های سرویس',screens[-1])
+        error_screen=next(s for s in screens if 'Invalid peer public IP' in s)
+        self.assertIn('New value:',error_screen)
+        self.assertIn('Press Enter to return to the menu',error_screen)
+        self.assertNotIn('Invalid peer public IP',screens[-1])
+        self.assertIn('4) Change service ports',screens[-1])
 
     def test_connection_command_remains_on_interactive_screen_until_enter(self):
         self.peers[1].update(local_pub='203.0.113.1',local_gre='10.200.0.6',peer_gre='10.200.0.5',frp_port=7001,token='testingToken123')
@@ -156,13 +156,13 @@ init_watchdog_json() { :; }; doctor_health_check() { :; };
         out=self.terminal('menu_edit_peer','2\n8\n\n0\n',interactive=True)
         screens=out.split('\x1b[2J\x1b[H')
         code_screen=next(s for s in screens if 'NavaTunnel setup-foreign --bundle' in s)
-        self.assertIn('برای بازگشت به منو Enter بزنید',code_screen)
+        self.assertIn('Press Enter to return to the menu',code_screen)
         self.assertNotIn('NavaTunnel setup-foreign --bundle',screens[-1])
 
     def test_empty_tunnel_list_message_is_visible_before_parent_redraw(self):
         self.peers=[];self.write_peers()
         out=self.terminal('menu_tunnel','3\n\n0\n',interactive=True)
         screens=out.split('\x1b[2J\x1b[H')
-        empty=next(s for s in screens if 'تونلی در فهرست نیست' in s)
-        self.assertIn('برای بازگشت به منو Enter بزنید',empty)
-        self.assertNotIn('تونلی در فهرست نیست',screens[-1])
+        empty=next(s for s in screens if 'The tunnel is not listed' in s)
+        self.assertIn('Press Enter to return to the menu',empty)
+        self.assertNotIn('The tunnel is not listed',screens[-1])

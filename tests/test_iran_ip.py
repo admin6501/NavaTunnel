@@ -44,7 +44,7 @@ if [ "$FAIL_RESTART" = 1 ] && [ "$1" = restart ] && [ "$2" = gre-t2.service ]; t
         result=self.run_shell('cli_iran_ip --ip 198.51.100.9',self.extra+'export FAIL_RESTART=1\n')
         self.assertNotEqual(result.returncode,0)
         for p,content in before.items(): self.assertEqual(p.read_bytes(),content)
-        self.assertIn('بازیابی کامل نشد',result.stderr)
+        self.assertIn('Recovery failed',result.stderr)
 
     def test_missing_unit_aborts_before_mutation(self):
         (self.units/'gre-t2.service').unlink()

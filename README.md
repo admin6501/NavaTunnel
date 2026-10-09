@@ -3,8 +3,8 @@
 **English** | [فارسی](README.fa.md)
 
 FRP reverse tunnel management over GRE, developed and maintained by **admin6501**.
-This NavaTunnel version includes Persian menus, per-tunnel traffic controls, protocol selection, persistent MTU settings, Iran IP migration, documentation, and bug fixes.
-Management runs through SSH and a Persian terminal menu. The web panel, web server, panel installer, and Go build steps have been removed.
+This NavaTunnel version includes English menus, per-tunnel traffic controls, protocol selection, persistent MTU settings, Iran IP migration, documentation, and bug fixes.
+Management runs through SSH and an English terminal menu. The web panel, web server, panel installer, and Go build steps have been removed.
 
 GRE can run directly or use FOU over UDP. FRP transport, encryption, and compression are applied on the foreign client; the Iran menu stores each tunnel's selection and passes it through a connection bundle. A web relay carrier for GRE is not available in this version.
 
@@ -18,7 +18,7 @@ Run as root on a Linux server with systemd, Python 3, and iptables:
 bash <(curl -fsSL https://raw.githubusercontent.com/admin6501/NavaTunnel/main/install.sh)
 ```
 
-Run `NavaTunnel` to open the menu or `NavaTunnel --help` for CLI help. For a local copy, run `sudo bash NavaTunnel.sh`. Tunnel setup installs required dependencies and binaries. Traffic and cover-traffic helpers are also Bash scripts. The script's interface and help remain in Persian; this document provides English instructions.
+Run `NavaTunnel` to open the menu or `NavaTunnel --help` for CLI help. For a local copy, run `sudo bash NavaTunnel.sh`. Tunnel setup installs required dependencies and binaries. Traffic and cover-traffic helpers are also Bash scripts. The script interface, messages and CLI help are entirely in English.
 
 Use **Updates and maintenance → Full update**, or run:
 
@@ -165,7 +165,7 @@ State remains in `/etc/gre-panel` for compatibility with existing installations;
 
 Traffic and MTU state are included in backups. After restoring onto a replacement server, run `NavaTunnel traffic list` to install and enable the counter service and timer. An already installed legacy web panel is not automatically removed during an upgrade; back it up and migrate before replacement. Full uninstall includes cleanup of the old panel's files and service.
 
-Script updates come from this repository. FRP binaries are downloaded from release assets and fallback sources. Script messages, menus, errors, installer text, and CLI help are Persian. Command names, configuration keys, protocols, and raw output from external tools such as FRP and systemd retain their technical names and original language.
+Script updates come from this repository. FRP binaries are downloaded from release assets and fallback sources. Script messages, menus, errors, installer text, and CLI help are English. Command names, configuration keys, protocols, and raw output from external tools such as FRP and systemd retain their technical names and original language.
 
 ## Checks and tests
 
@@ -174,7 +174,7 @@ for script in *.sh; do bash -n "$script"; done
 python3 -m unittest discover -s tests -v
 ```
 
-Tests cover ID allocation without a fixed peer cap, bundle generation, isolated tunnel deletion, TOML editing, port conflicts, missing arguments, carrier commands, and installation/backup failures. Traffic tests simulate firewall counters and check both directions, reset, independent limits, persistence, and unblocking. Management tests cover tunnel selection, protocols and recovery, foreign status, MTU persistence and rollback, traffic isolation, Persian help, and Iran IP migration.
+Tests cover ID allocation without a fixed peer cap, bundle generation, isolated tunnel deletion, TOML editing, port conflicts, missing arguments, carrier commands, and installation/backup failures. Traffic tests simulate firewall counters and check both directions, reset, independent limits, persistence, and unblocking. Management tests cover tunnel selection, protocols and recovery, foreign status, MTU persistence and rollback, traffic isolation, English help, and Iran IP migration.
 
 Live network and systemd testing requires a Linux server with network administration privileges; those capabilities were unavailable in the development environment.
 

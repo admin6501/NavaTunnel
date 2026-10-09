@@ -51,7 +51,7 @@ class CoverCustomTests(ScriptHarness):
     def test_failed_activation_does_not_print_success(self):
         result=self.run_shell('cli_perf chaff low',self.prepare_peers()+'; systemctl() { [[ "$1" != restart ]]; }')
         self.assertNotEqual(result.returncode,0)
-        self.assertNotIn('حالت ترافیک پوششی روی low قرار گرفت',result.stdout)
+        self.assertNotIn('Cover traffic mode on low was placed',result.stdout)
 
     def test_embedded_and_tracked_generator_match(self):
         main=(Path(__file__).resolve().parents[1]/'NavaTunnel.sh').read_text()

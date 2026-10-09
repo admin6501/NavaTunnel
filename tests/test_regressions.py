@@ -66,7 +66,7 @@ class ScriptRegressionTests(ScriptHarness):
         for command in ('cli_add_peer --token','cli_edit_peer --id','cli_setup_foreign --bundle','cli_remove_peer --id','backup_now --keep'):
             result=self.run_shell(command)
             self.assertNotEqual(result.returncode,0,command)
-            self.assertIn('مقدار این گزینه وارد نشده',result.stderr)
+            self.assertIn('The value of this option is not entered',result.stderr)
 
     def test_carrier_mode_command_is_not_shadowed(self):
         result=self.run_shell('cli_carrier mode fou:443','carrier_apply() { echo "applied:$1"; }')
@@ -77,7 +77,7 @@ class ScriptRegressionTests(ScriptHarness):
     def test_carrier_status_python_output_compiles(self):
         result=self.run_shell('cli_carrier status')
         self.assertEqual(result.returncode,0,result.stderr)
-        self.assertIn('تعداد تغییر مسیر:',result.stdout)
+        self.assertIn('Number of redirects:',result.stdout)
 
     def test_wss_without_relay_does_not_touch_interfaces(self):
         result=self.run_shell('carrier_apply wss:8443','carrier_init_kernel() { echo "KERNEL_TOUCHED"; }')
@@ -92,7 +92,7 @@ class ScriptRegressionTests(ScriptHarness):
     def test_client_only_peer_options_are_not_reported_as_applied(self):
         result=self.run_shell('cli_edit_peer --id 1 --encrypt')
         self.assertNotEqual(result.returncode,0)
-        self.assertIn('کلاینت FRP سرور خارج',result.stderr)
+        self.assertIn('FRP client on the foreign server',result.stderr)
 
 
 class FailureRegressionTests(ScriptHarness):
@@ -138,7 +138,7 @@ download_with_fallback() { cp \""""+str(archive)+"""\" \"$1\"; }
 """
         result=self.run_shell('install_frp_binaries all',extra)
         self.assertNotEqual(result.returncode,0,result.stdout)
-        self.assertNotIn('نصب FRP انجام شد در',result.stdout)
+        self.assertNotIn('Install FRP done in',result.stdout)
 
     def test_failed_dependencies_are_not_cached_as_installed(self):
         extra='''

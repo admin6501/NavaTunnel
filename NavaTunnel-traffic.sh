@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Per-tunnel traffic accounting and quota enforcement for NavaTunnel.
 set -euo pipefail
-command -v python3 >/dev/null || { echo 'به python3 نیاز است.' >&2; exit 1; }
+command -v python3 >/dev/null || { echo 'to python3 need.' >&2; exit 1; }
 exec python3 - "$@" <<'PY'
 import argparse, decimal, fcntl, hashlib, ipaddress, json, os, re, subprocess, sys
 from pathlib import Path
@@ -19,7 +19,7 @@ def ipt(*args, check=True):
 def size(text):
     m = re.fullmatch(r'(\d+(?:\.\d+)?)\s*(GB)?', text.strip().upper())
     if not m:
-        raise ValueError('فقط GB پشتیبانی می‌شود؛ مقدار نامنفی مثل 100GB، 2.5 یا 0 برای نامحدود وارد کنید.')
+        raise ValueError('Only GB is supported; enter a non-negative value such as 100GB or 2.5, or 0 for unlimited.')
     return int(decimal.Decimal(m[1]) * 10**9)
 
 def argument_size(text):
@@ -78,7 +78,7 @@ def sample(name, t):
         values = [int(line.split()[1]) for line in lines
                   if len(line.split()) >= 3 and line.split()[2] == 'RETURN' and 'nava-count' in line]
         if len(values) != 1:
-            raise ValueError('شمارنده ترافیک پیدا نشد برای '+name)
+            raise ValueError('Traffic counter not found for '+name)
         current = values[0]
         last = pending.get('last_'+direction, 0)
         delta = current-last if current >= last and pending.get('boot') == BOOT else current
@@ -111,24 +111,24 @@ def detach(name, t):
 
 def add(data, name, interface=None, peer=None, limit=0, mode='both'):
     if not re.fullmatch(r'[A-Za-z0-9_.-]{1,64}', name):
-        raise ValueError('شناسه شمارنده باید 1 تا 64 نویسه از حروف لاتین، عدد، نقطه، زیرخط یا خط‌تیره باشد.')
+        raise ValueError('Counter ID must 1 until 64 The characters must be Latin letters, numbers, dots, underscores or dashes.')
     if name in data:
-        raise ValueError('شمارنده از قبل ثبت شده است؛ از limit، mode یا reset استفاده کنید.')
+        raise ValueError('The counter is already registered; from limit, mode or reset use.')
     if interface:
         if not re.fullmatch(r'[A-Za-z0-9_.-]{1,15}', interface):
-            raise ValueError('نام اینترفیس نامعتبر است.')
+            raise ValueError('The interface name is invalid.')
         if not Path('/sys/class/net', interface).exists():
-            raise ValueError('اینترفیس موجود نیست: '+interface)
+            raise ValueError('The interface is not available: '+interface)
     elif peer:
         try:
             peer = str(ipaddress.IPv4Address(peer))
         except ipaddress.AddressValueError:
-            raise ValueError('IP مقابل باید یک آدرس IPv4 معتبر باشد.')
+            raise ValueError('IP Opposite must be an address IPv4 be valid.')
     else:
-        raise ValueError('برای اینترفیس GRE/TUN از --interface و برای IP اختصاصی مقابل از --peer استفاده کنید.')
+        raise ValueError('for the interface GRE/TUN from --interface and for IP Exclusive opposite of --peer use.')
     for existing in data.values():
         if (interface and existing.get('interface') == interface) or (peer and existing.get('peer') == peer):
-            raise ValueError('این اینترفیس یا IP مقابل از قبل ثبت شده است.')
+            raise ValueError('This interface or IP The counter is already registered.')
         # Encapsulation on an interface and its outer endpoint must not be charged twice.
         iface = existing.get('interface') if peer else interface
         endpoint = peer if peer else existing.get('peer')
@@ -136,7 +136,7 @@ def add(data, name, interface=None, peer=None, limit=0, mode='both'):
             links = json.loads(run(['ip', '-j', '-d', 'link', 'show', 'dev', iface]).stdout)
             remote = links[0].get('linkinfo', {}).get('info_data', {}).get('remote')
             if not remote or remote == endpoint:
-                raise ValueError('شمارش IP مقابل و اینترفیس هم‌پوشان یا نامشخص است؛ مقصدهای مستقل انتخاب کنید.')
+                raise ValueError('counting IP The front and the interface are overlapping or unclear; Choose independent destinations.')
     t = dict(interface=interface, peer=peer, mode=mode, limit=limit,
              download=0, upload=0, blocked=False, boot=BOOT)
     data[name] = t
@@ -149,7 +149,7 @@ def add(data, name, interface=None, peer=None, limit=0, mode='both'):
     save(data)
 
 def discover(data):
-    # GRE/TUN counters count inner traffic; remote-IP counters count wire بایت.
+    # GRE/TUN counters count inner traffic; remote-IP counters count wire bytes.
     registry = Path('/etc/gre-panel/peers.json')
     peers = json.loads(registry.read_text()).get('peers', []) if registry.exists() else []
     for p in peers:
@@ -169,9 +169,9 @@ def discover(data):
             add(data, path.name, interface=path.name)
 
 def show(data):
-    print('دانلود دریافت و آپلود ارسال همین سرور است؛ حجم‌ها بر حسب GB نمایش داده می‌شوند.')
+    print('Download is received and upload is sent by this server; sizes are shown in GB are displayed.')
     if not data:
-        print('شمارنده‌ای ثبت نشده است؛ ابتدا تونل‌ها را شناسایی یا یک شمارنده ثبت کنید.')
+        print('No counter is registered; First detect the tunnels or register a counter.')
     labels={}
     try:
         registry=json.loads(Path('/etc/gre-panel/peers.json').read_text())
@@ -181,31 +181,18 @@ def show(data):
     units=lambda value:'%.3f GB'%(value/10**9)
     for name,t in data.items():
         label=labels.get(t.get('interface')) or name
-        print('\nتونل: '+label+' | شمارنده: '+name+' | مقصد: '+str(t.get('interface') or t.get('peer')))
-        print('  دانلود: '+units(t['download']))
-        print('  آپلود: '+units(t['upload']))
-        print('  مجموع: '+units(t['download']+t['upload']))
-        print('  نحوه محاسبه: '+dict(download='دانلود',upload='آپلود',both='هر دو')[t['mode']])
-        print('  مصرف برای سقف: '+units(consumed(t)))
-        print('  سقف: '+(units(t['limit']) if t['limit'] else 'نامحدود'))
-        print('  وضعیت: '+('مسدود' if t.get('blocked') else 'باز'))
+        print('\nTunnel: '+label+' | Counter: '+name+' | Target: '+str(t.get('interface') or t.get('peer')))
+        print('  Download: '+units(t['download']))
+        print('  Upload: '+units(t['upload']))
+        print('  Total: '+units(t['download']+t['upload']))
+        print('  Accounting mode: '+dict(download='Download',upload='Upload',both='Both')[t['mode']])
+        print('  Usage toward limit: '+units(consumed(t)))
+        print('  Limit: '+(units(t['limit']) if t['limit'] else 'Unlimited'))
+        print('  Status: '+('Blocked' if t.get('blocked') else 'Open'))
 
-_argument_messages = {
-    'usage: ': 'روش استفاده: ', 'options': 'گزینه‌ها', 'positional arguments': 'فرمان‌ها و ورودی‌ها',
-    'show this help message and exit': 'نمایش راهنما و خروج',
-    'the following arguments are required: %s': 'این گزینه‌ها ضروری‌اند: %s',
-    'unrecognized arguments: %s': 'گزینه‌های ناشناخته: %s',
-    'argument %s: %s': 'گزینه %s: %s',
-    'expected one argument': 'یک مقدار لازم است',
-    'invalid choice: %(value)r (choose from %(choices)s)': 'مقدار نامعتبر: %(value)r (گزینه‌ها: %(choices)s)',
-    'not allowed with argument %s': 'با گزینه %s سازگار نیست',
-    'one of the arguments %s is required': 'یکی از گزینه‌های %s ضروری است',
-    '%(prog)s: error: %(message)s\n': '%(prog)s: خطا: %(message)s\n',
-}
-argparse._ = lambda text: _argument_messages.get(text,text)
 
 def main():
-    parser = argparse.ArgumentParser(description='شمارنده و سقف دائمی ترافیک هر تونل؛ دانلود دریافت و آپلود ارسال همین سرور است.')
+    parser = argparse.ArgumentParser(description='Persistent per-tunnel traffic counters and limits; download is received and upload is sent by this server.')
     sub = parser.add_subparsers(dest='cmd', required=True)
     for cmd in ('list', 'discover', 'tick', 'clear'):
         sub.add_parser(cmd)
@@ -220,13 +207,13 @@ def main():
     p=sub.add_parser('mode'); p.add_argument('id'); p.add_argument('mode', choices=MODES)
     args = parser.parse_args()
     if os.geteuid() != 0:
-        parser.error('با دسترسی روت اجرا کنید.')
+        parser.error('Run with root access.')
     STATE.parent.mkdir(parents=True, exist_ok=True)
     with open(STATE.with_suffix('.lock'), 'a') as lock:
         os.chmod(lock.name, 0o600); fcntl.flock(lock, fcntl.LOCK_EX)
         data = json.loads(STATE.read_text()) if STATE.exists() else {}
         if getattr(args, 'id', None) and args.cmd != 'add' and args.id not in data:
-            raise ValueError('شناسه شمارنده ناشناخته است؛ traffic discover، traffic list یا traffic add را اجرا کنید.')
+            raise ValueError('Counter ID is unknown; traffic discover, traffic list or traffic add run the.')
         if args.cmd == 'add':
             add(data, args.id, args.interface, args.peer, args.limit, args.mode)
         elif args.cmd == 'discover':
@@ -263,7 +250,7 @@ if __name__ == '__main__':
     try:
         main()
     except (ValueError, OSError, subprocess.CalledProcessError) as e:
-        print('خطای شمارش ترافیک: '+str(e), file=sys.stderr)
+        print('Traffic count error: '+str(e), file=sys.stderr)
         if isinstance(e, subprocess.CalledProcessError): print(e.stderr, file=sys.stderr)
         sys.exit(1)
 PY

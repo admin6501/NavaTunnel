@@ -52,7 +52,7 @@ curl() { echo 192.0.2.1; }
 cli_add_peer() { return 1; }
 ''')
         self.assertNotEqual(result.returncode,0)
-        self.assertNotIn('تونل ساخته شد',result.stdout)
+        self.assertNotIn('The tunnel was built',result.stdout)
 
     def test_existing_single_tunnel_import_is_idempotent(self):
         (self.units/'gre-tunnel.service').write_text('ip tunnel add gre-tunnel mode gre local 192.0.2.10 remote 192.0.2.20\nip addr replace 10.10.10.2/30\nip route replace 10.10.10.1/32')
