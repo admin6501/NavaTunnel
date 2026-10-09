@@ -3738,7 +3738,7 @@ menu_select_peer() {
     rows=$(python3 - "$PEERS_FILE" <<'PYCODE'
 import json,sys
 for p in sorted(json.load(open(sys.argv[1])).get('peers',[]),key=lambda p:p['id']):
-    print(str(p['id'])+'\t'+str(p.get('name',''))+' | '+str(p.get('remote_pub',''))+' | '+','.join(map(str,p.get('ports',[]))))
+    print(str(p['id'])+'\t'+str(p.get('name',''))+' | '+str(p.get('remote_pub',''))+' | پورت کنترل: '+str(p.get('frp_port') or 'نامشخص'))
 PYCODE
 ) || return 1
     local -a ids=()
