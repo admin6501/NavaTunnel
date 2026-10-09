@@ -1452,6 +1452,7 @@ setup_gre_systemd() {
 # directly with gre-tN names so every tunnel is the same GRE, just N of them.
 setup_gre_iface() {
     local IFNAME=$1
+    [[ ! -f "${NAVATUNNEL_STATE_DIR}/stopped/${IFNAME}" ]] || { echo 'این تونل دستی متوقف شده است؛ ابتدا گزینه شروع تونل را اجرا کنید.' >&2; return 1; }
     local LOCAL_IP=$2
     local REMOTE_IP=$3
     local GRE_INTERNAL_IP=$4
@@ -1507,6 +1508,7 @@ setup_gre_iface() {
     # 5. Add direct point-to-point /32 route to the peer inner GRE IP.
     cat <<EOF > /etc/systemd/system/${IFNAME}.service
 [Unit]
+ConditionPathExists=!${NAVATUNNEL_STATE_DIR}/stopped/${IFNAME}
 Description=اینترفیس تونل GRE
 After=network.target
 
@@ -1655,6 +1657,7 @@ setup_chaff() {
 
     cat <<EOF > "/etc/systemd/system/${SVC}.service"
 [Unit]
+ConditionPathExists=!${NAVATUNNEL_STATE_DIR}/stopped/${GRE_IF}
 Description=سرویس ترافیک پوششی GRE${SUF:+ (peer${SUF#-})}
 After=network.target${AFTER_GRE}
 ${AFTER_GRE:+Wants=${GRE_IF}.service}
@@ -2590,6 +2593,7 @@ transport.maxPoolCount = ${MAX_POOL}
 EOF
     cat <<EOF > /etc/systemd/system/frps.service
 [Unit]
+ConditionPathExists=!${NAVATUNNEL_STATE_DIR}/stopped/${TUNNEL_NAME}
 Description=سرویس سرور FRP
 After=network.target network-online.target
 Wants=network-online.target
@@ -2998,6 +3002,8 @@ peer_token() {
 # write one frps instance: $1=suffix("" for legacy, "-N" for peers) $2=bind_port $3=token
 peer_write_frps() {
     local SUF=$1 BIND_PORT=$2 TOKEN=$3
+    local POWER_IF="gre-t${SUF#-}"
+    [[ -n "$SUF" ]] || POWER_IF=$TUNNEL_NAME
     local EFF_TLS=$(perf_get_tls)
     local QUIC_PORT=$((BIND_PORT == 65535 ? BIND_PORT - 1 : BIND_PORT + 1))
     local MAX_POOL=500
@@ -3023,6 +3029,7 @@ EOF
     local SVC="frps${SUF}"
     cat <<EOF > /etc/systemd/system/${SVC}.service
 [Unit]
+ConditionPathExists=!${NAVATUNNEL_STATE_DIR}/stopped/${POWER_IF}
 Description=سرویس سرور FRP${SUF:+ (peer${SUF#-})}
 After=network.target network-online.target
 Wants=network-online.target
@@ -3232,6 +3239,7 @@ PYREMOVE
     PEERS_F="$PEERS_FILE" PEER_ID="$ID" python3 -c \
 'import json,os; f=os.environ["PEERS_F"]; d=json.load(open(f)); d["peers"]=[p for p in d.get("peers",[]) if p["id"]!=int(os.environ["PEER_ID"])]; json.dump(d,open(f,"w"),indent=2)' \
         || return 1
+    [[ ! "$GIF" =~ ^gre-(tunnel|t[0-9]+)$ ]] || rm -f "${NAVATUNNEL_STATE_DIR}/stopped/${GIF}"
     echo -e "${GREEN}[✔️] تونل ${NAME} با شناسه ${ID} حذف شد.${NC}"
 }
 
@@ -4022,6 +4030,109 @@ menu_iran_ip() {
     echo 'کدهای اتصال شامل توکن هستند؛ آن‌ها را عمومی منتشر نکنید.'
 }
 
+# Persist intentional stops through boot and automatic service restarts.
+cli_tunnel_power() {
+    local i action=${1:-} id='' foreign=0 rec iface service unit marker temp was_stopped=0 failure=0
+    shift || return 1
+    [[ "$action" == start || "$action" == stop ]] || return 1
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --id) [[ $# -ge 2 ]] || return 1; id=$2; shift 2 ;;
+            --foreign) foreign=1; shift ;;
+            *) echo 'روش استفاده: NavaTunnel tunnel-power start|stop --id N | --foreign' >&2; return 1 ;;
+        esac
+    done
+    if ((foreign)); then
+        [[ -z "$id" && -f "${CONFIG_DIR}/frpc.toml" ]] || return 1
+        iface=$TUNNEL_NAME; service=frpc
+    else
+        [[ "$id" =~ ^[1-9][0-9]*$ ]] || return 1
+        rec=$(peer_get "$id") || return 1
+        [[ -n "$rec" ]] || { echo 'تونل پیدا نشد.' >&2; return 1; }
+        iface=$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("gre_if",""))' <<< "$rec") || return 1
+        service=$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("frps_svc",""))' <<< "$rec") || return 1
+    fi
+    [[ "$iface" =~ ^gre-(tunnel|t[0-9]+)$ && "$service" =~ ^frp[sc](-[0-9]+)?$ ]] || return 1
+    marker="${NAVATUNNEL_STATE_DIR}/stopped/${iface}"
+    mkdir -p "$(dirname "$marker")" || return 1
+    [[ ! -f "$marker" ]] || was_stopped=1
+    local resume_chaff=0
+    [[ ! -f "$marker" ]] || { grep -qx 'chaff=1' "$marker" && resume_chaff=1; }
+    local -a units=("${iface}.service" "${service}.service")
+    local chaff=gre-chaff
+    [[ "$iface" == gre-tunnel ]] || chaff="gre-chaff-${iface#gre-t}"
+    if [[ -f "/etc/systemd/system/${chaff}.service" ]]; then
+        units+=("${chaff}.service")
+        if (( ! was_stopped )) && systemctl is-active --quiet "${chaff}.service"; then resume_chaff=1; fi
+    fi
+    temp=$(mktemp -d) || return 1
+    for unit in "${units[@]}"; do
+        [[ -f "/etc/systemd/system/$unit" ]] && cp -p "/etc/systemd/system/$unit" "$temp/$unit" || {
+            rm -rf "$temp"; echo 'فایل سرویس تونل پیدا نشد یا پشتیبان‌گیری ناموفق بود.' >&2; return 1;
+        }
+    done
+    python3 - "$marker" "${units[@]}" <<'PYCODE'
+import os,sys,tempfile
+from pathlib import Path
+marker=sys.argv[1]; staged=[]
+for name in sys.argv[2:]:
+    path=Path('/etc/systemd/system')/name
+    text=path.read_text(); line='ConditionPathExists=!'+marker
+    if line in text.splitlines():continue
+    if '[Unit]\n' not in text:sys.exit('بخش Unit در فایل سرویس پیدا نشد.')
+    text=text.replace('[Unit]\n','[Unit]\n'+line+'\n',1)
+    staged.append((path,text,path.stat().st_mode&0o777))
+for path,text,mode in staged:
+    fd,tmp=tempfile.mkstemp(dir=path.parent,prefix='.power-')
+    try:
+        os.fchmod(fd,mode)
+        with os.fdopen(fd,'w') as f:f.write(text)
+        os.replace(tmp,path)
+    finally:
+        if os.path.exists(tmp):os.unlink(tmp)
+PYCODE
+    [[ $? == 0 ]] || failure=1
+    if (( ! failure )); then
+        if [[ "$action" == stop ]]; then
+            (umask 077; printf 'chaff=%s\n' "$resume_chaff" > "$marker") || failure=1
+        else
+            rm -f "$marker" || failure=1
+        fi
+    fi
+    if (( ! failure )); then systemctl daemon-reload || failure=1; fi
+    if (( failure )); then
+        for unit in "${units[@]}"; do cp -p "$temp/$unit" "/etc/systemd/system/$unit" || return 1; done
+        if ((was_stopped)); then (umask 077; printf 'chaff=%s\n' "$resume_chaff" > "$marker"); else rm -f "$marker"; fi
+        systemctl daemon-reload >/dev/null 2>&1 || true
+        rm -rf "$temp"
+        echo 'ثبت تنظیم توقف/شروع ناموفق بود؛ فایل‌های قبلی بازیابی شدند.' >&2
+        return 1
+    fi
+    rm -rf "$temp"
+    if [[ "$action" == stop ]]; then
+        # Stop FRP and cover traffic before removing their GRE interface.
+        for ((i=${#units[@]}-1; i>=0; i--)); do
+            unit=${units[i]}
+            systemctl stop "$unit" || failure=1
+            if systemctl is-active --quiet "$unit"; then failure=1; fi
+        done
+        (( ! failure )) || { echo 'توقف کامل نشد؛ وضعیت سرویس‌ها را بررسی کنید. توقف دستی ثبت شده است.' >&2; return 1; }
+        echo 'همین تونل متوقف شد؛ توقف پس از ریبوت و راه‌اندازی خودکار هم حفظ می‌شود.'
+    else
+        for unit in "${units[@]}"; do
+            [[ "$unit" != "${chaff}.service" || "$resume_chaff" == 1 ]] || continue
+            if ! systemctl start "$unit" || ! systemctl is-active --quiet "$unit"; then failure=1; break; fi
+        done
+        if ((failure)); then
+            (umask 077; printf 'chaff=%s\n' "$resume_chaff" > "$marker")
+            for ((i=${#units[@]}-1; i>=0; i--)); do systemctl stop "${units[i]}" >/dev/null 2>&1 || true; done
+            echo 'شروع تونل ناموفق بود؛ برای جلوگیری از راه‌اندازی ناقص، تونل متوقف ماند.' >&2
+            return 1
+        fi
+        echo 'همین تونل شروع شد؛ برقراری اتصال سمت مقابل را از وضعیت و لاگ‌ها بررسی کنید.'
+    fi
+}
+
 menu_edit_peer() {
     local id option value rec name service iface bundle loss protocol settings
     id=$(menu_select_peer) || return 0
@@ -4031,6 +4142,10 @@ menu_edit_peer() {
         [[ -n "$rec" ]] || return 0
         name=$(python3 -c 'import json,sys; p=json.load(sys.stdin); print(p.get("name",""),"|",p.get("remote_pub",""),"| پورت‌ها:",",".join(map(str,p.get("ports",[]))))' <<< "$rec")
         echo "تونل: $name"
+        service=$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("frps_svc",""))' <<< "$rec")
+        local service_state
+        service_state=$(systemctl is-active "$service" 2>/dev/null) || true
+        echo "وضعیت سرویس همین تونل: $(fa_state "${service_state:-unknown}")"
         echo "پورت کنترل FRP: $(python3 -c 'import json,sys; print(json.load(sys.stdin).get("frp_port","نامشخص"))' <<< "$rec")"
         echo "IP ذخیره‌شده ایران: $(python3 -c 'import json,sys; print(json.load(sys.stdin).get("local_pub",""))' <<< "$rec")"
         settings=$(peer_connection_settings "$id") || return 1
@@ -4060,6 +4175,8 @@ menu_edit_peer() {
         echo '10) انتخاب پروتکل FRP'
         echo '11) تغییر دائمی MTU همین تونل'
         echo '12) تغییر پورت کنترل FRP همین تونل'
+        echo '13) توقف همین تونل'
+        echo '14) شروع همین تونل'
         echo '0) بازگشت'
         read -r -p 'انتخاب: ' option || return 0
         case "$option" in
@@ -4102,6 +4219,8 @@ menu_edit_peer() {
                 service=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["frps_svc"])' <<< "$rec")
                 iface=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["gre_if"])' <<< "$rec")
                 if systemctl restart "${iface}.service" && systemctl restart "${service}.service"; then echo 'تونل ری‌استارت شد.'; else echo 'ری‌استارت ناموفق بود؛ وضعیت سرویس را بررسی کنید.'; fi ;;
+            13) cli_tunnel_power stop --id "$id" ;;
+            14) cli_tunnel_power start --id "$id" ;;
             7) menu_tunnel_traffic "$iface" ;;
             11) menu_mtu "$iface" ;;
             12)
@@ -4114,7 +4233,7 @@ menu_edit_peer() {
             0) return 0 ;;
             *) echo 'گزینه نامعتبر است.' ;;
         esac
-        case "$option" in 1|2|3|4|6|10|11|12) pause_prompt ;; 5|7|8|9) ;; *) pause_prompt ;; esac
+        case "$option" in 1|2|3|4|6|10|11|12|13|14) pause_prompt ;; 5|7|8|9) ;; *) pause_prompt ;; esac
     done
 }
 
@@ -6534,6 +6653,8 @@ menu_foreign_tunnel() {
         echo '3) مصرف و تنظیمات ترافیک همین تونل'
         echo '4) تغییر تنظیمات یا پروتکل با کد اتصال'
         echo '5) تغییر دائمی MTU همین تونل'
+        echo '6) توقف همین تونل'
+        echo '7) شروع همین تونل'
         echo '0) بازگشت'
         read -r -p 'انتخاب: ' option || return 0
         case "$option" in
@@ -6545,10 +6666,12 @@ menu_foreign_tunnel() {
             3) menu_tunnel_traffic "$TUNNEL_NAME" ;;
             4) menu_connect_foreign ;;
             5) menu_mtu "$TUNNEL_NAME" ;;
+            6) cli_tunnel_power stop --foreign ;;
+            7) cli_tunnel_power start --foreign ;;
             0) return 0 ;;
             *) echo 'گزینه نامعتبر است.' ;;
         esac
-        case "$option" in 2|4|5) pause_prompt ;; 1|3) ;; *) pause_prompt ;; esac
+        case "$option" in 2|4|5|6|7) pause_prompt ;; 1|3) ;; *) pause_prompt ;; esac
     done
 }
 
@@ -7020,6 +7143,7 @@ usage_cli() {
   NavaTunnel remove-peer --id N [--force] | edit-peer --id N [--name L] [--remote-pub IP] [--carrier C] [--ports "..."] | edit-peer-ports --id N --ports "443, 2083" | peer-list | peer-token --id N
   NavaTunnel iran-ip --ip IP                       # تغییر آدرس عمومی ایران برای همه تونل‌ها
   NavaTunnel mtu --interface gre-tunnel --value 1300
+  NavaTunnel tunnel-power start|stop --id N | --foreign
   NavaTunnel peer-control-port --id N --port N|auto
   NavaTunnel peer-protocol --id N --protocol tcp|kcp|quic|websocket|wss
   NavaTunnel loss-recovery --id N --mode on|off  # ذخیره انتخاب جبران افت بسته؛ کد جدید را روی خارج اعمال کنید
@@ -7228,6 +7352,7 @@ if [[ $# -gt 0 ]]; then
         setup-foreign) shift; cli_setup_foreign "$@" ;;
         mtu) shift; cli_mtu "$@" ;;
         mtu-apply) shift; tunnel_mtu_apply "$@" ;;
+        tunnel-power) shift; cli_tunnel_power "$@" ;;
         peer-control-port) shift; cli_peer_control_port "$@" ;;
         peer-protocol) shift; cli_peer_protocol "$@" ;;
         loss-recovery) shift; cli_loss_recovery "$@" ;;

@@ -211,3 +211,18 @@ NavaTunnel peer-control-port --id 2 --port 45000
 # Or select automatically:
 NavaTunnel peer-control-port --id 2 --port auto
 ```
+
+## Stopping and starting a tunnel
+
+On Iran, select **13) Stop this tunnel** or **14) Start this tunnel** in tunnel management. On the foreign server, use **6) Stop** or **7) Start** in connection management. Stop shuts down the selected FRP service and optional cover-traffic service, then its GRE interface. Start brings up GRE first, followed by FRP, and resumes cover traffic only if it was active before the stop.
+
+Configuration, token, ports, MTU, counters, and quotas are preserved. The shared traffic counter service keeps running. Intentional stops are recorded in `/etc/gre-panel/stopped/` and enforced through systemd conditions; reboot and automatic service restarts do not clear them. Use Start to resume. If startup fails, partially started services are stopped again. An active local service alone does not confirm connectivity to the other server.
+
+```bash
+# Iran: use the actual peer ID.
+NavaTunnel tunnel-power stop --id 2
+NavaTunnel tunnel-power start --id 2
+# Foreign server:
+NavaTunnel tunnel-power stop --foreign
+NavaTunnel tunnel-power start --foreign
+```
