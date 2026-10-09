@@ -1360,6 +1360,7 @@ PYCODE
 }
 
 menu_mtu() {
+    ui_clear
     local iface=$1 value current
     current=$(tunnel_mtu_get "$iface") || return 1
     echo "MTU فعلی ذخیره‌شده: $current | اینترفیس: $iface"
@@ -1399,6 +1400,7 @@ PYCODE
 
 menu_tunnel_traffic() {
     local iface=$1 name option value mode confirm
+    ui_clear
     name=$(traffic_id_for_interface "$iface") || return 1
     if [[ -z "$name" ]]; then
         echo 'شمارنده این تونل پیدا نشد؛ با ثبت آن، شمارش از همین لحظه شروع می‌شود.'
@@ -1409,6 +1411,7 @@ menu_tunnel_traffic() {
         [[ -n "$name" ]] || return 1
     fi
     while true; do
+        ui_clear
         echo "ترافیک همین تونل: $iface"
         if ! cli_traffic status "$name" >/dev/null; then
             echo 'به‌روزرسانی شمارنده ناموفق بود؛ آخرین مصرف ذخیره‌شده نمایش داده می‌شود.'
@@ -1436,6 +1439,7 @@ menu_tunnel_traffic() {
             0) return 0 ;;
             *) echo 'گزینه نامعتبر است.' ;;
         esac
+        [[ "$option" == 1 ]] || pause_prompt
     done
 }
 
@@ -1806,6 +1810,7 @@ cli_chaff() {
 }
 
 menu_chaff() {
+    ui_clear
     echo -e "\n${YELLOW}=== ترافیک پوششی برای زمان‌های بیکاری ===${NC}"
     echo -e "پینگ‌های تصادفی فاصله‌های بیکاری را پر می‌کنند؛ مصرف افزوده چند کیلوبایت در ثانیه است."
     cli_chaff status
@@ -1823,6 +1828,7 @@ menu_chaff() {
         0) return 0 ;;
         *) echo -e "${RED}[!] گزینه نامعتبر است.${NC}"; return 1 ;;
     esac
+    pause_prompt
 }
 
 # ---- محافظ DPI: protect reverse proxy ports against scanner floods ----
@@ -2095,6 +2101,7 @@ cli_dpi_shield() {
 }
 
 menu_dpi_shield() {
+    ui_clear
     echo -e "\n${YELLOW}=== محافظ DPI و محدودیت اتصال به پورت‌های سرویس ===${NC}"
     echo -e "با محدودکردن نرخ اتصال، پورت‌های سرویس را در برابر اسکن پرتعداد محافظت می‌کند."
     echo ""
@@ -2113,6 +2120,7 @@ menu_dpi_shield() {
         0) return 0 ;;
         *) echo -e "${RED}[!] گزینه نامعتبر است.${NC}"; return 1 ;;
     esac
+    pause_prompt
 }
 
 # ---- Performance & Obfuscation Controls (CLI + Menu 22) ----
@@ -2465,6 +2473,7 @@ cli_perf() {
 
 menu_perf() {
     while true; do
+        ui_clear
         cli_perf status
         echo ""
         echo "  1) فعال یا غیرفعال‌سازی رمزگذاری پروکسی"
@@ -2490,6 +2499,7 @@ menu_perf() {
                 if [[ "$cur" == "1" ]]; then cli_perf tls off; else cli_perf tls on; fi
                 ;;
             4)
+                ui_clear
                 echo "حالت ترافیک پوششی را انتخاب کنید:"
                 echo "  1) غیرفعال"
                 echo "  2) کم (پیش‌فرض)"
@@ -2516,6 +2526,7 @@ menu_perf() {
                 echo -e "${RED}[!] گزینه نامعتبر است.${NC}"
                 ;;
         esac
+        pause_prompt
     done
 }
 
@@ -3512,6 +3523,7 @@ setup_iran_server() {
 
 # interactive wrapper for cli_add_peer: prompts for one more foreign server.
 menu_protocol_prompt() {
+    ui_clear >&2
     local current=${1:-tcp} choice
     echo 'پروتکل FRP روی کلاینت خارج اجرا می‌شود؛ روی ایران انتخاب و در کد اتصال ذخیره می‌شود.' >&2
     echo '1) TCP (پیش‌فرض)' >&2
@@ -3565,6 +3577,7 @@ PYCODE
 }
 
 menu_loss_prompt() {
+    ui_clear >&2
     local answer
     echo 'جبران افت بسته با KCP/FEC، مصرف ترافیک را افزایش می‌دهد و افت مسیر را حذف نمی‌کند.' >&2
     while true; do
@@ -3615,6 +3628,7 @@ PYCODE
 menu_loss_recovery() {
     local id=$1 option settings protocol mode label bundle
     while true; do
+        ui_clear
         settings=$(peer_connection_settings "$id") || return 1
         IFS=$'\t' read -r protocol mode <<< "$settings"
         label='غیرفعال'; [[ "$mode" == on ]] && label='فعال'
@@ -3638,6 +3652,7 @@ menu_loss_recovery() {
             0|'') return 0 ;;
             *) echo 'گزینه نامعتبر است.' ;;
         esac
+        pause_prompt
     done
 }
 
@@ -3694,6 +3709,7 @@ PYCODE
 }
 
 menu_add_peer() {
+    ui_clear
     menu_import_existing || return 1
     local NAME LOCAL_IRAN IP_FOREIGN PPORTS CPORT TOKEN LGRE PGRE pair MYIP LOSS
     echo 'ساخت تونل ایران — برای لغو، نام را 0 وارد کنید.'
@@ -3716,6 +3732,7 @@ menu_add_peer() {
 
 # Selection menus keep IDs internally and present numbered choices.
 menu_select_peer() {
+    ui_clear >&2
     menu_import_existing || return 1
     local rows choice i=0
     rows=$(python3 - "$PEERS_FILE" <<'PYCODE'
@@ -3730,13 +3747,20 @@ PYCODE
         [[ -n "$id" ]] || continue
         ids+=("$id"); i=$((i+1)); printf '%s) %s\n' "$i" "$label" >&2
     done <<< "$rows"
-    ((i)) || { echo 'تونلی در فهرست نیست. ابتدا یک تونل بسازید.' >&2; return 1; }
+    ((i)) || { echo 'تونلی در فهرست نیست. ابتدا یک تونل بسازید.' >&2; pause_prompt >&2; return 1; }
     echo '0) بازگشت' >&2
-    read -r -p 'شماره تونل: ' choice || return 1
-    [[ "$choice" =~ ^[0-9]{1,6}$ ]] || return 1
-    choice=$((10#$choice))
-    ((choice>0 && choice<=i)) || return 1
-    printf '%s\n' "${ids[choice-1]}"
+    while true; do
+        read -r -p 'شماره تونل: ' choice || return 1
+        if [[ "$choice" =~ ^[0-9]{1,6}$ ]]; then
+            choice=$((10#$choice))
+            ((choice==0)) && return 1
+            if ((choice<=i)); then
+                printf '%s\n' "${ids[choice-1]}"
+                return 0
+            fi
+        fi
+        echo 'شماره تونل نامعتبر است؛ از فهرست انتخاب کنید یا 0 بزنید.' >&2
+    done
 }
 
 menu_remove_peer() {
@@ -3836,6 +3860,7 @@ PYEOF
 }
 
 menu_iran_ip() {
+    ui_clear
     local value confirm id bundle
     menu_import_existing || return 1
     echo 'تغییر IP عمومی ایران برای همه تونل‌های ثبت‌شده'
@@ -3861,6 +3886,7 @@ menu_edit_peer() {
     local id option value rec name service iface bundle loss protocol settings
     id=$(menu_select_peer) || return 0
     while true; do
+        ui_clear
         rec=$(peer_get "$id") || return 1
         [[ -n "$rec" ]] || return 0
         name=$(python3 -c 'import json,sys; p=json.load(sys.stdin); print(p.get("name",""),"|",p.get("remote_pub",""),"| پورت‌ها:",",".join(map(str,p.get("ports",[]))))' <<< "$rec")
@@ -3892,7 +3918,6 @@ menu_edit_peer() {
         echo '9) فعال‌سازی یا غیرفعال‌سازی جبران افت بسته'
         echo '10) انتخاب پروتکل FRP'
         echo '11) تغییر دائمی MTU همین تونل'
-        echo '12) تغییر IP سرور ایران (همه تونل‌ها)'
         echo '0) بازگشت'
         read -r -p 'انتخاب: ' option || return 0
         case "$option" in
@@ -3906,6 +3931,8 @@ menu_edit_peer() {
                     3) cli_edit_peer --id "$id" --remote-pub "$value" ;;
                 esac ;;
             4)
+                ui_clear
+                echo 'انتخاب روش انتقال GRE همین تونل'
                 echo '1) GRE مستقیم'
                 echo '2) FOU:443'
                 echo '3) FOU:55555'
@@ -3935,17 +3962,18 @@ menu_edit_peer() {
                 if systemctl restart "${iface}.service" && systemctl restart "${service}.service"; then echo 'تونل ری‌استارت شد.'; else echo 'ری‌استارت ناموفق بود؛ وضعیت سرویس را بررسی کنید.'; fi ;;
             7) menu_tunnel_traffic "$iface" ;;
             11) menu_mtu "$iface" ;;
-            12) menu_iran_ip ;;
             10) value=$(menu_protocol_prompt "$protocol") || continue; cli_peer_protocol --id "$id" --protocol "$value" ;;
             9) menu_loss_recovery "$id" ;;
             8) cli_remove_peer --id "$id"; [[ -n "$(peer_get "$id")" ]] || return 0 ;;
             0) return 0 ;;
             *) echo 'گزینه نامعتبر است.' ;;
         esac
+        case "$option" in 1|2|3|4|6|10|11) pause_prompt ;; 5|7|8|9) ;; *) pause_prompt ;; esac
     done
 }
 
 setup_foreign_server() {
+    ui_clear
     echo -e "\n${YELLOW}====================================================${NC}"
     echo -e "${YELLOW}   مرحله 2: تنظیم سرور خارج با GRE و FRP  ${NC}"
     echo -e "${YELLOW}====================================================${NC}"
@@ -5679,7 +5707,7 @@ except Exception:
 
 menu_watchdog() {
     while true; do
-        clear
+        ui_clear
         echo -e "${CYAN}==========================================================${NC}"
         echo -e "${CYAN}              پایش و پشتیبان رمزگذاری‌شده                 ${NC}"
         echo -e "${CYAN}==========================================================${NC}"
@@ -6231,6 +6259,7 @@ except Exception:
 }
 
 menu_carrier() {
+    ui_clear
     cli_carrier status
     echo -e "${YELLOW}انتخاب عمل:${NC}"
     echo "  1) انتخاب GRE مستقیم با پروتکل 47"
@@ -6247,6 +6276,12 @@ menu_carrier() {
         *) echo -e "${RED}[!] گزینه نامعتبر است.${NC}" ;;
     esac
     read -r -p "برای بازگشت به منو Enter بزنید..." || return 0
+}
+
+# Clear only interactive screens; never add control bytes to CLI output.
+ui_clear() {
+    [[ -t 1 ]] || return 0
+    printf '\033[2J\033[H'
 }
 
 pause_prompt() {
@@ -6310,6 +6345,7 @@ PYCODE
 }
 
 menu_list_tunnels() {
+    ui_clear
     menu_import_existing || return 1
     local count found=0
     count=$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1])).get("peers",[])))' "$PEERS_FILE") || return 1
@@ -6326,6 +6362,7 @@ menu_list_tunnels() {
 }
 
 menu_connect_foreign() {
+    ui_clear
     local bundle protocol recovery confirm
     read -r -p 'کد اتصال را بچسبانید [Enter: لغو]: ' bundle || return 0
     [[ -n "$bundle" ]] || return 0
@@ -6344,6 +6381,7 @@ menu_connect_foreign() {
 menu_foreign_tunnel() {
     local option
     while true; do
+        ui_clear
         foreign_tunnel_summary || return 1
         echo '1) نمایش وضعیت'
         echo '2) ری‌استارت همین تونل'
@@ -6364,10 +6402,12 @@ menu_foreign_tunnel() {
             0) return 0 ;;
             *) echo 'گزینه نامعتبر است.' ;;
         esac
+        case "$option" in 2|4|5) pause_prompt ;; 1|3) ;; *) pause_prompt ;; esac
     done
 }
 
 menu_manage_tunnel() {
+    ui_clear
     menu_import_existing || return 1
     local count option
     count=$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1])).get("peers",[])))' "$PEERS_FILE") || return 1
@@ -6386,6 +6426,7 @@ menu_manage_tunnel() {
 menu_tunnel() {
     local option
     while true; do
+        ui_clear
         echo '1) ساخت تونل روی ایران (سرور اول یا سرورهای بیشتر)'
         echo '2) اتصال سرور خارج با کد اتصال'
         echo '3) انتخاب و مدیریت یک تونل'
@@ -6402,16 +6443,16 @@ menu_tunnel() {
             5) setup_foreign_server; pause_prompt ;;
             6) menu_iran_ip; pause_prompt ;;
             0) return 0 ;;
-            *) echo 'گزینه نامعتبر است.' ;;
+            *) echo 'گزینه نامعتبر است.'; pause_prompt ;;
         esac
     done
 }
 
 menu_optimization() {
     while true; do
-        clear
+        ui_clear
         show_banner
-        echo -e "${CYAN}--- [3] کارایی و امنیت ---${NC}"
+        echo -e "${CYAN}--- [2] کارایی و امنیت ---${NC}"
         echo "  1) بهینه‌سازی شبکه، BBR، بافر TCP و MTU"
         echo "  2) انتخاب حامل GRE مستقیم یا FOU"
         echo "  3) محافظ DPI و محدودیت نرخ اسکن پورت‌ها"
@@ -6440,9 +6481,9 @@ menu_optimization() {
 
 menu_diagnostics_backup() {
     while true; do
-        clear
+        ui_clear
         show_banner
-        echo -e "${CYAN}--- [4] بررسی شبکه و پشتیبان‌گیری ---${NC}"
+        echo -e "${CYAN}--- [3] بررسی شبکه و پشتیبان‌گیری ---${NC}"
         echo "  1) بررسی کامل سلامت سیستم و تونل"
         echo "  2) بررسی پورت‌های فعال و جدول مسیر"
         echo "  3) نمایش لاگ زنده FRP و پایش"
@@ -6492,6 +6533,7 @@ menu_diagnostics_backup() {
                 pause_prompt
                 ;;
             7)
+                ui_clear
                 echo "زمان‌بندی پشتیبان:"
                 echo "  1) هر چند ساعت (مثلاً 6)"
                 echo "  2) روزانه در ساعت مشخص (مثلاً 03:00)"
@@ -6514,9 +6556,9 @@ menu_diagnostics_backup() {
 
 menu_maintenance() {
     while true; do
-        clear
+        ui_clear
         show_banner
-        echo -e "${CYAN}--- [5] نگهداری و به‌روزرسانی ---${NC}"
+        echo -e "${CYAN}--- [4] نگهداری و به‌روزرسانی ---${NC}"
         echo "  1) به‌روزرسانی کامل به آخرین نسخه"
         echo "  2) دریافت و بررسی فایل‌های اجرایی FRP"
         echo "  3) نصب و بررسی پیش‌نیازهای سیستم"
@@ -6561,6 +6603,7 @@ menu_maintenance() {
 }
 
 menu_uninstall() {
+    ui_clear
     echo "1) حذف اجزای تونل"
     echo "2) حذف نصب NavaTunnel و همه اجزای تونل"
     echo "0) بازگشت"
@@ -6673,6 +6716,7 @@ PYTRAFFIC
 }
 
 menu_select_traffic() {
+    ui_clear >&2
     local rows id label choice i=0
     local -a ids=()
     rows=$(python3 - "${NAVATUNNEL_STATE_DIR}/traffic.json" "$PEERS_FILE" <<'PYCODE'
@@ -6693,15 +6737,24 @@ PYCODE
         [[ -n "$id" ]] || continue
         ids+=("$id"); i=$((i+1)); printf '%s) %s\n' "$i" "$label" >&2
     done <<< "$rows"
-    ((i)) || { echo 'شمارنده‌ای ثبت نشده؛ گزینه شناسایی تونل‌ها را اجرا کنید.' >&2; return 1; }
+    ((i)) || { echo 'شمارنده‌ای ثبت نشده؛ گزینه شناسایی تونل‌ها را اجرا کنید.' >&2; pause_prompt >&2; return 1; }
     echo '0) بازگشت' >&2
-    read -r -p 'شماره تونل: ' choice || return 1
-    [[ "$choice" =~ ^[0-9]{1,6}$ ]] || return 1
-    choice=$((10#$choice)); ((choice>0 && choice<=i)) || return 1
-    printf '%s\n' "${ids[choice-1]}"
+    while true; do
+        read -r -p 'شماره تونل: ' choice || return 1
+        if [[ "$choice" =~ ^[0-9]{1,6}$ ]]; then
+            choice=$((10#$choice))
+            ((choice==0)) && return 1
+            if ((choice<=i)); then
+                printf '%s\n' "${ids[choice-1]}"
+                return 0
+            fi
+        fi
+        echo 'شماره تونل نامعتبر است؛ از فهرست انتخاب کنید یا 0 بزنید.' >&2
+    done
 }
 
 menu_traffic_mode() {
+    ui_clear >&2
     local choice
     echo '1) دانلود (دریافت این سرور)' >&2
     echo '2) آپلود (ارسال این سرور)' >&2
@@ -6714,6 +6767,7 @@ menu_traffic_mode() {
 menu_traffic() {
     local option id limit mode target confirm
     while true; do
+        ui_clear
         echo 'ترافیک از دید همین سرور محاسبه می‌شود.'
         echo '1) شناسایی تونل‌ها و نمایش مصرف'
         echo '2) تعیین سقف مصرف'
@@ -6762,7 +6816,7 @@ menu_traffic() {
 menu_loop() {
     trap 'echo -e "\n\n${CYAN}[*] خروج از مدیریت NavaTunnel؛ خدانگهدار!${NC}"; exit 0' INT
     while true; do
-        clear
+        ui_clear
         show_banner
         echo ""
         echo "منوی اصلی"

@@ -37,6 +37,8 @@ Run `NavaTunnel` to open the main menu:
 3. **Foreign connection code**: get the selected tunnel's bundle and run it on its foreign server, or paste it into the foreign connection menu. After changing service ports, apply the new bundle on the foreign side. The menu asks before replacing an existing connection.
 4. **Traffic usage, limits, and reset**: select a tunnel and choose download, upload, or both. In the menu, `100` means 100GB; `0` means unlimited.
 
+Menu entry, back navigation, and refresh clear the terminal screen so only the current page is visible. Action results and connection codes remain visible until Enter is pressed. Iran IP migration is available only in the shared tunnel menu.
+
 Restart and delete actions on a tunnel's management page affect only that tunnel. An older single-tunnel Iran installation is imported automatically when its IP and GRE settings can be read from the service file. On a foreign server, use a new bundle to replace connection settings and the status menu to inspect the connection.
 
 ## Foreign server status and management
@@ -178,7 +180,7 @@ Live network and systemd testing requires a Linux server with network administra
 
 ## Changing the Iran public IP
 
-After making the new address available on the same server, select **Create and manage tunnels → 6) Change Iran IP (all tunnels)**. **Option 12** on an Iran tunnel's management page performs the same shared change. This action does not change the network interface's IP address.
+After making the new address available on the same server, select **Create and manage tunnels → 6) Change Iran IP (all tunnels)**. This action does not change the network interface's IP address.
 
 The new public address is recorded for all tunnels and their persistent GRE services. Ports, tokens, MTU, and traffic counters are preserved. Previous settings are backed up, and a failed application triggers restoration. On servers behind NAT, GRE uses the local route address while the new public IP is encoded in connection bundles.
 

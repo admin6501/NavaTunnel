@@ -85,7 +85,7 @@ class PerTunnelTrafficTests(ScriptHarness):
         self.assertEqual(path.read_bytes(),before)
 
     def test_selected_traffic_limit_and_reset_do_not_target_other_tunnel(self):
-        result=self.run_shell("menu_tunnel_traffic gre-t2 <<<$'2\\n100\\n4\\ny\\n0'",'cli_traffic() { echo "CALL:$*" >> "'+str(self.root/'calls')+'"; }')
+        result=self.run_shell("menu_tunnel_traffic gre-t2 <<<$'2\\n100\\n\\n4\\ny\\n\\n0'",'cli_traffic() { echo "CALL:$*" >> "'+str(self.root/'calls')+'"; }')
         self.assertEqual(result.returncode,0,result.stderr)
         calls=(self.root/'calls').read_text()
         self.assertIn('CALL:limit custom-counter 100GB',calls)
