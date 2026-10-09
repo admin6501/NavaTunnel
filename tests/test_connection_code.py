@@ -7,7 +7,7 @@ class ConnectionCodeTests(ScriptHarness):
         self.write_peers()
 
     def test_option_five_shows_long_bundle_and_pauses_before_menu(self):
-        result=self.run_shell("menu_edit_peer <<<$'2\\n5\\n0'",'pause_prompt() { echo CODE_PAUSED; }')
+        result=self.run_shell("menu_edit_peer <<<$'2\\n8\\n0'",'pause_prompt() { echo CODE_PAUSED; }')
         self.assertEqual(result.returncode,0,result.stderr)
         self.assertIn('NavaTunnel setup-foreign --bundle hsh1_37.32.40.233_27913_10.200.0.14_10.200.0.13_',result.stdout)
         self.assertIn('11002-11003-8080-2067-2095-8443-8888-443-2087-2096-51820-51821-206-23913',result.stdout)
@@ -22,7 +22,7 @@ class ConnectionCodeTests(ScriptHarness):
         self.assertNotEqual(result.returncode,0)
         self.assertIn('اطلاعات اتصال',result.stderr)
         self.assertNotIn('BUNDLE:',result.stdout)
-        result=self.run_shell("menu_edit_peer <<<$'2\\n5\\n0'",'pause_prompt() { echo CODE_PAUSED; }')
+        result=self.run_shell("menu_edit_peer <<<$'2\\n8\\n0'",'pause_prompt() { echo CODE_PAUSED; }')
         self.assertIn('دریافت کد اتصال ناموفق',result.stdout)
         self.assertNotIn('NavaTunnel setup-foreign',result.stdout)
 

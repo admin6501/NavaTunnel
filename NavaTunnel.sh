@@ -4161,35 +4161,35 @@ menu_edit_peer() {
             echo 'آخرین مصرف ذخیره‌شده؛ پایش هر 10 ثانیه:'
             traffic_summary "$counter" || return 1
         else
-            echo 'شمارنده ترافیک ثبت نشده است؛ از گزینه 7 برای ثبت و نمایش مصرف استفاده کنید.'
+            echo 'شمارنده ترافیک ثبت نشده است؛ از گزینه 9 برای ثبت و نمایش مصرف استفاده کنید.'
         fi
-        echo '1) تغییر پورت‌های سرویس'
-        echo '2) تغییر نام تونل'
-        echo '3) تغییر IP سرور خارج'
-        echo '4) انتخاب روش انتقال GRE'
-        echo '5) دریافت کد اتصال خارج'
-        echo '6) ری‌استارت همین تونل'
-        echo '7) مصرف و تنظیمات ترافیک همین تونل'
-        echo '8) حذف همین تونل'
-        echo '9) فعال‌سازی یا غیرفعال‌سازی جبران افت بسته'
-        echo '10) انتخاب پروتکل FRP'
-        echo '11) تغییر دائمی MTU همین تونل'
-        echo '12) تغییر پورت کنترل FRP همین تونل'
-        echo '13) توقف همین تونل'
-        echo '14) شروع همین تونل'
+        echo '1) شروع همین تونل'
+        echo '2) توقف همین تونل'
+        echo '3) ری‌استارت همین تونل'
+        echo '4) تغییر پورت‌های سرویس'
+        echo '5) تغییر نام تونل'
+        echo '6) تغییر IP سرور خارج'
+        echo '7) انتخاب روش انتقال GRE'
+        echo '8) دریافت کد اتصال خارج'
+        echo '9) مصرف و تنظیمات ترافیک همین تونل'
+        echo '10) فعال‌سازی یا غیرفعال‌سازی جبران افت بسته'
+        echo '11) انتخاب پروتکل FRP'
+        echo '12) تغییر دائمی MTU همین تونل'
+        echo '13) تغییر پورت کنترل FRP همین تونل'
+        echo '14) حذف همین تونل'
         echo '0) بازگشت'
         read -r -p 'انتخاب: ' option || return 0
         case "$option" in
-            1|2|3)
+            4|5|6)
                 echo 'Enter: بدون تغییر'
                 read -r -p 'مقدار جدید: ' value || return 0
                 [[ -n "$value" ]] || continue
                 case "$option" in
-                    1) cli_edit_peer --id "$id" --ports "$value" && echo 'برای اعمال پورت‌ها در خارج، کد اتصال جدید را روی سرور خارج دوباره اعمال کنید.' ;;
-                    2) cli_edit_peer --id "$id" --name "$value" ;;
-                    3) cli_edit_peer --id "$id" --remote-pub "$value" ;;
+                    4) cli_edit_peer --id "$id" --ports "$value" && echo 'برای اعمال پورت‌ها در خارج، کد اتصال جدید را روی سرور خارج دوباره اعمال کنید.' ;;
+                    5) cli_edit_peer --id "$id" --name "$value" ;;
+                    6) cli_edit_peer --id "$id" --remote-pub "$value" ;;
                 esac ;;
-            4)
+            7)
                 ui_clear
                 echo 'انتخاب روش انتقال GRE همین تونل'
                 echo '1) GRE مستقیم'
@@ -4200,7 +4200,7 @@ menu_edit_peer() {
                 case "$value" in 1) value=direct;; 2) value=fou:443;; 3) value=fou:55555;; *) continue;; esac
                 cli_edit_peer --id "$id" --carrier "$value"
                 echo 'روش انتقال دو سمت باید یکسان باشد؛ تنظیمات سرور خارج را هم به‌روز کنید.' ;;
-            5)
+            8)
                 local connection_output
                 if connection_output=$(peer_token "$id"); then
                     bundle=$(sed -n 's/^BUNDLE://p' <<< "$connection_output")
@@ -4215,25 +4215,25 @@ menu_edit_peer() {
                     echo 'دریافت کد اتصال ناموفق بود؛ خطای بالا را بررسی کنید.'
                 fi
                 pause_prompt ;;
-            6)
+            3)
                 service=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["frps_svc"])' <<< "$rec")
                 iface=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["gre_if"])' <<< "$rec")
                 if systemctl restart "${iface}.service" && systemctl restart "${service}.service"; then echo 'تونل ری‌استارت شد.'; else echo 'ری‌استارت ناموفق بود؛ وضعیت سرویس را بررسی کنید.'; fi ;;
-            13) cli_tunnel_power stop --id "$id" ;;
-            14) cli_tunnel_power start --id "$id" ;;
-            7) menu_tunnel_traffic "$iface" ;;
-            11) menu_mtu "$iface" ;;
-            12)
+            2) cli_tunnel_power stop --id "$id" ;;
+            1) cli_tunnel_power start --id "$id" ;;
+            9) menu_tunnel_traffic "$iface" ;;
+            12) menu_mtu "$iface" ;;
+            13)
                 echo 'تغییر پورت کنترل اتصال خارج را قطع می‌کند؛ پس از تغییر، کد جدید را روی خارج اعمال کنید.'
                 value=$(menu_control_port_prompt "$id") || continue
                 cli_peer_control_port --id "$id" --port "$value" ;;
-            10) value=$(menu_protocol_prompt "$protocol") || continue; cli_peer_protocol --id "$id" --protocol "$value" ;;
-            9) menu_loss_recovery "$id" ;;
-            8) cli_remove_peer --id "$id"; [[ -n "$(peer_get "$id")" ]] || return 0 ;;
+            11) value=$(menu_protocol_prompt "$protocol") || continue; cli_peer_protocol --id "$id" --protocol "$value" ;;
+            10) menu_loss_recovery "$id" ;;
+            14) cli_remove_peer --id "$id"; [[ -n "$(peer_get "$id")" ]] || return 0 ;;
             0) return 0 ;;
             *) echo 'گزینه نامعتبر است.' ;;
         esac
-        case "$option" in 1|2|3|4|6|10|11|12|13|14) pause_prompt ;; 5|7|8|9) ;; *) pause_prompt ;; esac
+        case "$option" in 4|5|6|7|3|11|12|13|2|1) pause_prompt ;; 8|9|14|10) ;; *) pause_prompt ;; esac
     done
 }
 
@@ -6648,30 +6648,30 @@ menu_foreign_tunnel() {
     while true; do
         ui_clear
         foreign_tunnel_summary || return 1
-        echo '1) نمایش وضعیت'
-        echo '2) ری‌استارت همین تونل'
-        echo '3) مصرف و تنظیمات ترافیک همین تونل'
-        echo '4) تغییر تنظیمات یا پروتکل با کد اتصال'
-        echo '5) تغییر دائمی MTU همین تونل'
-        echo '6) توقف همین تونل'
-        echo '7) شروع همین تونل'
+        echo '1) شروع همین تونل'
+        echo '2) توقف همین تونل'
+        echo '3) ری‌استارت همین تونل'
+        echo '4) نمایش وضعیت'
+        echo '5) مصرف و تنظیمات ترافیک همین تونل'
+        echo '6) تغییر تنظیمات یا پروتکل با کد اتصال'
+        echo '7) تغییر دائمی MTU همین تونل'
         echo '0) بازگشت'
         read -r -p 'انتخاب: ' option || return 0
         case "$option" in
-            1) systemctl --no-pager status frpc "${TUNNEL_NAME}.service"; pause_prompt ;;
-            2)
+            4) systemctl --no-pager status frpc "${TUNNEL_NAME}.service"; pause_prompt ;;
+            3)
                 if systemctl restart "${TUNNEL_NAME}.service" && systemctl restart frpc; then
                     echo 'تونل خارج ری‌استارت شد.'
                 else echo 'ری‌استارت ناموفق بود؛ وضعیت سرویس را بررسی کنید.'; fi ;;
-            3) menu_tunnel_traffic "$TUNNEL_NAME" ;;
-            4) menu_connect_foreign ;;
-            5) menu_mtu "$TUNNEL_NAME" ;;
-            6) cli_tunnel_power stop --foreign ;;
-            7) cli_tunnel_power start --foreign ;;
+            5) menu_tunnel_traffic "$TUNNEL_NAME" ;;
+            6) menu_connect_foreign ;;
+            7) menu_mtu "$TUNNEL_NAME" ;;
+            2) cli_tunnel_power stop --foreign ;;
+            1) cli_tunnel_power start --foreign ;;
             0) return 0 ;;
             *) echo 'گزینه نامعتبر است.' ;;
         esac
-        case "$option" in 2|4|5|6|7) pause_prompt ;; 1|3) ;; *) pause_prompt ;; esac
+        case "$option" in 3|6|7|2|1) pause_prompt ;; 4|5) ;; *) pause_prompt ;; esac
     done
 }
 

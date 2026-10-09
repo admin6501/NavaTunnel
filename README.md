@@ -49,11 +49,11 @@ On a foreign server, **3) Select and manage a tunnel** opens FRPC management: st
 
 ## Selecting an FRP protocol
 
-On **Iran**, open **Create and manage tunnels → Select and manage a tunnel → 10) Select FRP protocol**. Choose TCP, KCP, QUIC, WebSocket, or WSS. The saved selection is shown above the menu; Enter keeps it. Then get a new bundle using option 5 and apply it on the foreign server.
+On **Iran**, open **Create and manage tunnels → Select and manage a tunnel → 11) Select FRP protocol**. Choose TCP, KCP, QUIC, WebSocket, or WSS. The saved selection is shown above the menu; Enter keeps it. Then get a new bundle using option 8 and apply it on the foreign server.
 
 On the **foreign server**, **Connect foreign server using a bundle** offers the same five protocols after you paste the bundle. Enter keeps the protocol encoded in the bundle. Manual foreign setup also offers protocol selection. Replacing an existing connection requires confirmation in the menu.
 
-The **foreign FRP client** uses the selected transport; the Iran FRP server accepts the connection. Saving a selection on Iran does not change an already running foreign client. Direct GRE or FOU carrier selection remains separate, under tunnel management option 4.
+The **foreign FRP client** uses the selected transport; the Iran FRP server accepts the connection. Saving a selection on Iran does not change an already running foreign client. Direct GRE or FOU carrier selection remains separate, under tunnel management option 7.
 
 | Protocol | Behavior |
 |---|---|
@@ -63,7 +63,7 @@ The **foreign FRP client** uses the selected transport; the Iran FRP server acce
 | WebSocket | FRP connection over WebSocket |
 | WSS | WebSocket connection with TLS |
 
-KCP and loss recovery stay consistent: selecting KCP enables recovery; selecting another protocol disables it. Enabling recovery through option 9 selects KCP. Disabling it switches KCP to TCP; an already selected non-KCP protocol is preserved.
+KCP and loss recovery stay consistent: selecting KCP enables recovery; selecting another protocol disables it. Enabling recovery through option 10 selects KCP. Disabling it switches KCP to TCP; an already selected non-KCP protocol is preserved.
 
 ```bash
 NavaTunnel peer-protocol --id 2 --protocol quic
@@ -79,11 +79,11 @@ During tunnel creation, the menu asks whether to enable packet-loss recovery wit
 - `y` selects **KCP with FEC** for that tunnel's FRP connection.
 - `n` or Enter keeps the default TCP transport without additional FEC. TCP still performs its usual retransmissions.
 
-For an existing tunnel, open **Select and manage a tunnel → 9) Packet-loss recovery**. The submenu offers **1) Enable**, **2) Disable**, and **3) Show saved selection**. Enter or 0 returns without changing the setting.
+For an existing tunnel, open **Select and manage a tunnel → 10) Packet-loss recovery**. The submenu offers **1) Enable**, **2) Disable**, and **3) Show saved selection**. Enter or 0 returns without changing the setting.
 
 The selection is stored independently in the tunnel's record, then read back and verified. Closing the menu or restarting the script does not clear it. After a change, a ready-to-run foreign setup command is printed. Apply the new bundle on the foreign server and confirm replacement when using the menu.
 
-Iran displays the **saved Iran selection**, which does not verify the foreign client's current state. Changes made directly on the foreign server are not automatically synchronized back to Iran. Select the same protocol using Iran option 10 to keep future bundles consistent. FEC status follows the protocol: KCP enables it; other protocols do not use KCP FEC. Both sides need an updated NavaTunnel version to transfer these settings through the bundle.
+Iran displays the **saved Iran selection**, which does not verify the foreign client's current state. Changes made directly on the foreign server are not automatically synchronized back to Iran. Select the same protocol using Iran option 11 to keep future bundles consistent. FEC status follows the protocol: KCP enables it; other protocols do not use KCP FEC. Both sides need an updated NavaTunnel version to transfer these settings through the bundle.
 
 ```bash
 NavaTunnel loss-recovery --id 2 --mode on
@@ -100,7 +100,7 @@ FEC can reconstruct some lost data using redundant packets. It does not remove l
 
 ## Persistent per-tunnel MTU
 
-On Iran, use **Tunnel management → 11) Persistent MTU**. On the foreign server, use **Connection management → 5) Persistent MTU**. The current value is displayed; Enter cancels. Only the selected tunnel interface is changed, and the setting is saved in its service file and `/etc/gre-panel/mtu.json`.
+On Iran, use **Tunnel management → 12) Persistent MTU**. On the foreign server, use **Connection management → 7) Persistent MTU**. The current value is displayed; Enter cancels. Only the selected tunnel interface is changed, and the setting is saved in its service file and `/etc/gre-panel/mtu.json`.
 
 Restarting, changing the carrier, and applying standard optimizations preserve the saved per-interface MTU. If applying a change fails, the previous setting is restored. MSS rules use the path MTU and the selected tunnel interface.
 
@@ -117,7 +117,7 @@ NavaTunnel mtu --interface gre-tunnel --value 1300
 
 ## Per-tunnel traffic usage
 
-Each tunnel's management page shows download, upload, their total, and usage charged against the configured limit. Use **option 7 on Iran** or **option 3 on the foreign server** to manage that connection's traffic without selecting it again or entering a counter ID. Refresh, limit, accounting direction, reset, and unlimited settings are available there. Reset requires confirmation.
+Each tunnel's management page shows download, upload, their total, and usage charged against the configured limit. Use **option 9 on Iran** or **option 5 on the foreign server** to manage that connection's traffic without selecting it again or entering a counter ID. Refresh, limit, accounting direction, reset, and unlimited settings are available there. Reset requires confirmation.
 
 **Main menu option 6** lists all counters, discovers existing tunnels, and registers an interface or dedicated peer IP. Usage is displayed in multiline GB cards for narrow terminals. In menus, `100` means 100GB and `0` means unlimited. Menus and CLI accept only GB; a number without a suffix also means GB. One GB equals 1,000,000,000 bytes. GiB and other size units are rejected. Existing limits remain stored in bytes; only their displayed unit changes to GB.
 
@@ -202,7 +202,7 @@ NavaTunnel is distributed under AGPL-3.0. See [LICENSE](LICENSE) for the license
 
 During tunnel creation on Iran, enter a control port, or press Enter / type `auto` for automatic selection; `0` cancels creation. The TCP control port, the same UDP port for KCP, and the companion UDP port for QUIC are checked against other tunnels, service ports, and active system listeners. QUIC uses the next port; with control port 65535, it uses 65534.
 
-For an existing tunnel, select **Tunnel management → 12) Change this tunnel's FRP control port**. Enter a new port or type `auto`; Enter and `0` cancel. Only that tunnel's FRPS configuration and service change. Service ports, token, GRE, MTU, and traffic counters are preserved. Failed changes restore the previous configuration.
+For an existing tunnel, select **Tunnel management → 13) Change this tunnel's FRP control port**. Enter a new port or type `auto`; Enter and `0` cancel. Only that tunnel's FRPS configuration and service change. Service ports, token, GRE, MTU, and traffic counters are preserved. Failed changes restore the previous configuration.
 
 The foreign connection remains disconnected until you apply its new bundle. A ready-to-run command with `--force` is displayed; run it on that tunnel's foreign server. Active UFW rules are updated for the new ports. Configure custom and datacenter firewalls separately.
 
@@ -214,7 +214,7 @@ NavaTunnel peer-control-port --id 2 --port auto
 
 ## Stopping and starting a tunnel
 
-On Iran, select **13) Stop this tunnel** or **14) Start this tunnel** in tunnel management. On the foreign server, use **6) Stop** or **7) Start** in connection management. Stop shuts down the selected FRP service and optional cover-traffic service, then its GRE interface. Start brings up GRE first, followed by FRP, and resumes cover traffic only if it was active before the stop.
+On Iran, select **1) Start this tunnel**, **2) Stop this tunnel**, or **3) Restart this tunnel** in tunnel management. On the foreign server, use **1) Start**, **2) Stop**, or **3) Restart** in connection management. Stop shuts down the selected FRP service and optional cover-traffic service, then its GRE interface. Start brings up GRE first, followed by FRP, and resumes cover traffic only if it was active before the stop.
 
 Configuration, token, ports, MTU, counters, and quotas are preserved. The shared traffic counter service keeps running. Intentional stops are recorded in `/etc/gre-panel/stopped/` and enforced through systemd conditions; reboot and automatic service restarts do not clear them. Use Start to resume. If startup fails, partially started services are stopped again. An active local service alone does not confirm connectivity to the other server.
 

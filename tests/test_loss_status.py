@@ -60,7 +60,7 @@ class LossStatusTests(ScriptHarness):
         self.assertNotIn('_loss1',result.stdout)
 
     def test_option_nine_opens_enable_disable_menu(self):
-        result=self.run_shell("menu_edit_peer <<<$'2\\n9\\n1\\n0\\n0'")
+        result=self.run_shell("menu_edit_peer <<<$'2\\n10\\n1\\n0\\n0'")
         self.assertEqual(result.returncode,0,result.stderr)
         self.assertIn('2) غیرفعال‌سازی',result.stdout)
         self.assertIn('FRP=kcp | جبران افت بسته: فعال',result.stdout)

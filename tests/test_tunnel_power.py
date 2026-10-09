@@ -79,7 +79,7 @@ class TunnelPowerTests(ScriptHarness):
         self.assertNotEqual(self.run_shell('cli_tunnel_power stop --id',self.stubs).returncode,0)
 
     def test_menu_stop_and_start_target_selected_tunnel(self):
-        result=self.run_shell("menu_edit_peer <<<$'2\\n13\\n\\n14\\n\\n0'",self.stubs)
+        result=self.run_shell("menu_edit_peer <<<$'2\\n2\\n\\n1\\n\\n0'",self.stubs)
         self.assertEqual(result.returncode,0,result.stderr)
         self.assertIn('stop frps-2.service',self.calls.read_text())
         self.assertIn('start frps-2.service',self.calls.read_text())

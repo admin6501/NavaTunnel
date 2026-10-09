@@ -58,24 +58,26 @@ class MenuNavigationTests(ScriptHarness):
     def test_global_iran_ip_is_not_on_selected_tunnel(self):
         out=self.terminal('menu_edit_peer','2\n0\n')
         self.assertNotIn('تغییر IP سرور ایران',out)
-        self.assertIn('12) تغییر پورت کنترل FRP همین تونل',out)
-        self.assertIn('11) تغییر دائمی MTU',out)
+        self.assertIn('13) تغییر پورت کنترل FRP همین تونل',out)
+        self.assertIn('12) تغییر دائمی MTU',out)
+        entries=[line for line in out.split('\x1b[2J\x1b[H')[-1].splitlines() if line.startswith(('1)','2)','3)'))]
+        self.assertEqual(entries[:3],['1) شروع همین تونل','2) توقف همین تونل','3) ری‌استارت همین تونل'])
         parent=self.terminal('menu_tunnel','0\n')
         self.assertEqual(parent.count('6) تغییر IP سرور ایران'),1)
 
     def test_traffic_submenu_return_removes_traffic_actions(self):
-        out=self.terminal('menu_edit_peer','2\n7\n0\n0\n')
+        out=self.terminal('menu_edit_peer','2\n9\n0\n0\n')
         screens=out.split('\x1b[2J\x1b[H')
         self.assertIn('1) تازه‌سازی مصرف',out)
-        self.assertIn('1) تغییر پورت‌های سرویس',screens[-1])
+        self.assertIn('4) تغییر پورت‌های سرویس',screens[-1])
         self.assertNotIn('1) تازه‌سازی مصرف',screens[-1])
 
     def test_loss_submenu_and_cancelled_protocol_return_cleanly(self):
-        out=self.terminal('menu_edit_peer','2\n9\n0\n10\n0\n0\n')
+        out=self.terminal('menu_edit_peer','2\n10\n0\n11\n0\n0\n')
         screens=out.split('\x1b[2J\x1b[H')
         self.assertIn('1) فعال‌سازی جبران افت بسته',out)
         self.assertIn('1) TCP (پیش‌فرض)',out)
-        self.assertIn('1) تغییر پورت‌های سرویس',screens[-1])
+        self.assertIn('4) تغییر پورت‌های سرویس',screens[-1])
         self.assertNotIn('1) TCP (پیش‌فرض)',screens[-1])
 
     def test_invalid_tunnel_row_reprompts_without_selecting_another(self):
@@ -95,6 +97,9 @@ class MenuNavigationTests(ScriptHarness):
         (self.config/'frpc.toml').write_text('serverAddr="10.200.0.2"\nserverPort=7000\ntransport.protocol="tcp"\n')
         out=self.terminal('menu_tunnel','3\n0\n0\n')
         self.assertIn('تونل سرور خارج | FRPC',out)
+        foreign_screen=next(s for s in out.split('\x1b[2J\x1b[H') if 'تونل سرور خارج | FRPC' in s)
+        entries=[line for line in foreign_screen.splitlines() if line.startswith(('1)','2)','3)'))]
+        self.assertEqual(entries[:3],['1) شروع همین تونل','2) توقف همین تونل','3) ری‌استارت همین تونل'])
         last=out.split('\x1b[2J\x1b[H')[-1]
         self.assertIn('1) ساخت تونل روی ایران',last)
         self.assertNotIn('تونل سرور خارج | FRPC',last)
@@ -131,24 +136,24 @@ init_watchdog_json() { :; }; doctor_health_check() { :; };
             self.assertNotIn(old,last)
 
     def test_gre_submenu_is_its_own_screen(self):
-        out=self.terminal('menu_edit_peer','2\n4\n0\n0\n')
+        out=self.terminal('menu_edit_peer','2\n7\n0\n0\n')
         screen=next(s for s in out.split('\x1b[2J\x1b[H') if '1) GRE مستقیم' in s)
-        self.assertNotIn('1) تغییر پورت‌های سرویس',screen)
+        self.assertNotIn('4) تغییر پورت‌های سرویس',screen)
         self.assertNotIn('دانلود:',screen)
 
     def test_failed_edit_result_is_shown_before_next_redraw(self):
-        out=self.terminal('menu_edit_peer','2\n3\ninvalid\n\n0\n',interactive=True)
+        out=self.terminal('menu_edit_peer','2\n6\ninvalid\n\n0\n',interactive=True)
         screens=out.split('\x1b[2J\x1b[H')
         error_screen=next(s for s in screens if 'IP عمومی سرور مقابل نامعتبر' in s)
         self.assertIn('مقدار جدید:',error_screen)
         self.assertIn('برای بازگشت به منو Enter بزنید',error_screen)
         self.assertNotIn('IP عمومی سرور مقابل نامعتبر',screens[-1])
-        self.assertIn('1) تغییر پورت‌های سرویس',screens[-1])
+        self.assertIn('4) تغییر پورت‌های سرویس',screens[-1])
 
     def test_connection_command_remains_on_interactive_screen_until_enter(self):
         self.peers[1].update(local_pub='203.0.113.1',local_gre='10.200.0.6',peer_gre='10.200.0.5',frp_port=7001,token='testingToken123')
         self.write_peers()
-        out=self.terminal('menu_edit_peer','2\n5\n\n0\n',interactive=True)
+        out=self.terminal('menu_edit_peer','2\n8\n\n0\n',interactive=True)
         screens=out.split('\x1b[2J\x1b[H')
         code_screen=next(s for s in screens if 'NavaTunnel setup-foreign --bundle' in s)
         self.assertIn('برای بازگشت به منو Enter بزنید',code_screen)

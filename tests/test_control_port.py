@@ -96,7 +96,7 @@ cli_add_peer() { echo "SETUP:$*"; }
         self.assertIn('تونل ساخته شد',result.stdout)
 
     def test_menu_edit_control_port_is_scoped_to_selected_peer(self):
-        result=self.run_shell("menu_edit_peer <<<$'2\\n12\\n7900\\n\\n0'",self.stubs)
+        result=self.run_shell("menu_edit_peer <<<$'2\\n13\\n7900\\n\\n0'",self.stubs)
         self.assertEqual(result.returncode,0,result.stderr)
         records=json.loads((self.state/'peers.json').read_text())['peers']
         self.assertEqual(records[0]['frp_port'],7000)

@@ -23,7 +23,7 @@ class ProtocolMenuTests(ScriptHarness):
             self.assertIs(records[1]['loss_recovery'],protocol=='kcp')
 
     def test_menu_option_ten_changes_selected_protocol(self):
-        result=self.run_shell("menu_edit_peer <<<$'2\\n10\\n3\\n0'")
+        result=self.run_shell("menu_edit_peer <<<$'2\\n11\\n3\\n0'")
         self.assertEqual(result.returncode,0,result.stderr)
         records=json.loads((self.state/'peers.json').read_text())['peers']
         self.assertEqual(records[1]['frp_transport'],'quic')

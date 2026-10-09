@@ -45,7 +45,7 @@ remotePort = 53835
         self.assertNotIn('ابتدا یک تونل بسازید',result.stderr)
 
     def test_foreign_restart_does_not_restart_hub_services(self):
-        result=self.run_shell("menu_manage_tunnel <<<$'2\\n0'",'systemctl() { echo "$*"; }')
+        result=self.run_shell("menu_manage_tunnel <<<$'3\\n0'",'systemctl() { echo "$*"; }')
         self.assertIn('restart gre-tunnel.service',result.stdout)
         self.assertIn('restart frpc',result.stdout)
         self.assertNotIn('restart frps',result.stdout)

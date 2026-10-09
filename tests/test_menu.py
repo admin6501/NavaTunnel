@@ -15,12 +15,12 @@ class MenuTests(ScriptHarness):
         self.assertNotEqual(self.run_shell('prompt_ip value label "" </dev/null').returncode,0)
 
     def test_enter_keeps_name_without_edit_call(self):
-        result=self.run_shell("menu_edit_peer <<<$'1\\n2\\n\\n0'",'cli_edit_peer() { echo UNEXPECTED; return 1; }')
+        result=self.run_shell("menu_edit_peer <<<$'1\\n5\\n\\n0'",'cli_edit_peer() { echo UNEXPECTED; return 1; }')
         self.assertEqual(result.returncode,0,result.stderr)
         self.assertNotIn('UNEXPECTED',result.stdout)
 
     def test_restart_only_selected_peer(self):
-        result=self.run_shell("menu_edit_peer <<<$'2\\n6\\n0'",'systemctl() { echo "$*"; }')
+        result=self.run_shell("menu_edit_peer <<<$'2\\n3\\n0'",'systemctl() { echo "$*"; }')
         self.assertIn('restart gre-t2.service',result.stdout)
         self.assertIn('restart frps-2.service',result.stdout)
         self.assertNotIn('restart frps.service',result.stdout)
