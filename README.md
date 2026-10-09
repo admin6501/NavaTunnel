@@ -226,3 +226,23 @@ NavaTunnel tunnel-power start --id 2
 NavaTunnel tunnel-power stop --foreign
 NavaTunnel tunnel-power start --foreign
 ```
+
+## Custom SYN limits and cover traffic
+
+In **Main menu → 2) Performance and security → 3) DPI protection**, option **4** configures the SYN rate and burst. This is a per-source-IP, per-service-port SYN limiter, not operator DPI evasion or an HTTP request limiter. Rates accept `/sec`, `/minute`, or `/hour`. Changes apply immediately if protection is enabled; otherwise they are saved for activation.
+
+In the same parent menu, **4) Cover traffic** offers low, mid, custom-range configuration (**6**), and custom activation (**7**). The global choice rebuilds services for all registered tunnels on that server and overrides old per-peer off selections. Stopped tunnels remain stopped. Changing the active custom range also updates existing services.
+
+Intervals use milliseconds (100–3,600,000); payload sizes use bytes (8–1352) and must fit stored tunnel MTUs with 28 bytes for IPv4/ICMP headers. Cover traffic continuously sends random pings, including during user traffic, and consumes quota. These settings are local; configure each server separately.
+
+```bash
+NavaTunnel dpi-shield configure --rate 120/sec --burst 240
+NavaTunnel perf dpi on
+NavaTunnel chaff configure --min-ms 500 --max-ms 2000 --min-bytes 64 --max-bytes 1000
+NavaTunnel perf chaff custom
+NavaTunnel dpi-shield status
+NavaTunnel chaff status
+# Disable:
+NavaTunnel perf dpi off
+NavaTunnel perf chaff off
+```

@@ -474,7 +474,7 @@ import json
 try:
     with open("'"$PERF_FILE"'") as f:
         p = json.load(f).get("chaff_profile", "off")
-        print(p if p in ("off", "low", "mid") else "off")
+        print(p if p in ("off", "low", "mid", "custom") else "off")
 except Exception:
     print("off")
 ' 2>/dev/null && return 0
@@ -1596,37 +1596,29 @@ CHAFF_BIN="/usr/local/bin/NavaTunnel-chaff.sh"
 install_chaff_script() {
     cat <<'EOF' > "$CHAFF_BIN"
 #!/usr/bin/env bash
-# /usr/local/bin/NavaTunnel-chaff.sh - GRE tunnel idle-gap chaff generator
-
+# Random GRE cover traffic; this also runs while user traffic is active.
 PEER_IP="${1:-}"
-if [[ -z "$PEER_IP" ]]; then
-    echo "روش استفاده: $0 <peer_inner_ip> [low|mid]" >&2
-    exit 1
-fi
-
-PROFILE="${2:-${CHAFF_PROFILE:-low}}"
-
+PROFILE="${2:-low}"
+case "$PROFILE" in
+ low) MIN_MS=400; MAX_MS=2800; MIN_BYTES=64; MAX_BYTES=1200 ;;
+ mid) MIN_MS=150; MAX_MS=1200; MIN_BYTES=200; MAX_BYTES=1280 ;;
+ custom) MIN_MS=${3:-}; MAX_MS=${4:-}; MIN_BYTES=${5:-}; MAX_BYTES=${6:-} ;;
+ *) echo 'حالت ترافیک پوششی نامعتبر است.' >&2; exit 1 ;;
+esac
+[[ -n "$PEER_IP" ]] || { echo 'IP داخلی مقابل را وارد کنید.' >&2; exit 1; }
+for value in "$MIN_MS" "$MAX_MS" "$MIN_BYTES" "$MAX_BYTES"; do
+ [[ "$value" =~ ^[0-9]{1,7}$ ]] || { echo 'محدوده ترافیک پوششی نامعتبر است.' >&2; exit 1; }
+done
+MIN_MS=$((10#$MIN_MS)); MAX_MS=$((10#$MAX_MS)); MIN_BYTES=$((10#$MIN_BYTES)); MAX_BYTES=$((10#$MAX_BYTES))
+((MIN_MS>=100 && MAX_MS<=3600000 && MIN_MS<=MAX_MS && MIN_BYTES>=8 && MAX_BYTES<=1352 && MIN_BYTES<=MAX_BYTES)) || { echo 'محدوده ترافیک پوششی نامعتبر است.' >&2; exit 1; }
 trap 'exit 0' SIGTERM SIGINT
-
 while true; do
-    if [[ "$PROFILE" == "mid" ]]; then
-        # mid: intervals 0.15-1.2s, size 200-1280 (fits within MTU 1380)
-        ms=$(( 150 + RANDOM % 1051 ))
-        sleep_sec=$(printf "%d.%03d" $((ms / 1000)) $((ms % 1000)))
-        size=$(( 200 + RANDOM % 1081 ))
-    else
-        # کم (پیش‌فرض): intervals 0.4-2.8s, size 64-1200
-        ms=$(( 400 + RANDOM % 2401 ))
-        sleep_sec=$(printf "%d.%03d" $((ms / 1000)) $((ms % 1000)))
-        size=$(( 64 + RANDOM % 1137 ))
-    fi
-
-    sleep "$sleep_sec"
-
-    # 16 random hex bytes (32 hex characters)
-    pattern=$(printf '%04x%04x%04x%04x%04x%04x%04x%04x' $RANDOM $RANDOM $RANDOM $RANDOM $RANDOM $RANDOM $RANDOM $RANDOM)
-
-    ping -c1 -W1 -s "$size" -p "$pattern" "$PEER_IP" >/dev/null 2>&1 || true
+ ms=$(( MIN_MS + ((RANDOM<<15)|RANDOM) % (MAX_MS-MIN_MS+1) ))
+ size=$(( MIN_BYTES + RANDOM % (MAX_BYTES-MIN_BYTES+1) ))
+ sleep_sec=$(printf '%d.%03d' $((ms/1000)) $((ms%1000)))
+ sleep "$sleep_sec"
+ pattern=$(printf '%04x%04x%04x%04x' "$RANDOM" "$RANDOM" "$RANDOM" "$RANDOM")
+ ping -n -c1 -W1 -s "$size" -p "$pattern" "$PEER_IP" >/dev/null 2>&1 || true
 done
 EOF
     chmod +x "$CHAFF_BIN"
@@ -1642,6 +1634,16 @@ setup_chaff() {
     is_valid_ip "$PEER_GRE" || return 1
     install_chaff_script || return 1
 
+    local RANGE_ARGS=''
+    if [[ "$PROFILE" == custom ]]; then
+        RANGE_ARGS=$(python3 - "$PERF_FILE" <<'PYCODE'
+import json,sys
+p=json.load(open(sys.argv[1]));v=p.get('chaff_custom',{})
+print(' '.join(str(v.get(k,'')) for k in ('min_ms','max_ms','min_bytes','max_bytes')))
+PYCODE
+) || return 1
+        [[ "$RANGE_ARGS" =~ ^[0-9]+\ [0-9]+\ [0-9]+\ [0-9]+$ ]] || { echo 'ابتدا تنظیمات سفارشی ترافیک پوششی را ثبت کنید.' >&2; return 1; }
+    fi
     local SVC="gre-chaff"
     local GRE_IF="$TUNNEL_NAME"
     if [[ -n "$SUF" ]]; then
@@ -1667,7 +1669,7 @@ Type=simple
 User=root
 Restart=always
 RestartSec=3s
-ExecStart=${CHAFF_BIN} ${PEER_GRE} ${PROFILE}
+ExecStart=${CHAFF_BIN} ${PEER_GRE} ${PROFILE} ${RANGE_ARGS}
 
 [Install]
 WantedBy=multi-user.target
@@ -1675,12 +1677,20 @@ EOF
     chmod 600 "${CONFIG_DIR}"/*.toml 2>/dev/null || true
     systemctl daemon-reload
     systemctl enable "${SVC}.service" >/dev/null 2>&1
-    systemctl restart "${SVC}.service" >/dev/null 2>&1 || true
-    echo -e "${GREEN}[✔️] سرویس ترافیک پوششی ${SVC} برای ${PEER_GRE} تنظیم شد (حالت: $(fa_state "${PROFILE}")).${NC}"
+    systemctl restart "${SVC}.service" || return 1
+    if [[ ! -f "${NAVATUNNEL_STATE_DIR}/stopped/${GRE_IF}" ]]; then
+        systemctl is-active --quiet "${SVC}.service" || { echo 'سرویس ترافیک پوششی فعال نشد.' >&2; return 1; }
+    fi
+    if [[ -f "${NAVATUNNEL_STATE_DIR}/stopped/${GRE_IF}" ]]; then
+        echo "تنظیمات ترافیک پوششی $SVC ثبت شد؛ تونل دستی متوقف است و سرویس اجرا نشد."
+    else
+        echo "سرویس ترافیک پوششی $SVC فعال شد؛ حالت: $PROFILE."
+    fi
 }
 
 update_chaff_existing_tunnels() {
-    if [[ "${CHAFF_PROFILE:-off}" == "off" ]]; then
+    local CHAFF_PROFILE="${CHAFF_PROFILE:-$(perf_get_chaff)}"
+    if [[ "$CHAFF_PROFILE" == "off" ]]; then
         return 0
     fi
     # 1. Multi-peer registry (/etc/gre-panel/peers.json)
@@ -1691,7 +1701,7 @@ import json, os
 try:
     d = json.load(open(os.environ["PEERS_F"]))
     for p in d.get("peers", []):
-        suf = "" if p.get("legacy") else f"-{p.get(\"id\", \"\")}"
+        suf = "" if p.get("legacy") else "-"+str(p.get("id", ""))
         pgre = p.get("peer_gre", "")
         prof = p.get("chaff_profile", "")
         if pgre:
@@ -1703,8 +1713,8 @@ except Exception:
             while IFS=':' read -r suf pgre prof; do
                 [[ -n "$pgre" ]] || continue
                 local saved_prof="${CHAFF_PROFILE:-}"
-                [[ -n "$prof" ]] && CHAFF_PROFILE="$prof"
-                setup_chaff "$suf" "$pgre"
+                [[ -n "$prof" && -z "$saved_prof" ]] && CHAFF_PROFILE="$prof"
+                setup_chaff "$suf" "$pgre" || return 1
                 CHAFF_PROFILE="$saved_prof"
             done <<< "$PEER_DATA"
             return 0
@@ -1746,22 +1756,16 @@ cli_chaff() {
     case "$ACTION" in
         on)
             echo -e "${CYAN}[*] در حال فعال‌سازی سرویس‌های ترافیک پوششی GRE...${NC}"
-            local found=0
-            for u in /etc/systemd/system/gre-chaff*.service; do
-                [[ -f "$u" ]] || continue
-                found=1
-                local bname
-                bname=$(basename "$u")
-                systemctl enable "$bname" >/dev/null 2>&1
-                systemctl restart "$bname" >/dev/null 2>&1
-                echo -e "${GREEN}[✔️] سرویس ${bname} راه‌اندازی و فعال شد.${NC}"
-            done
-            if [[ "$found" -eq 0 ]]; then
-                echo -e "${YELLOW}[*] سرویس ترافیک پوششی موجود نیست؛ تنظیم برای تونل‌های فعال...${NC}"
-                update_chaff_existing_tunnels
-            fi
+            local profile=${CHAFF_PROFILE:-$(perf_get_chaff)}
+            [[ "$profile" != off ]] || profile=low
+            CHAFF_PROFILE="$profile" update_chaff_existing_tunnels || return 1
+            local found=0 u
+            for u in /etc/systemd/system/gre-chaff*.service; do [[ ! -f "$u" ]] || found=1; done
+            ((found)) || { echo 'تونلی برای ترافیک پوششی پیدا نشد.' >&2; return 1; }
+            perf_set_val chaff_profile "$profile" 0 || return 1
             ;;
         off)
+            perf_set_val chaff_profile off 0 || return 1
             echo -e "${CYAN}[*] در حال توقف و غیرفعال‌سازی سرویس‌های ترافیک پوششی...${NC}"
             local found=0
             for u in /etc/systemd/system/gre-chaff*.service; do
@@ -1777,9 +1781,17 @@ cli_chaff() {
                 echo -e "${YELLOW}[*] سرویس ترافیک پوششی پیدا نشد.${NC}"
             fi
             ;;
+        configure) shift; cli_cover_configure chaff "$@" ;;
         status)
             echo -e "${CYAN}=== وضعیت ترافیک پوششی GRE ===${NC}"
             echo -e "${YELLOW}ترافیک پوششی فاصله‌های بیکاری را پر می‌کند؛ حجم مصرف زیر بار را پنهان نمی‌کند.${NC}"
+            python3 - "$PERF_FILE" <<'PYCODE'
+import json,sys
+from pathlib import Path
+p=Path(sys.argv[1]);d=json.loads(p.read_text()) if p.exists() else {}
+v=d.get("chaff_custom",{})
+if v: print("محدوده سفارشی ذخیره‌شده: فاصله %s تا %s میلی‌ثانیه؛ اندازه %s تا %s بایت"%(v.get("min_ms"),v.get("max_ms"),v.get("min_bytes"),v.get("max_bytes")))
+PYCODE
             local found=0
             for u in /etc/systemd/system/gre-chaff*.service; do
                 [[ -f "$u" ]] || continue
@@ -1812,22 +1824,95 @@ cli_chaff() {
     esac
 }
 
+cli_cover_configure() {
+    local kind=$1; shift
+    init_perf_json
+    python3 - "$PERF_FILE" "$kind" "${NAVATUNNEL_STATE_DIR}/mtu.json" "$@" <<'PYCODE'
+import json,re,sys,os,tempfile
+from pathlib import Path
+path=Path(sys.argv[1]);kind=sys.argv[2];args=sys.argv[4:]
+try:
+    if len(args)%2:raise ValueError('برای هر گزینه یک مقدار وارد کنید.')
+    keys=dict(zip(args[::2],args[1::2]))
+    if len(keys)!=len(args)//2:raise ValueError('گزینه تکراری است.')
+    data=json.loads(path.read_text())
+    if kind=='dpi':
+        if set(keys)!={'--rate','--burst'}:raise ValueError('گزینه‌های لازم: --rate و --burst')
+        rate=keys['--rate'];burst=keys['--burst']
+        if not re.fullmatch(r'[1-9][0-9]{0,5}/(sec|minute|hour)',rate) or not re.fullmatch(r'[1-9][0-9]{0,6}',burst):raise ValueError('نمونه معتبر: --rate 60/sec --burst 120')
+        data.update(dpi_rate=rate,dpi_burst=int(burst))
+    else:
+        names=('min_ms','max_ms','min_bytes','max_bytes')
+        if set(keys)!={'--'+n.replace('_','-') for n in names}:raise ValueError('چهار مقدار فاصله و اندازه لازم است.')
+        v={n:int(keys['--'+n.replace('_','-')]) for n in names}
+        if not(100<=v['min_ms']<=v['max_ms']<=3600000 and 8<=v['min_bytes']<=v['max_bytes']<=1352):raise ValueError('فاصله: 100 تا 3600000 میلی‌ثانیه؛ اندازه: 8 تا 1352 بایت؛ حداقل نباید بیشتر از حداکثر باشد.')
+        mtu=Path(sys.argv[3]);mtus=json.loads(mtu.read_text()) if mtu.exists() else {}
+        if mtus and v['max_bytes']>min(map(int,mtus.values()))-28:raise ValueError('اندازه پینگ از MTU یکی از تونل‌ها بیشتر است.')
+        data['chaff_custom']=v
+    fd,tmp=tempfile.mkstemp(dir=path.parent)
+    try:
+        os.fchmod(fd,0o600)
+        with os.fdopen(fd,'w') as f:json.dump(data,f,indent=2)
+        os.replace(tmp,path)
+    finally:
+        if os.path.exists(tmp):os.unlink(tmp)
+except (ValueError,OSError) as error:
+    print('تنظیمات ثبت نشد: '+str(error),file=sys.stderr);sys.exit(1)
+PYCODE
+    [[ $? == 0 ]] || return 1
+    if [[ "$kind" == dpi ]]; then
+        if [[ "$(perf_get_dpi_enabled)" == 1 ]]; then dpi_shield_on || return 1; fi
+    elif [[ "$(perf_get_chaff)" == custom ]]; then
+        CHAFF_PROFILE=custom cli_chaff on || return 1
+    fi
+    echo 'تنظیمات ذخیره شد؛ اگر این حالت فعال بود، تنظیمات جدید هم اعمال شدند.'
+}
+
+menu_cover_configure() {
+    local kind=$1 rate burst min_ms max_ms min_bytes max_bytes
+    ui_clear
+    if [[ "$kind" == dpi ]]; then
+        echo 'محدودیت SYN به ازای هر IP و هر پورت است؛ سرعت دانلود را محدود نمی‌کند.'
+        read -r -p 'نرخ (مثلاً 60/sec یا 3600/minute؛ Enter: لغو): ' rate || return 0
+        [[ -n "$rate" ]] || return 0
+        read -r -p 'ظرفیت جهش اولیه burst (مثلاً 120): ' burst || return 0
+        cli_cover_configure dpi --rate "$rate" --burst "$burst"
+    else
+        echo 'فاصله بر حسب میلی‌ثانیه و اندازه داده پینگ بر حسب بایت است؛ ترافیک اضافه مصرف می‌کند.'
+        read -r -p 'حداقل فاصله (مثلاً 400؛ Enter: لغو): ' min_ms || return 0
+        [[ -n "$min_ms" ]] || return 0
+        read -r -p 'حداکثر فاصله (مثلاً 2800): ' max_ms || return 0
+        read -r -p 'حداقل اندازه (مثلاً 64): ' min_bytes || return 0
+        read -r -p 'حداکثر اندازه (مثلاً 1200): ' max_bytes || return 0
+        cli_cover_configure chaff --min-ms "$min_ms" --max-ms "$max_ms" --min-bytes "$min_bytes" --max-bytes "$max_bytes" || return 1
+        echo 'برای فعال‌شدن این محدوده، حالت سفارشی را از منوی ترافیک پوششی انتخاب کنید.'
+    fi
+}
+
 menu_chaff() {
     ui_clear
-    echo -e "\n${YELLOW}=== ترافیک پوششی برای زمان‌های بیکاری ===${NC}"
-    echo -e "پینگ‌های تصادفی فاصله‌های بیکاری را پر می‌کنند؛ مصرف افزوده چند کیلوبایت در ثانیه است."
+    echo -e "\n${YELLOW}=== ترافیک پوششی GRE با پینگ تصادفی ===${NC}"
+    echo -e "مصرف اضافه به فاصله و اندازه پینگ بستگی دارد؛ هنگام ترافیک کاربران هم ادامه دارد."
     cli_chaff status
     echo ""
     echo "  1) فعال‌سازی ترافیک پوششی"
     echo "  2) غیرفعال‌سازی ترافیک پوششی"
     echo "  3) نمایش وضعیت"
-    echo "  0) بازگشت به منوی اصلی"
+    echo '  4) انتخاب حالت کم low'
+    echo '  5) انتخاب حالت متوسط mid'
+    echo '  6) تنظیم فاصله و اندازه سفارشی'
+    echo '  7) فعال‌سازی حالت سفارشی'
+    echo "  0) بازگشت"
     echo ""
-    read -r -p "انتخاب عمل [0-3]: " CH_OPT || return 0
+    read -r -p "انتخاب عمل [0-7]: " CH_OPT || return 0
     case "$CH_OPT" in
         1) cli_chaff on ;;
         2) cli_chaff off ;;
         3) cli_chaff status ;;
+        4) cli_perf chaff low ;;
+        5) cli_perf chaff mid ;;
+        6) menu_cover_configure chaff ;;
+        7) cli_perf chaff custom ;;
         0) return 0 ;;
         *) echo -e "${RED}[!] گزینه نامعتبر است.${NC}"; return 1 ;;
     esac
@@ -1947,6 +2032,9 @@ dpi_shield_on() {
         return 1
     }
 
+    local rate burst
+    rate=$(perf_get_dpi_rate); burst=$(perf_get_dpi_burst)
+    [[ "$rate" =~ ^[1-9][0-9]{0,5}/(sec|minute|hour)$ && "$burst" =~ ^[1-9][0-9]{0,6}$ ]] || { echo 'نرخ یا burst ذخیره‌شده نامعتبر است.' >&2; return 1; }
     local REVERSE_PORTS=()
     while read -r p; do
         [[ -n "$p" ]] && REVERSE_PORTS+=("$p")
@@ -1983,8 +2071,11 @@ dpi_shield_on() {
     # 2. Per source IP hashlimit (blocks abusive scanners > 60/sec from one IP)
     local port
     for port in "${REVERSE_PORTS[@]}"; do
-        if ! iptables -A NAVATUNNEL-DPI -p tcp --dport "$port" --syn -m hashlimit --hashlimit-name "hsh_${port}" --hashlimit-mode srcip --hashlimit-above 60/sec --hashlimit-burst 120 -j DROP 2>/dev/null; then
-            iptables -A NAVATUNNEL-DPI -p tcp --dport "$port" --syn -j ACCEPT 2>/dev/null || true
+        if ! iptables -A NAVATUNNEL-DPI -p tcp --dport "$port" --syn -m hashlimit --hashlimit-name "hsh_${port}" --hashlimit-mode srcip --hashlimit-above "$rate" --hashlimit-burst "$burst" -j DROP 2>/dev/null; then
+            dpi_shield_off >/dev/null 2>&1 || true
+            perf_set_val dpi_enabled false 1 || true
+            echo 'اعمال hashlimit ناموفق بود؛ محافظ غیرفعال ماند.' >&2
+            return 1
         fi
     done
     # RETURN at end: non-matching packets pass through instantly
@@ -2067,6 +2158,7 @@ dpi_shield_off() {
 }
 
 dpi_shield_status() {
+    echo "نرخ ذخیره‌شده: $(perf_get_dpi_rate) | burst: $(perf_get_dpi_burst)"
     if iptables -L NAVATUNNEL-DPI -n >/dev/null 2>&1; then
         echo -e "${GREEN}[✔️] محافظ DPI فعال است.${NC}"
         echo -e "${CYAN}شمارنده بسته‌ها و قواعد محافظ DPI:${NC}"
@@ -2088,11 +2180,14 @@ cli_dpi_shield() {
     local ACTION="${1:-}"
     case "$ACTION" in
         on)
+            perf_set_val dpi_enabled true 1 || return 1
             dpi_shield_on
             ;;
         off)
+            perf_set_val dpi_enabled false 1 || return 1
             dpi_shield_off
             ;;
+        configure) shift; cli_cover_configure dpi "$@" ;;
         status)
             dpi_shield_status
             ;;
@@ -2113,13 +2208,15 @@ menu_dpi_shield() {
     echo "  1) فعال‌سازی محافظ DPI"
     echo "  2) غیرفعال‌سازی محافظ DPI"
     echo "  3) نمایش وضعیت"
-    echo "  0) بازگشت به منوی اصلی"
+    echo '  4) تنظیم نرخ و burst سفارشی'
+    echo "  0) بازگشت"
     echo ""
-    read -r -p "انتخاب عمل [0-3]: " DPI_OPT || return 0
+    read -r -p "انتخاب عمل [0-4]: " DPI_OPT || return 0
     case "$DPI_OPT" in
         1) cli_dpi_shield on ;;
         2) cli_dpi_shield off ;;
         3) cli_dpi_shield status ;;
+        4) menu_cover_configure dpi ;;
         0) return 0 ;;
         *) echo -e "${RED}[!] گزینه نامعتبر است.${NC}"; return 1 ;;
     esac
@@ -2418,13 +2515,13 @@ cli_perf() {
                     cli_chaff off
                     echo -e "${GREEN}[✔️] ترافیک پوششی غیرفعال و سرویس‌ها متوقف شدند.${NC}"
                     ;;
-                low|mid)
+                low|mid|custom)
                     perf_set_val "chaff_profile" "$VAL" 0
-                    CHAFF_PROFILE="$VAL" cli_chaff on
+                    CHAFF_PROFILE="$VAL" cli_chaff on || return 1
                     echo -e "${GREEN}[✔️] حالت ترافیک پوششی روی $VAL قرار گرفت و سرویس‌ها اجرا شدند.${NC}"
                     ;;
                 *)
-                    echo -e "${RED}[!] روش استفاده: NavaTunnel perf chaff off|low|mid${NC}"
+                    echo -e "${RED}[!] روش استفاده: NavaTunnel perf chaff off|low|mid|custom${NC}"
                     return 1
                     ;;
             esac
@@ -2434,7 +2531,7 @@ cli_perf() {
             case "$VAL" in
                 on)
                     perf_set_val "dpi_enabled" "true" 1
-                    dpi_shield_on
+                    dpi_shield_on || return 1
                     echo -e "${GREEN}[✔️] محافظ DPI فعال شد.${NC}"
                     ;;
                 off)
@@ -2464,11 +2561,11 @@ cli_perf() {
             echo -e "${GREEN}[✔️] تنظیمات کارایی به پیش‌فرض برگشت: رمزگذاری و فشرده‌سازی خاموش، TLS استاندارد، ترافیک پوششی و محافظ DPI خاموش.${NC}"
             ;;
         -h|--help|help)
-            echo "روش استفاده: NavaTunnel perf status|enc on|off|comp on|off|tls on|off|chaff off|low|mid|dpi on|off|apply|reset"
+            echo "روش استفاده: NavaTunnel perf status|enc on|off|comp on|off|tls on|off|chaff off|low|mid|custom|dpi on|off|apply|reset"
             ;;
         *)
             echo -e "${RED}[!] زیردستور ناشناخته: $SUB${NC}"
-            echo "روش استفاده: NavaTunnel perf status|enc on|off|comp on|off|tls on|off|chaff off|low|mid|dpi on|off|apply|reset"
+            echo "روش استفاده: NavaTunnel perf status|enc on|off|comp on|off|tls on|off|chaff off|low|mid|custom|dpi on|off|apply|reset"
             return 1
             ;;
     esac
@@ -2507,11 +2604,15 @@ menu_perf() {
                 echo "  1) غیرفعال"
                 echo "  2) کم (پیش‌فرض)"
                 echo "  3) متوسط"
-                read -r -p "انتخاب [1-3]: " C_OPT || return 0
+                echo "  4) سفارشی ذخیره‌شده"
+                echo "  5) تنظیم فاصله و اندازه سفارشی"
+                read -r -p "انتخاب [1-5]: " C_OPT || return 0
                 case "$C_OPT" in
                     1) cli_perf chaff off ;;
                     2) cli_perf chaff low ;;
                     3) cli_perf chaff mid ;;
+                    4) cli_perf chaff custom ;;
+                    5) menu_cover_configure chaff ;;
                     *) echo "گزینه نامعتبر است." ;;
                 esac
                 ;;
@@ -7150,7 +7251,9 @@ usage_cli() {
   NavaTunnel logs | restart   # (با bash NavaTunnel.sh هم اجرا می‌شود)
   NavaTunnel optimize | restore | tune-status
   NavaTunnel carrier [status|mode auto|direct|fou:P|set direct|fou:P|next] # تغییر خودکار حامل
-  NavaTunnel perf status|enc on|off|comp on|off|tls on|off|chaff off|low|mid|dpi on|off|apply
+  NavaTunnel perf status|enc on|off|comp on|off|tls on|off|chaff off|low|mid|custom|dpi on|off|apply
+  NavaTunnel chaff configure --min-ms 400 --max-ms 2800 --min-bytes 64 --max-bytes 1200
+  NavaTunnel dpi-shield configure --rate 60/sec --burst 120
   NavaTunnel chaff on|off|status                   # ترافیک پوششی هنگام بیکاری
   NavaTunnel dpi-shield on|off|status              # محدودیت نرخ پورت‌ها در برابر اسکن پرتعداد
   NavaTunnel watchdog on|off|status|test|tick      # پایش تونل و هشدار
