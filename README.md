@@ -32,7 +32,7 @@ Close and reopen the menu afterward. Update Iran and each foreign server separat
 
 Run `NavaTunnel` to open the main menu:
 
-1. **Create and manage tunnels → Create on Iran**: enter a name, both public IPs, and service ports. The token, control port, and internal addresses are generated automatically. Follow the same steps to add more foreign servers.
+1. **Create and manage tunnels → Create on Iran**: enter a name, both public IPs, and service ports. The token and internal addresses are generated automatically. Enter a control port manually, or press Enter / type `auto` to select an available port. Follow the same steps to add more foreign servers.
 2. **Select and manage a tunnel**: select a tunnel from the numbered list, then change its name, ports, or foreign IP. Enter leaves an edit unchanged; option 0 goes back.
 3. **Foreign connection code**: get the selected tunnel's bundle and run it on its foreign server, or paste it into the foreign connection menu. After changing service ports, apply the new bundle on the foreign side. The menu asks before replacing an existing connection.
 4. **Traffic usage, limits, and reset**: select a tunnel and choose download, upload, or both. In the menu, `100` means 100GB; `0` means unlimited.
@@ -197,3 +197,17 @@ After using the direct command, retrieve each tunnel's new bundle from **Foreign
 ## License
 
 NavaTunnel is distributed under AGPL-3.0. See [LICENSE](LICENSE) for the license text.
+
+## Selecting and changing the FRP control port
+
+During tunnel creation on Iran, enter a control port, or press Enter / type `auto` for automatic selection; `0` cancels creation. The TCP control port, the same UDP port for KCP, and the companion UDP port for QUIC are checked against other tunnels, service ports, and active system listeners. QUIC uses the next port; with control port 65535, it uses 65534.
+
+For an existing tunnel, select **Tunnel management → 12) Change this tunnel's FRP control port**. Enter a new port or type `auto`; Enter and `0` cancel. Only that tunnel's FRPS configuration and service change. Service ports, token, GRE, MTU, and traffic counters are preserved. Failed changes restore the previous configuration.
+
+The foreign connection remains disconnected until you apply its new bundle. A ready-to-run command with `--force` is displayed; run it on that tunnel's foreign server. Active UFW rules are updated for the new ports. Configure custom and datacenter firewalls separately.
+
+```bash
+NavaTunnel peer-control-port --id 2 --port 45000
+# Or select automatically:
+NavaTunnel peer-control-port --id 2 --port auto
+```

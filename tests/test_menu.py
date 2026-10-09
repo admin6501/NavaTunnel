@@ -46,7 +46,7 @@ class MenuTests(ScriptHarness):
         self.assertIn('CALL:limit gre-t2 100GB --mode both',result.stdout)
 
     def test_failed_creation_does_not_announce_success(self):
-        result=self.run_shell("menu_add_peer <<<$'example\\nn'",'''prompt_ip() { printf -v "$1" '%s' '192.0.2.1'; }
+        result=self.run_shell("menu_add_peer <<<$'example\\nn\\n\\n'",'''prompt_ip() { printf -v "$1" '%s' '192.0.2.1'; }
 prompt_ports() { printf -v "$1" '%s' '443'; }
 curl() { echo 192.0.2.1; }
 cli_add_peer() { return 1; }

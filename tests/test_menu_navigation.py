@@ -58,7 +58,7 @@ class MenuNavigationTests(ScriptHarness):
     def test_global_iran_ip_is_not_on_selected_tunnel(self):
         out=self.terminal('menu_edit_peer','2\n0\n')
         self.assertNotIn('تغییر IP سرور ایران',out)
-        self.assertNotIn('12)',out)
+        self.assertIn('12) تغییر پورت کنترل FRP همین تونل',out)
         self.assertIn('11) تغییر دائمی MTU',out)
         parent=self.terminal('menu_tunnel','0\n')
         self.assertEqual(parent.count('6) تغییر IP سرور ایران'),1)

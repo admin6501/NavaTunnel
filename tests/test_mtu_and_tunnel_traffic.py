@@ -107,6 +107,6 @@ class PerTunnelTrafficTests(ScriptHarness):
     def test_menu_is_vertical_and_sequential(self):
         result=self.run_shell("menu_edit_peer <<<$'2\\n0'")
         lines=result.stdout.splitlines()
-        entries=[line for line in lines if line.startswith(tuple(str(n)+')' for n in range(12)))]
-        self.assertEqual([int(line.split(')')[0]) for line in entries],list(range(1,12))+[0])
+        entries=[line for line in lines if line.startswith(tuple(str(n)+')' for n in range(13)))]
+        self.assertEqual([int(line.split(')')[0]) for line in entries],list(range(1,13))+[0])
         self.assertIn('3.000 GB',result.stdout)

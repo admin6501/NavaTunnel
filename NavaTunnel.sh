@@ -3131,11 +3131,7 @@ cli_add_peer() {
         echo -e "${YELLOW}    برای این تونل پورت دیگری انتخاب کنید؛ مثلاً 8443 به‌جای 443.${NC}"
         return 1
     fi
-    # control port must be free on this machine
-    if ss -tln 2>/dev/null | grep -q ":${FRP_PORT} "; then
-        echo -e "${RED}[!] پورت کنترل ${FRP_PORT} روی این سرور اشغال است؛ پورت دیگری انتخاب کنید.${NC}"
-        return 1
-    fi
+    peer_control_port_check "$FRP_PORT" 0 "$CLEANED" || return 1
     # GRE inner IPs must be unique across peers
     if grep -q "\"local_gre\": *\"${LOCAL_GRE}\"" "$PEERS_FILE" || grep -q "\"peer_gre\": *\"${LOCAL_GRE}\"" "$PEERS_FILE"; then
         echo -e "${RED}[!] IP داخلی GRE ${LOCAL_GRE} در تونل دیگری استفاده شده است.${NC}"; return 1
@@ -3708,6 +3704,149 @@ else: sys.exit('در بازه 10.200.0.0/16 آدرس GRE آزاد پیدا نش�
 PYCODE
 }
 
+# Check all listeners used by FRPS, including its companion QUIC port.
+peer_control_port_check() {
+    local port=$1 exclude=${2:-0} service_ports=${3:-} tcp udp fou
+    is_valid_port "$port" || { echo 'پورت کنترل باید بین 1 و 65535 باشد.' >&2; return 1; }
+    peer_init || return 1
+    command -v ss >/dev/null || ensure_dependencies_smart || return 1
+    tcp=$(ss -H -ltn) || { echo 'بررسی پورت‌های TCP ناموفق بود.' >&2; return 1; }
+    udp=$(ss -H -lun) || { echo 'بررسی پورت‌های UDP ناموفق بود.' >&2; return 1; }
+    fou=$(ip fou show 2>/dev/null) || fou=''
+    TCP_LISTEN="$tcp" UDP_LISTEN="$udp" FOU_LISTEN="$fou" python3 - "$PEERS_FILE" "$port" "$exclude" "$service_ports" <<'PYCODE'
+import json,os,re,sys
+port=int(sys.argv[2]); exclude=int(sys.argv[3])
+quic=lambda p:p-1 if p==65535 else p+1
+needed_tcp={port}; needed_udp={port,quic(port)}
+peers=json.load(open(sys.argv[1])).get('peers',[])
+ignore_tcp=set(); ignore_udp=set()
+for peer in peers:
+    control=int(peer.get('frp_port') or 0)
+    if peer.get('id')==exclude:
+        if control: ignore_tcp.add(control); ignore_udp.update((control,quic(control)))
+    elif control and (needed_tcp & {control} or needed_udp & {control,quic(control)}):
+        sys.exit('پورت کنترل یا پورت QUIC همراه آن با تونل '+str(peer.get('name',''))+' تداخل دارد.')
+    if (needed_tcp|needed_udp)&set(map(int,peer.get('ports',[]))):
+        sys.exit('پورت کنترل یا پورت QUIC همراه آن با پورت سرویس تونل '+str(peer.get('name',''))+' تداخل دارد.')
+if (needed_tcp|needed_udp)&{int(p) for p in sys.argv[4].replace(',',' ').split()}:
+    sys.exit('پورت کنترل یا پورت QUIC همراه آن در فهرست پورت‌های سرویس همین تونل است.')
+def listeners(text):
+    ports=set()
+    for line in text.splitlines():
+        parts=line.split()
+        if len(parts)>=4:
+            match=re.search(r':(\d+)$',parts[3])
+            if match: ports.add(int(match[1]))
+    return ports
+if needed_tcp & (listeners(os.environ['TCP_LISTEN'])-ignore_tcp):
+    sys.exit('پورت کنترل TCP روی این سرور اشغال است.')
+if needed_udp & (listeners(os.environ['UDP_LISTEN'])-ignore_udp):
+    sys.exit('پورت کنترل UDP یا پورت QUIC همراه آن روی این سرور اشغال است.')
+if needed_udp & {int(p) for p in re.findall(r'\bport\s+(\d+)',os.environ['FOU_LISTEN'])}:
+    sys.exit('پورت کنترل یا پورت QUIC همراه آن با حامل FOU تداخل دارد.')
+PYCODE
+}
+
+peer_control_port_auto() {
+    local exclude=${1:-0} ports=${2:-} candidate attempt
+    for ((attempt=0; attempt<100; attempt++)); do
+        candidate=$(gen_random_port) || return 1
+        peer_control_port_check "$candidate" "$exclude" "$ports" 2>/dev/null && { echo "$candidate"; return 0; }
+    done
+    echo 'انتخاب پورت کنترل آزاد ناموفق بود؛ وضعیت پورت‌ها را بررسی کنید.' >&2
+    return 1
+}
+
+menu_control_port_prompt() {
+    local id=${1:-0} ports=${2:-} value
+    while true; do
+        if [[ "$id" == 0 ]]; then
+            read -r -p 'پورت کنترل FRP [Enter یا auto: خودکار؛ 0: لغو]: ' value || return 1
+        else
+            read -r -p 'پورت کنترل جدید [auto: خودکار؛ Enter یا 0: لغو]: ' value || return 1
+            [[ -n "$value" ]] || return 1
+        fi
+        [[ "$value" != 0 ]] || return 1
+        if [[ -z "$value" || "$value" == auto ]]; then
+            peer_control_port_auto "$id" "$ports"; return $?
+        fi
+        if peer_control_port_check "$value" "$id" "$ports"; then
+            echo "$((10#$value))"; return 0
+        fi
+    done
+}
+
+cli_peer_control_port() {
+    local id='' port='' rec svc config tmp failure=0
+    while [[ $# -gt 0 ]]; do
+        [[ $# -ge 2 ]] || { echo 'روش استفاده: NavaTunnel peer-control-port --id N --port N|auto' >&2; return 1; }
+        case "$1" in --id) id=$2;; --port) port=$2;; *) return 1;; esac
+        shift 2
+    done
+    [[ "$id" =~ ^[1-9][0-9]*$ && -n "$port" ]] || return 1
+    rec=$(peer_get "$id") || return 1
+    [[ -n "$rec" ]] || { echo 'تونل پیدا نشد.' >&2; return 1; }
+    [[ "$port" != auto ]] || port=$(peer_control_port_auto "$id") || return 1
+    peer_control_port_check "$port" "$id" || return 1
+    port=$((10#$port))
+    local old
+    old=$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("frp_port",0))' <<< "$rec") || return 1
+    [[ "$port" != "$old" ]] || { echo 'پورت کنترل همین مقدار است؛ تغییری انجام نشد.'; return 0; }
+    svc=$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("frps_svc",""))' <<< "$rec") || return 1
+    [[ "$svc" =~ ^frps(-[0-9]+)?$ ]] || { echo 'نام سرویس FRPS نامعتبر است.' >&2; return 1; }
+    config="${CONFIG_DIR}/${svc}.toml"
+    [[ -f "$config" ]] || { echo 'فایل تنظیمات FRPS پیدا نشد.' >&2; return 1; }
+    tmp=$(mktemp -d) || return 1
+    cp -p "$PEERS_FILE" "$tmp/peers.json" && cp -p "$config" "$tmp/frps.toml" || { rm -rf "$tmp"; return 1; }
+    # Change only the root listener settings; preserve TLS, token and proxy rules.
+    python3 - "$PEERS_FILE" "$config" "$id" "$port" <<'PYCODE'
+import json,os,re,sys,tempfile
+from pathlib import Path
+registry,config=map(Path,sys.argv[1:3]); number=int(sys.argv[3]); port=int(sys.argv[4])
+data=json.loads(registry.read_text()); record=next(p for p in data['peers'] if p['id']==number)
+text=config.read_text(); root,sep,tail=text.partition('[[proxies]]')
+values={'bindPort':port,'kcpBindPort':port,'quicBindPort':port-1 if port==65535 else port+1}
+for key,value in values.items():
+    pattern=r'^\s*'+key+r'\s*=.*$'
+    if re.search(pattern,root,re.M): root=re.sub(pattern,key+' = '+str(value),root,flags=re.M)
+    else: root=key+' = '+str(value)+'\n'+root
+record['frp_port']=port
+for path,content in ((config,root+sep+tail),(registry,json.dumps(data,ensure_ascii=False,indent=2)+'\n')):
+    fd,tmp=tempfile.mkstemp(dir=path.parent,prefix='.control-port-')
+    try:
+        os.fchmod(fd,0o600)
+        with os.fdopen(fd,'w') as f:f.write(content)
+        os.replace(tmp,path)
+    finally:
+        if os.path.exists(tmp):os.unlink(tmp)
+PYCODE
+    [[ $? == 0 ]] || failure=1
+    local quic=$((port == 65535 ? port-1 : port+1))
+    if (( ! failure )) && command -v ufw >/dev/null && ufw status 2>/dev/null | grep -q 'Status: active'; then
+        ufw allow "$port/tcp" && ufw allow "$port/udp" && ufw allow "$quic/udp" || failure=1
+    fi
+    if (( ! failure )); then
+        systemctl restart "$svc" && systemctl is-active --quiet "$svc" || failure=1
+    fi
+    if (( failure )); then
+        cp -p "$tmp/peers.json" "$PEERS_FILE" && cp -p "$tmp/frps.toml" "$config" || {
+            echo "بازیابی فایل‌ها ناموفق بود؛ پشتیبان: $tmp" >&2; return 1;
+        }
+        systemctl restart "$svc" || { echo "تنظیمات قبلی بازیابی شد ولی سرویس راه‌اندازی نشد؛ پشتیبان: $tmp" >&2; return 1; }
+        rm -rf "$tmp"
+        echo 'تغییر پورت کنترل ناموفق بود؛ تنظیمات قبلی بازیابی شد.' >&2
+        return 1
+    fi
+    rm -rf "$tmp"
+    echo "پورت کنترل این تونل به $port تغییر کرد."
+    echo 'اتصال خارج تا اعمال کد جدید قطع می‌شود؛ فرمان زیر را روی سرور خارج همین تونل اجرا کنید:'
+    local output bundle
+    output=$(peer_token "$id") || return 1
+    bundle=$(sed -n 's/^BUNDLE://p' <<< "$output")
+    [[ -n "$bundle" ]] || return 1
+    printf 'NavaTunnel setup-foreign --bundle %q --force\n' "$bundle"
+}
+
 menu_add_peer() {
     ui_clear
     menu_import_existing || return 1
@@ -3723,7 +3862,8 @@ menu_add_peer() {
     LOSS=$(menu_loss_prompt) || return 0
     pair=$(menu_gre_pair) || return 1
     read -r LGRE PGRE <<< "$pair"
-    CPORT=$(gen_random_port); TOKEN=$(gen_token32)
+    CPORT=$(menu_control_port_prompt 0 "$PPORTS") || return 0
+    TOKEN=$(gen_token32)
     echo "پورت کنترل: $CPORT | آدرس داخلی: $LGRE / $PGRE (خودکار)"
     cli_add_peer --name "$NAME" --local-pub "$LOCAL_IRAN" --remote-pub "$IP_FOREIGN" \
         --frp-port "$CPORT" --token "$TOKEN" --local-gre "$LGRE" --peer-gre "$PGRE" --ports "$PPORTS" --loss-recovery "$LOSS" || return 1
@@ -3891,6 +4031,7 @@ menu_edit_peer() {
         [[ -n "$rec" ]] || return 0
         name=$(python3 -c 'import json,sys; p=json.load(sys.stdin); print(p.get("name",""),"|",p.get("remote_pub",""),"| پورت‌ها:",",".join(map(str,p.get("ports",[]))))' <<< "$rec")
         echo "تونل: $name"
+        echo "پورت کنترل FRP: $(python3 -c 'import json,sys; print(json.load(sys.stdin).get("frp_port","نامشخص"))' <<< "$rec")"
         echo "IP ذخیره‌شده ایران: $(python3 -c 'import json,sys; print(json.load(sys.stdin).get("local_pub",""))' <<< "$rec")"
         settings=$(peer_connection_settings "$id") || return 1
         IFS=$'\t' read -r protocol loss <<< "$settings"
@@ -3918,6 +4059,7 @@ menu_edit_peer() {
         echo '9) فعال‌سازی یا غیرفعال‌سازی جبران افت بسته'
         echo '10) انتخاب پروتکل FRP'
         echo '11) تغییر دائمی MTU همین تونل'
+        echo '12) تغییر پورت کنترل FRP همین تونل'
         echo '0) بازگشت'
         read -r -p 'انتخاب: ' option || return 0
         case "$option" in
@@ -3962,13 +4104,17 @@ menu_edit_peer() {
                 if systemctl restart "${iface}.service" && systemctl restart "${service}.service"; then echo 'تونل ری‌استارت شد.'; else echo 'ری‌استارت ناموفق بود؛ وضعیت سرویس را بررسی کنید.'; fi ;;
             7) menu_tunnel_traffic "$iface" ;;
             11) menu_mtu "$iface" ;;
+            12)
+                echo 'تغییر پورت کنترل اتصال خارج را قطع می‌کند؛ پس از تغییر، کد جدید را روی خارج اعمال کنید.'
+                value=$(menu_control_port_prompt "$id") || continue
+                cli_peer_control_port --id "$id" --port "$value" ;;
             10) value=$(menu_protocol_prompt "$protocol") || continue; cli_peer_protocol --id "$id" --protocol "$value" ;;
             9) menu_loss_recovery "$id" ;;
             8) cli_remove_peer --id "$id"; [[ -n "$(peer_get "$id")" ]] || return 0 ;;
             0) return 0 ;;
             *) echo 'گزینه نامعتبر است.' ;;
         esac
-        case "$option" in 1|2|3|4|6|10|11) pause_prompt ;; 5|7|8|9) ;; *) pause_prompt ;; esac
+        case "$option" in 1|2|3|4|6|10|11|12) pause_prompt ;; 5|7|8|9) ;; *) pause_prompt ;; esac
     done
 }
 
@@ -6874,6 +7020,7 @@ usage_cli() {
   NavaTunnel remove-peer --id N [--force] | edit-peer --id N [--name L] [--remote-pub IP] [--carrier C] [--ports "..."] | edit-peer-ports --id N --ports "443, 2083" | peer-list | peer-token --id N
   NavaTunnel iran-ip --ip IP                       # تغییر آدرس عمومی ایران برای همه تونل‌ها
   NavaTunnel mtu --interface gre-tunnel --value 1300
+  NavaTunnel peer-control-port --id N --port N|auto
   NavaTunnel peer-protocol --id N --protocol tcp|kcp|quic|websocket|wss
   NavaTunnel loss-recovery --id N --mode on|off  # ذخیره انتخاب جبران افت بسته؛ کد جدید را روی خارج اعمال کنید
   NavaTunnel logs | restart   # (با bash NavaTunnel.sh هم اجرا می‌شود)
@@ -7081,6 +7228,7 @@ if [[ $# -gt 0 ]]; then
         setup-foreign) shift; cli_setup_foreign "$@" ;;
         mtu) shift; cli_mtu "$@" ;;
         mtu-apply) shift; tunnel_mtu_apply "$@" ;;
+        peer-control-port) shift; cli_peer_control_port "$@" ;;
         peer-protocol) shift; cli_peer_protocol "$@" ;;
         loss-recovery) shift; cli_loss_recovery "$@" ;;
         add-peer) shift; cli_add_peer "$@" ;;
