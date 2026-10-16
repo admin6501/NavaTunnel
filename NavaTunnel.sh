@@ -4875,6 +4875,48 @@ doctor_stop_server() {
     echo -e "${GREEN}[✔️] service iperf3 it stopped.${NC}"
 }
 
+# Resolve real peer addresses; never probe the legacy example subnet by default.
+doctor_peer_targets() {
+    local routes
+    routes=$(ip -j -4 route show dev "$TUNNEL_NAME" 2>/dev/null) || routes='[]'
+    DOCTOR_ROUTES="$routes" python3 - "$PEERS_FILE" "$CONFIG_DIR" /etc/systemd/system "$TUNNEL_NAME" <<'PYCODE'
+import ipaddress,json,os,re,sys
+from pathlib import Path
+registry=Path(sys.argv[1]);config=Path(sys.argv[2]);units=Path(sys.argv[3]);default=sys.argv[4]
+seen=set()
+def emit(iface,peer,service):
+    if not re.fullmatch(r'gre-(?:tunnel|t[0-9]+)',iface):return
+    if not re.fullmatch(r'frp[sc](?:-[0-9]+)?',service):return
+    try:peer=str(ipaddress.IPv4Address(peer))
+    except (ValueError,TypeError):return
+    if iface in seen:return
+    seen.add(iface);print(iface+'\t'+peer+'\t'+service)
+try:
+    for p in json.loads(registry.read_text()).get('peers',[]):
+        emit(p.get('gre_if',''),p.get('peer_gre'),p.get('frps_svc','frps'))
+except (OSError,ValueError,TypeError):pass
+# A foreign client explicitly records its Iran GRE address.
+try:
+    text=(config/'frpc.toml').read_text()
+    match=re.search(r'^\s*serverAddr\s*=\s*[\"\x27]([0-9.]+)[\"\x27]',text,re.M)
+    if match:emit(default,match[1],'frpc')
+except OSError:pass
+# Existing single-tunnel installs may have no peer registry yet.
+if default not in seen:
+    try:
+        text=(units/(default+'.service')).read_text()
+        peers=re.findall(r'\broute\s+(?:replace|add)\s+(\d+\.\d+\.\d+\.\d+)/32\s+dev\s+'+re.escape(default)+r'\b',text)
+        if len(set(peers))==1:emit(default,peers[0],'frps')
+    except OSError:pass
+if default not in seen:
+    try:
+        routes=json.loads(os.environ['DOCTOR_ROUTES'])
+        peers=[r['dst'][:-3] for r in routes if r.get('dst','').endswith('/32') and r.get('dev',default)==default and r.get('type','unicast')=='unicast']
+        if len(set(peers))==1:emit(default,peers[0],'frps')
+    except (ValueError,KeyError,TypeError):pass
+PYCODE
+}
+
 doctor_health_check() {
     echo -e "\n${CYAN}=============================================================="
     echo "             Checking the health of the system and tunnel NavaTunnel"
@@ -4914,16 +4956,16 @@ doctor_health_check() {
 
     # 4. GRE Kernel Modules
     if lsmod 2>/dev/null | grep -q "ip_gre" || modprobe ip_gre 2>/dev/null; then
-        report_item "Module GRE Cornell" "PASS" "loaded"
+        report_item "GRE kernel module" "PASS" "loaded"
     else
-        report_item "Module GRE Cornell" "FAIL" "Module ip_gre Not available or loadable"
+        report_item "GRE kernel module" "FAIL" "Module ip_gre Not available or loadable"
     fi
 
     # 5. FOU Kernel Module
     if lsmod 2>/dev/null | grep -q "fou" || modprobe fou 2>/dev/null; then
-        report_item "Module FOU Cornell" "PASS" "loaded"
+        report_item "FOU kernel module" "PASS" "loaded"
     else
-        report_item "Module FOU Cornell" "WARN" "Module FOU not available; use of GRE Direct"
+        report_item "FOU kernel module" "WARN" "Module FOU not available; use of GRE Direct"
     fi
 
     # 6. Interface GRE Status
@@ -4939,30 +4981,29 @@ doctor_health_check() {
         report_item "Interface GRE (${TUNNEL_NAME})" "WARN" "Interface not found"
     fi
 
-    # 7. GRE Peer Ping Connectivity
-    local PEER_PING_TARGET=""
-    if [[ -f /etc/frp/frpc.toml ]]; then
-        PEER_PING_TARGET=$(awk -F'=' '/serverAddr/{gsub(/[ "]/,"",$2); print $2}' /etc/frp/frpc.toml 2>/dev/null)
-    elif [[ -f /etc/frp/frps.toml ]]; then
-        PEER_PING_TARGET="$FOREIGN_GRE_IP"
-    fi
-    if [[ -n "$PEER_PING_TARGET" ]]; then
-        local P_OUT
-        if P_OUT=$(ping -c 2 -W 2 "$PEER_PING_TARGET" 2>/dev/null); then
-            local RTT
+    # 7. Probe each configured peer through its own interface.
+    local PEER_PING_TARGET PEER_IF PEER_SERVICE P_OUT RTT peer_count=0
+    while IFS=$'\t' read -r PEER_IF PEER_PING_TARGET PEER_SERVICE; do
+        [[ -n "$PEER_PING_TARGET" ]] || continue
+        peer_count=$((peer_count+1))
+        if P_OUT=$(ping -I "$PEER_IF" -c 2 -W 2 "$PEER_PING_TARGET" 2>/dev/null); then
             RTT=$(echo "$P_OUT" | awk -F'/' '/rtt/ {print $5}')
-            report_item "Access to GRE Opposite" "PASS" "accessible (${RTT:-<50} ms)"
+            report_item "GRE peer ($PEER_IF)" "PASS" "$PEER_PING_TARGET reachable (${RTT:-unknown} ms)"
         else
-            # ICMP may be filtered by ISP/DPI (common in Iran with GRE tunnels).
-            # If frpc is active, TCP through GRE is working — downgrade to WARN.
-            if systemctl is-active --quiet frpc 2>/dev/null; then
-                report_item "Access to GRE Opposite" "WARN" "Ping ICMP It is blocked, but the service TCP The tunnel is active"
+            # ICMP failure alone cannot establish that FRP traffic is broken.
+            report_item "GRE peer ($PEER_IF)" "WARN" "No ICMP reply from $PEER_PING_TARGET; this alone does not prove the tunnel is down"
+        fi
+        # Check additional peer services as well as the legacy services below.
+        if [[ "$PEER_SERVICE" != frps && "$PEER_SERVICE" != frpc ]]; then
+            if systemctl is-active --quiet "$PEER_SERVICE" 2>/dev/null; then
+                report_item "FRP ($PEER_SERVICE)" "PASS" "Service is active; end-to-end forwarding is not verified by service state alone"
             else
-                report_item "Access to GRE Opposite" "FAIL" "Ping the opposite server failed ${PEER_PING_TARGET}"
+                report_item "FRP ($PEER_SERVICE)" "FAIL" "Service is not active"
             fi
         fi
-    else
-        report_item "Access to GRE Opposite" "WARN" "IP The opposite server is not set yet"
+    done < <(doctor_peer_targets)
+    if ((peer_count == 0)); then
+        report_item "GRE peer connectivity" "WARN" "No configured peer address found; no default address was probed"
     fi
 
     # 8. FRPS Service
@@ -4979,7 +5020,7 @@ doctor_health_check() {
     # 9. FRPC Service
     if [[ -f /etc/systemd/system/frpc.service ]]; then
         if systemctl is-active --quiet frpc 2>/dev/null; then
-            report_item "the client FRP (frpc)" "PASS" "active; The reverse connection is established"
+            report_item "the client FRP (frpc)" "PASS" "Service is active; this does not verify end-to-end forwarding"
         else
             report_item "the client FRP (frpc)" "FAIL" "The service is installed but not active"
         fi
