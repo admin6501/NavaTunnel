@@ -1074,8 +1074,8 @@ prompt_token() { # $1=varname $2=label $3=default (empty accepts default)
     while true; do
         read -r -p "$__label [Enter For the default value: $__def]: " __in || return 1
         __in="${__in:-$__def}"
-        if [[ "$__in" == *"_"* ]]; then
-            echo -e "${RED}[!] The token must not be underlined (_) have; The template breaks the connection code.${NC}"
+        if [[ ! "$__in" =~ ^[A-Za-z0-9-]{8,128}$ ]]; then
+            echo -e "${RED}[!] Use 8-128 ASCII letters, digits or hyphens; underscores are not supported by connection codes.${NC}"
         else
             printf -v "$__var" '%s' "$__in"
             return 0
@@ -3972,7 +3972,7 @@ menu_add_peer() {
     pair=$(menu_gre_pair) || return 1
     read -r LGRE PGRE <<< "$pair"
     CPORT=$(menu_control_port_prompt 0 "$PPORTS") || return 0
-    TOKEN=$(gen_token32)
+    prompt_token TOKEN "Connection token (Enter: auto-generate)" "$(gen_token32)" || return 0
     echo "Control port: $CPORT | Internal address: $LGRE / $PGRE (Auto)"
     cli_add_peer --name "$NAME" --local-pub "$LOCAL_IRAN" --remote-pub "$IP_FOREIGN" \
         --frp-port "$CPORT" --token "$TOKEN" --local-gre "$LGRE" --peer-gre "$PGRE" --ports "$PPORTS" --loss-recovery "$LOSS" || return 1
@@ -4234,6 +4234,190 @@ PYCODE
     fi
 }
 
+# Explicit token access only: tokens never appear in tunnel lists or status cards.
+cli_connection_token() {
+    local role='' id='' value='' change=0 rec svc iface config
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --foreign) [[ -z "$role" ]] || return 1; role=foreign; shift ;;
+            --id) [[ $# -ge 2 && -z "$role" ]] || return 1; role=iran; id=$2; shift 2 ;;
+            --token) [[ $# -ge 2 ]] || return 1; value=$2; change=1; shift 2 ;;
+            *) echo 'Usage: NavaTunnel connection-token --id N|--foreign [--token TOKEN]' >&2; return 1 ;;
+        esac
+    done
+    case "$role" in
+        iran)
+            [[ "$id" =~ ^[1-9][0-9]*$ ]] || return 1
+            rec=$(peer_get "$id") || return 1
+            [[ -n "$rec" ]] || { echo 'Tunnel not found.' >&2; return 1; }
+            svc=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["frps_svc"])' <<< "$rec") || return 1
+            iface=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["gre_if"])' <<< "$rec") || return 1
+            [[ "$svc" =~ ^frps(-[0-9]+)?$ && "$iface" =~ ^gre-(tunnel|t[0-9]+)$ ]] || return 1 ;;
+        foreign) svc=frpc; iface=$TUNNEL_NAME ;;
+        *) echo 'Select --id N for Iran or --foreign for the foreign server.' >&2; return 1 ;;
+    esac
+    config="${CONFIG_DIR}/${svc}.toml"
+    TOKEN_VALUE="$value" python3 - "$config" "$PEERS_FILE" "$role" "$id" "$change" "$svc" "${NAVATUNNEL_STATE_DIR}/stopped/${iface}" <<'PYCODE'
+import json,os,re,subprocess,sys,tempfile
+from pathlib import Path
+config,registry=map(Path,sys.argv[1:3]); role=sys.argv[3]; number=sys.argv[4]
+change=sys.argv[5]=='1'; service=sys.argv[6]; marker=Path(sys.argv[7])
+originals={};touched=[];active=False
+
+def command(*args):
+    return subprocess.run(args,capture_output=True,text=True,timeout=30)
+
+def atomic(path,content):
+    fd,tmp=tempfile.mkstemp(dir=path.parent,prefix='.connection-token-')
+    try:
+        os.fchmod(fd,0o600)
+        with os.fdopen(fd,'wb') as f:f.write(content)
+        os.replace(tmp,path)
+    finally:
+        if os.path.exists(tmp):os.unlink(tmp)
+
+try:
+    text=config.read_text()
+    dotted=r'(?m)^[ \t]*auth\.token[ \t]*=[ \t]*"([^"\n]*)"[^\n]*$'
+    match=re.search(dotted,text)
+    section=None
+    if not match:
+        section=re.search(r'(?ms)^\[auth\][ \t]*\n(.*?)(?=^\[|\Z)',text)
+        if section:match=re.search(r'(?m)^[ \t]*token[ \t]*=[ \t]*"([^"\n]*)"[^\n]*$',section[1])
+    if not match:raise ValueError('A supported auth.token setting was not found.')
+    current=match[1]
+    if not change:
+        print('Connection token: '+current)
+        print('This is a secret. Do not publish it.')
+        sys.exit(0)
+    value=os.environ['TOKEN_VALUE']
+    if not re.fullmatch(r'[A-Za-z0-9-]{8,128}',value):
+        raise ValueError('Use 8-128 ASCII letters, digits or hyphens; underscores are not supported by connection codes.')
+    if value==current:
+        print('Token is unchanged.');sys.exit(0)
+    replacement=('token' if section else 'auth.token')+' = '+json.dumps(value)
+    if section:
+        body=section[1][:match.start()]+replacement+section[1][match.end():]
+        updated=text[:section.start(1)]+body+text[section.end(1):]
+    else:updated=text[:match.start()]+replacement+text[match.end():]
+    originals[config]=config.read_bytes()
+    updates={config:updated.encode()}
+    if role=='iran':
+        data=json.loads(registry.read_text())
+        record=next((p for p in data['peers'] if p['id']==int(number)),None)
+        if record is None:raise ValueError('Tunnel not found.')
+        record['token']=value
+        originals[registry]=registry.read_bytes()
+        updates[registry]=(json.dumps(data,ensure_ascii=False,indent=2)+'\n').encode()
+    active=not marker.exists() and command('systemctl','is-active','--quiet',service).returncode==0
+    for path,content in updates.items():atomic(path,content);touched.append(path)
+    if active:
+        if command('systemctl','restart',service).returncode or command('systemctl','is-active','--quiet',service).returncode:
+            raise ValueError('Service restart failed.')
+    print('Token saved'+(' and applied.' if active else '; the stopped service remains stopped.'))
+    if role=='iran':print('Get the new connection code and apply it on the matching foreign server. Both ends must use the same token.')
+    else:print('The token must match the selected tunnel on the Iran server.')
+except (OSError,ValueError,KeyError,subprocess.TimeoutExpired) as error:
+    failed=[]
+    for path in reversed(touched):
+        try:atomic(path,originals[path])
+        except OSError:failed.append(str(path))
+    if touched and active:
+        try:
+            if command('systemctl','restart',service).returncode:failed.append(service)
+        except (OSError,subprocess.TimeoutExpired):failed.append(service)
+    print('Token operation failed: '+str(error),file=sys.stderr)
+    if touched:print('Previous settings restored.' if not failed else 'Rollback needs attention: '+', '.join(failed),file=sys.stderr)
+    sys.exit(1)
+PYCODE
+}
+
+menu_connection_token() {
+    local role=$1 id=${2:-} option value
+    local -a selection=(--foreign)
+    [[ "$role" != iran ]] || selection=(--id "$id")
+    ui_clear
+    cli_connection_token "${selection[@]}" || return 1
+    echo '1) Enter a new token manually'
+    echo '0) Back'
+    read -r -p 'Select [Enter: Back]: ' option || return 0
+    case "$option" in
+        1)
+            echo 'Changing the token interrupts authentication until both ends match.'
+            read -r -s -p 'New token (8-128 letters/digits/hyphens; Enter: Cancel): ' value || return 0
+            echo
+            [[ -n "$value" ]] || return 0
+            cli_connection_token "${selection[@]}" --token "$value"
+            pause_prompt ;;
+        0|'') ;;
+        *) echo 'Invalid option.'; pause_prompt ;;
+    esac
+}
+
+# Change only the outer Iran endpoint; preserve inner IPs, FRP settings and counters.
+cli_foreign_iran_ip() {
+    [[ $# -eq 2 && "$1" == --ip ]] || { echo 'Usage: NavaTunnel foreign-iran-ip --ip IP' >&2; return 1; }
+    is_valid_ip "$2" || { echo 'Invalid Iran public IP.' >&2; return 1; }
+    [[ -f "${CONFIG_DIR}/frpc.toml" ]] || { echo 'No foreign FRP client is configured on this server.' >&2; return 1; }
+    python3 - "/etc/systemd/system/${TUNNEL_NAME}.service" "$2" "${NAVATUNNEL_STATE_DIR}/stopped/${TUNNEL_NAME}" <<'PYCODE'
+import ipaddress,os,re,subprocess,sys,tempfile
+from pathlib import Path
+unit=Path(sys.argv[1]);new=str(ipaddress.IPv4Address(sys.argv[2]));marker=Path(sys.argv[3])
+old=None;touched=False;active=[]
+
+def command(*args):return subprocess.run(args,capture_output=True,text=True,timeout=30)
+def atomic(content):
+    fd,tmp=tempfile.mkstemp(dir=unit.parent,prefix='.foreign-iran-ip-')
+    try:
+        os.fchmod(fd,0o600)
+        with os.fdopen(fd,'wb') as f:f.write(content)
+        os.replace(tmp,unit)
+    finally:
+        if os.path.exists(tmp):os.unlink(tmp)
+try:
+    old=unit.read_bytes();text=old.decode()
+    pattern=r'\bremote\s+(\d+\.\d+\.\d+\.\d+)\b'
+    matches=re.findall(pattern,text)
+    if not matches or len(set(matches))!=1:raise ValueError('Cannot identify a unique Iran public IP in the GRE service.')
+    if matches[0]==new:print('Iran IP is unchanged.');sys.exit(0)
+    if not marker.exists():
+        active=[service for service in (unit.name,'frpc') if command('systemctl','is-active','--quiet',service).returncode==0]
+    atomic(re.sub(pattern,'remote '+new,text).encode());touched=True
+    if command('systemctl','daemon-reload').returncode:raise ValueError('Systemd reload failed.')
+    for service in active:
+        if command('systemctl','restart',service).returncode or command('systemctl','is-active','--quiet',service).returncode:
+            raise ValueError('Service restart failed.')
+    print('Iran public IP saved: '+new)
+    print('Inner GRE addresses, FRP control port, token and traffic counters were preserved.')
+    print('The matching Iran server must already have this tunnel configured.')
+except (OSError,ValueError,subprocess.TimeoutExpired) as error:
+    failures=[]
+    if touched:
+        try:
+            atomic(old)
+            if command('systemctl','daemon-reload').returncode:failures.append('daemon-reload')
+            for service in active:
+                if command('systemctl','restart',service).returncode:failures.append(service)
+        except (OSError,subprocess.TimeoutExpired):failures.append('restore')
+    print('Iran IP change failed: '+str(error),file=sys.stderr)
+    if touched:print('Previous settings restored.' if not failures else 'Rollback needs attention: '+', '.join(failures),file=sys.stderr)
+    sys.exit(1)
+PYCODE
+}
+
+menu_foreign_iran_ip() {
+    local value confirm
+    ui_clear
+    echo 'Change the Iran public IP for this foreign tunnel.'
+    echo 'Use the same GRE addresses, control port and token on the matching Iran server.'
+    read -r -p 'New Iran public IP [Enter: Cancel]: ' value || return 0
+    [[ -n "$value" ]] || return 0
+    is_valid_ip "$value" || { echo 'Invalid Iran public IP.' >&2; return 1; }
+    read -r -p 'Apply this endpoint change? [y/N]: ' confirm || return 0
+    [[ "$confirm" == y || "$confirm" == Y ]] || return 0
+    cli_foreign_iran_ip --ip "$value"
+}
+
 menu_edit_peer() {
     local id option value rec name service iface bundle loss protocol settings
     id=$(menu_select_peer) || return 0
@@ -4278,6 +4462,7 @@ menu_edit_peer() {
         echo '12) Set persistent MTU for this tunnel'
         echo '13) Change FRP control port for this tunnel'
         echo '14) Delete this tunnel'
+        echo '15) View or change connection token'
         echo '0) Back'
         read -r -p 'Select: ' option || return 0
         case "$option" in
@@ -4330,11 +4515,12 @@ menu_edit_peer() {
                 cli_peer_control_port --id "$id" --port "$value" ;;
             11) value=$(menu_protocol_prompt "$protocol") || continue; cli_peer_protocol --id "$id" --protocol "$value" ;;
             10) menu_loss_recovery "$id" ;;
+            15) menu_connection_token iran "$id" ;;
             14) cli_remove_peer --id "$id"; [[ -n "$(peer_get "$id")" ]] || return 0 ;;
             0) return 0 ;;
             *) echo 'Invalid option.' ;;
         esac
-        case "$option" in 4|5|6|7|3|11|12|13|2|1) pause_prompt ;; 8|9|14|10) ;; *) pause_prompt ;; esac
+        case "$option" in 4|5|6|7|3|11|12|13|2|1) pause_prompt ;; 8|9|14|10|15) ;; *) pause_prompt ;; esac
     done
 }
 
@@ -6756,6 +6942,8 @@ menu_foreign_tunnel() {
         echo '5) Traffic usage and settings for this tunnel'
         echo '6) Change settings or protocol with connection code'
         echo '7) Set persistent MTU for this tunnel'
+        echo '8) View or change connection token'
+        echo '9) Change Iran server public IP'
         echo '0) Back'
         read -r -p 'Select: ' option || return 0
         case "$option" in
@@ -6767,12 +6955,14 @@ menu_foreign_tunnel() {
             5) menu_tunnel_traffic "$TUNNEL_NAME" ;;
             6) menu_connect_foreign ;;
             7) menu_mtu "$TUNNEL_NAME" ;;
+            8) menu_connection_token foreign ;;
+            9) menu_foreign_iran_ip ;;
             2) cli_tunnel_power stop --foreign ;;
             1) cli_tunnel_power start --foreign ;;
             0) return 0 ;;
             *) echo 'Invalid option.' ;;
         esac
-        case "$option" in 3|6|7|2|1) pause_prompt ;; 4|5) ;; *) pause_prompt ;; esac
+        case "$option" in 3|6|7|2|1|9) pause_prompt ;; 4|5|8) ;; *) pause_prompt ;; esac
     done
 }
 
@@ -7245,6 +7435,8 @@ Usage:
   NavaTunnel iran-ip --ip IP                       # Changing the public address of Iran for all tunnels
   NavaTunnel mtu --interface gre-tunnel --value 1300
   NavaTunnel tunnel-power start|stop --id N | --foreign
+  NavaTunnel connection-token --id N|--foreign [--token TOKEN]  # Displays a secret when --token is omitted
+  NavaTunnel foreign-iran-ip --ip IP
   NavaTunnel peer-control-port --id N --port N|auto
   NavaTunnel peer-protocol --id N --protocol tcp|kcp|quic|websocket|wss
   NavaTunnel loss-recovery --id N --mode on|off  # Save loss recovery selection; apply the new code on the foreign server
@@ -7452,6 +7644,8 @@ if [[ $# -gt 0 ]]; then
     case "$1" in
         menu) main_menu ;;
         setup-iran) shift; cli_setup_iran "$@" ;;
+        connection-token) shift; cli_connection_token "$@" ;;
+        foreign-iran-ip) shift; cli_foreign_iran_ip "$@" ;;
         setup-foreign) shift; cli_setup_foreign "$@" ;;
         mtu) shift; cli_mtu "$@" ;;
         mtu-apply) shift; tunnel_mtu_apply "$@" ;;

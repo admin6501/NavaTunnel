@@ -246,3 +246,20 @@ NavaTunnel chaff status
 NavaTunnel perf dpi off
 NavaTunnel perf chaff off
 ```
+
+## Connection tokens and the Iran endpoint on a foreign server
+
+In the selected Iran tunnel menu, **15) View or change connection token** displays that tunnel's token and optionally accepts a replacement. On the foreign server, use **8) View or change connection token**. Tokens are shown only when explicitly requested. A new tunnel on Iran also accepts a manual token; press Enter to generate one automatically. Manual tokens must contain 8–128 ASCII letters, digits or hyphens.
+
+Changing a token on one server does not update the other server. Both ends must match: after changing it on Iran, obtain the new connection code and apply it on the matching foreign server. Changing only the foreign token requires the same value on Iran. Active services restart briefly; manually stopped services remain stopped. Failed restarts restore the previous local settings.
+
+On the foreign tunnel menu, **9) Change Iran server public IP** updates the outer GRE endpoint while preserving inner GRE IPs, the FRP control port, token, proxy ports and traffic counters. The matching Iran server must already have that tunnel configured with the same settings. This is an endpoint edit, not automatic failover.
+
+```bash
+# These commands display a secret; do not paste their output publicly.
+NavaTunnel connection-token --id 1
+NavaTunnel connection-token --foreign
+NavaTunnel foreign-iran-ip --ip 203.0.113.10
+```
+
+Each foreign server continues to manage one foreign tunnel. Multi-Iran connections on one foreign server have not been added.

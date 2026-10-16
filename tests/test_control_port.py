@@ -83,7 +83,7 @@ return 0;
         self.assertEqual((self.state/'peers.json').read_bytes(),before)
 
     def test_creation_passes_manual_control_port_to_setup(self):
-        result=self.run_shell("menu_add_peer <<<$'new-name\\nn\\n7900'",self.stubs+'''
+        result=self.run_shell("menu_add_peer <<<$'new-name\\nn\\n7900\\n'",self.stubs+'''
 menu_import_existing() { return 0; }
 prompt_ip() { printf -v "$1" '%s' '203.0.113.1'; }
 prompt_ports() { printf -v "$1" '%s' '9443'; }
