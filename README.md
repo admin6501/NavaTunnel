@@ -263,3 +263,5 @@ NavaTunnel foreign-iran-ip --ip 203.0.113.10
 ```
 
 Each foreign server continues to manage one foreign tunnel. Multi-Iran connections on one foreign server have not been added.
+
+Restore automatically checks system dependencies and installs runnable FRP cores for the destination architecture before extracting configuration and starting services. Restored GRE and FRP units are enabled for boot and checked after restart. A core-installation or startup failure returns an error instead of reporting a successful restore. `backup restore --dry-run` only validates the archive and does not install cores or start services.

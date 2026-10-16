@@ -1207,15 +1207,19 @@ if not match: sys.exit(1)
 print(match)' "$asset_name" <<< "$metadata"
 }
 
+frp_binary_ready() {
+    [[ -x "$1" ]] && timeout 5 "$1" --version >/dev/null 2>&1
+}
+
 install_frp_binaries() {
     local ROLE="${1:-all}"
-    if [[ "$ROLE" == "server" && -x "${INSTALL_DIR}/frps" ]]; then
+    if [[ "$ROLE" == "server" ]] && frp_binary_ready "${INSTALL_DIR}/frps"; then
         return 0
     fi
-    if [[ "$ROLE" == "client" && -x "${INSTALL_DIR}/frpc" ]]; then
+    if [[ "$ROLE" == "client" ]] && frp_binary_ready "${INSTALL_DIR}/frpc"; then
         return 0
     fi
-    if [[ -x "${INSTALL_DIR}/frps" && -x "${INSTALL_DIR}/frpc" ]]; then
+    if frp_binary_ready "${INSTALL_DIR}/frps" && frp_binary_ready "${INSTALL_DIR}/frpc"; then
         return 0
     fi
     detect_arch
@@ -1241,18 +1245,27 @@ install_frp_binaries() {
     local FOUND_FRPS FOUND_FRPC
     FOUND_FRPS=$(find "$TMP_DIR" -type f -name "frps" 2>/dev/null | head -1)
     FOUND_FRPC=$(find "$TMP_DIR" -type f -name "frpc" 2>/dev/null | head -1)
-    if [[ -n "$FOUND_FRPS" ]]; then cp -f "$FOUND_FRPS" "$INSTALL_DIR/" 2>/dev/null; fi
-    if [[ -n "$FOUND_FRPC" ]]; then cp -f "$FOUND_FRPC" "$INSTALL_DIR/" 2>/dev/null; fi
+    local candidate
+    for candidate in "$FOUND_FRPS" "$FOUND_FRPC"; do
+        [[ -n "$candidate" ]] || continue
+        chmod +x "$candidate" && frp_binary_ready "$candidate" || {
+            echo 'Downloaded FRP binary cannot run on this server.' >&2
+            rm -rf "$TMP_DIR"; return 1;
+        }
+    done
+    mkdir -p "$INSTALL_DIR" || { rm -rf "$TMP_DIR"; return 1; }
+    if [[ -n "$FOUND_FRPS" ]]; then cp -f "$FOUND_FRPS" "$INSTALL_DIR/" || { rm -rf "$TMP_DIR"; return 1; }; fi
+    if [[ -n "$FOUND_FRPC" ]]; then cp -f "$FOUND_FRPC" "$INSTALL_DIR/" || { rm -rf "$TMP_DIR"; return 1; }; fi
     chmod +x "${INSTALL_DIR}/frps" "${INSTALL_DIR}/frpc" 2>/dev/null || true
 
     rm -rf "$TMP_DIR"
-    if [[ "$ROLE" == "server" && ! -x "${INSTALL_DIR}/frps" ]]; then
+    if [[ "$ROLE" == "server" ]] && ! frp_binary_ready "${INSTALL_DIR}/frps"; then
         echo -e "${RED}[!] executable file frps Not available or executable after installation.${NC}"
         return 1
-    elif [[ "$ROLE" == "client" && ! -x "${INSTALL_DIR}/frpc" ]]; then
+    elif [[ "$ROLE" == "client" ]] && ! frp_binary_ready "${INSTALL_DIR}/frpc"; then
         echo -e "${RED}[!] executable file frpc Not available or executable after installation.${NC}"
         return 1
-    elif [[ "$ROLE" == "all" && ( ! -x "${INSTALL_DIR}/frps" || ! -x "${INSTALL_DIR}/frpc" ) ]]; then
+    elif [[ "$ROLE" == "all" ]] && { ! frp_binary_ready "${INSTALL_DIR}/frps" || ! frp_binary_ready "${INSTALL_DIR}/frpc"; }; then
         echo -e "${RED}[!] Executable files FRP Not available or executable after installation.${NC}"
         return 1
     fi
@@ -6047,6 +6060,30 @@ backup_now() {
     return 0
 }
 
+# Re-enable restored units on a new server and propagate startup failures.
+restore_start_tunnels() {
+    local unit name iface failed=0
+    for unit in /etc/systemd/system/gre-t*.service /etc/systemd/system/frps*.service /etc/systemd/system/frpc.service; do
+        [[ -f "$unit" ]] || continue
+        name=$(basename "$unit")
+        case "$name" in
+            gre-t*.service) iface=${name%.service} ;;
+            frps-*.service) iface="gre-t${name#frps-}"; iface=${iface%.service} ;;
+            *) iface=$TUNNEL_NAME ;;
+        esac
+        if [[ -f "${NAVATUNNEL_STATE_DIR}/stopped/${iface}" ]]; then
+            echo "Preserving manual stop: $name"
+            continue
+        fi
+        systemctl reset-failed "$name" >/dev/null 2>&1 || true
+        if ! systemctl enable "$name" || ! systemctl restart "$name" || ! systemctl is-active --quiet "$name"; then
+            echo "Failed to start restored service: $name" >&2
+            failed=1
+        fi
+    done
+    return "$failed"
+}
+
 backup_restore() {
     local FILE=""
     local DRY_RUN=0
@@ -6096,6 +6133,12 @@ backup_restore() {
         return 0
     fi
 
+    # Backups contain configuration and units, not architecture-specific FRP binaries.
+    # Prepare cores before extracting files or attempting any service restart.
+    echo 'Checking dependencies and installing FRP cores required for restore...'
+    ensure_dependencies_smart || return 1
+    install_frp_binaries all || { echo 'Restore stopped: FRP cores could not be installed or executed.' >&2; return 1; }
+
     echo -e "${CYAN}[*] Restoring settings and services...${NC}"
     tar -xzf "$TMP_D/backup.tar.gz" -C / || return 1
     chmod 600 /etc/gre-panel/*.json 2>/dev/null || true
@@ -6104,10 +6147,10 @@ backup_restore() {
 
     echo -e "${CYAN}[*] Reloading settings systemd...${NC}"
     chmod 600 "${CONFIG_DIR}"/*.toml 2>/dev/null || true
-    systemctl daemon-reload
+    systemctl daemon-reload || return 1
 
     echo -e "${CYAN}[*] Restarting tunnel services...${NC}"
-    restart_all
+    restore_start_tunnels || { echo "Files restored, but some tunnel services failed to start. Check their journals." >&2; return 1; }
 
     echo -e "${GREEN}[✔️] The restore was successful.${NC}"
     return 0
