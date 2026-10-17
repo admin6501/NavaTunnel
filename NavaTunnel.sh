@@ -6150,8 +6150,11 @@ backup_restore() {
     systemctl daemon-reload || return 1
 
     echo -e "${CYAN}[*] Restarting tunnel services...${NC}"
-    restore_start_tunnels || { echo "Files restored, but some tunnel services failed to start. Check their journals." >&2; return 1; }
+    local tunnel_start_failed=0
+    restore_start_tunnels || tunnel_start_failed=1
 
+    repair_traffic_monitor || { echo 'Tunnel files restored, but traffic monitoring could not be initialized.' >&2; return 1; }
+    ((tunnel_start_failed == 0)) || { echo 'Files restored, but some tunnel services failed to start. Check their journals.' >&2; return 1; }
     echo -e "${GREEN}[✔️] The restore was successful.${NC}"
     return 0
 }
@@ -6814,6 +6817,9 @@ except Exception:
             systemctl enable --now navatunnel-watchdog.timer >/dev/null 2>&1 || true
         fi
     fi
+    if [[ -s "${NAVATUNNEL_STATE_DIR}/traffic.json" ]] && python3 -c 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1])) else 1)' "${NAVATUNNEL_STATE_DIR}/traffic.json"; then
+        repair_traffic_monitor || { echo 'Scripts updated, but traffic monitoring repair failed. Run NavaTunnel traffic repair after resolving the error.' >&2; return 1; }
+    fi
     echo -e "${GREEN}[✔️] Update done; Run the script again for the new menu.${NC}"
 }
 
@@ -7324,7 +7330,21 @@ EOF
     systemctl enable NavaTunnel-traffic.service || return 1
 }
 
+# Reconcile persistent counters and start sampling without resetting usage or limits.
+repair_traffic_monitor() {
+    ensure_traffic_helper || return 1
+    install_traffic_monitor || return 1
+    bash /usr/local/bin/NavaTunnel-traffic.sh discover >/dev/null || return 1
+    bash /usr/local/bin/NavaTunnel-traffic.sh tick || return 1
+    systemctl reset-failed NavaTunnel-traffic.service >/dev/null 2>&1 || true
+    systemctl enable NavaTunnel-traffic.service || return 1
+    systemctl enable --now NavaTunnel-traffic.timer || return 1
+    systemctl is-active --quiet NavaTunnel-traffic.timer || return 1
+    echo 'Traffic monitoring is active; saved usage, limits and accounting modes were preserved.'
+}
+
 cli_traffic() {
+    if [[ "${1:-}" == repair ]]; then repair_traffic_monitor; return $?; fi
     ensure_traffic_helper || return 1
     bash /usr/local/bin/NavaTunnel-traffic.sh "$@" || return $?
     if [[ "${1:-}" == "clear" ]]; then
@@ -7504,7 +7524,7 @@ usage_cli() {
 Usage:
   NavaTunnel                                    # Interactive management menu
   NavaTunnel menu                               # Admin menu with all options
-  NavaTunnel traffic discover | list
+  NavaTunnel traffic discover | list | repair
   NavaTunnel traffic add ID --interface gre-tunnel   # or --peer for a dedicated peer IP
   NavaTunnel traffic limit ID 100GB --mode download|upload|both
   NavaTunnel traffic status ID | reset ID | remove ID

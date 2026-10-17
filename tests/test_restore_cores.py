@@ -13,6 +13,7 @@ tar() { if [[ "$1" == -ztf ]]; then echo etc/frp/frps.toml; else echo extract >>
 ensure_dependencies_smart() { echo deps >> "$EVENTS"; }
 install_frp_binaries() { echo "cores:$1" >> "$EVENTS"; }
 restore_start_tunnels() { echo start >> "$EVENTS"; }
+repair_traffic_monitor() { echo traffic >> "$EVENTS"; }
 '''
         (self.state/'backup.key').touch()
         self.extra='export EVENTS="'+str(self.events)+'"\n'+self.stubs
@@ -23,7 +24,7 @@ restore_start_tunnels() { echo start >> "$EVENTS"; }
     def test_real_restore_installs_cores_before_extract_and_restart(self):
         result=self.restore()
         self.assertEqual(result.returncode,0,result.stderr)
-        self.assertEqual(self.events.read_text().splitlines(),['deps','cores:all','extract','start'])
+        self.assertEqual(self.events.read_text().splitlines(),['deps','cores:all','extract','start','traffic'])
         self.assertIn('restore was successful',result.stdout)
 
     def test_core_failure_prevents_extract_restart_and_false_success(self):
@@ -40,6 +41,12 @@ restore_start_tunnels() { echo start >> "$EVENTS"; }
         result=self.restore(extra='\nrestore_start_tunnels() { return 1; }')
         self.assertNotEqual(result.returncode,0)
         self.assertIn('some tunnel services failed',result.stderr)
+        self.assertNotIn('restore was successful',result.stdout)
+
+    def test_traffic_repair_failure_prevents_restore_success(self):
+        result=self.restore(extra='\nrepair_traffic_monitor() { return 1; }')
+        self.assertNotEqual(result.returncode,0)
+        self.assertIn('traffic monitoring could not be initialized',result.stderr)
         self.assertNotIn('restore was successful',result.stdout)
 
     def test_restored_units_enabled_and_started_gre_before_frp(self):
