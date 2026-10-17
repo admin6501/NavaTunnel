@@ -267,3 +267,19 @@ Each foreign server continues to manage one foreign tunnel. Multi-Iran connectio
 Restore automatically checks system dependencies and installs runnable FRP cores for the destination architecture before extracting configuration and starting services. Restored GRE and FRP units are enabled for boot and checked after restart. A core-installation or startup failure returns an error instead of reporting a successful restore. `backup restore --dry-run` only validates the archive and does not install cores or start services.
 
 After restore, traffic counters and firewall hooks are reconciled and the sampling timer is automatically enabled. Updates also repair monitoring when saved counters exist. To repair a server migrated with an older script, run `NavaTunnel traffic repair` after updating. Existing totals, quotas and accounting directions are retained; usage that was never counted cannot be reconstructed by this command. Repair failures are reported rather than silently treated as a successful restore.
+
+## Migrate to a replacement server over SSH
+
+Run the source server menu: **3) Status check and backup → 8) Migrate to another server over SSH**. Enter the destination IPv4, SSH port and username. Authentication uses the SSH agent, an optional private-key file, or the normal SSH password prompt; passwords are not stored. Use root or a user with passwordless sudo. SSH host verification remains enabled.
+
+The migration can create a fresh encrypted backup or use an existing backup with its matching original `/etc/gre-panel/backup.key`. It transfers the scripts, archive and key over SSH, installs NavaTunnel on the destination, installs required FRP cores and restores services and traffic monitoring. Restored local GRE bindings and the Iran registry use the destination IP before service startup; `--local-ip` supports a tunnel public IP different from the SSH address. MTU settings and manual-stop markers are included in new backups.
+
+```bash
+NavaTunnel migrate --host 45.144.17.77
+# Optional key authentication, alternate SSH port and existing backup:
+NavaTunnel migrate --host 45.144.17.77 --port 2222 --user root --identity /root/.ssh/id_ed25519 --backup /var/backups/navatunnel/backup.enc
+```
+
+Existing destination settings and its encryption key are privately copied to `/var/backups/navatunnel/pre-migration-*.tar.gz` before replacement. The transferred archive is retained there as `migrated-*.enc`; temporary transfer files are removed afterward. Migration errors are reported and the source remains running. Check the destination output before retrying a failed migration; previous destination settings are not automatically rolled back.
+
+Moving one server does not update the opposite servers over SSH. After moving Iran, apply the new connection commands on its foreign servers. A private `migration-*-foreign-commands.txt` file is generated on the destination; it contains connection tokens. After moving a foreign server, update its public IP on Iran. Do not retire the source until the new endpoints work. End-to-end connectivity is not implied by successful service startup.

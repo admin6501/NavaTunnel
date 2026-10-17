@@ -33,6 +33,13 @@ repair_traffic_monitor() { echo traffic >> "$EVENTS"; }
         self.assertNotIn('extract',self.events.read_text());self.assertNotIn('start',self.events.read_text())
         self.assertNotIn('restore was successful',result.stdout)
 
+    def test_restore_rebinds_local_ip_before_starting_services(self):
+        result=self.restore('--local-ip 45.144.17.77', '\nrestore_rebind_local_ip() { echo "rebind:$1" >> "$EVENTS"; }')
+        self.assertEqual(result.returncode,0,result.stderr)
+        events=self.events.read_text().splitlines()
+        self.assertLess(events.index('extract'),events.index('rebind:45.144.17.77'))
+        self.assertLess(events.index('rebind:45.144.17.77'),events.index('start'))
+
     def test_dry_run_does_not_install_cores_or_restart(self):
         result=self.restore('--dry-run')
         self.assertEqual(result.returncode,0,result.stderr);self.assertFalse(self.events.exists())

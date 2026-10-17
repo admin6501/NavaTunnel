@@ -6023,10 +6023,10 @@ backup_now() {
     local FILES=()
     local f
     for f in /etc/frp/*.toml /etc/gre-panel/peers.json /etc/gre-panel/watchdog.json \
-             /etc/gre-panel/perf.json /etc/gre-panel/traffic.json /etc/gre-panel/backup.key \
+             /etc/gre-panel/perf.json /etc/gre-panel/traffic.json /etc/gre-panel/mtu.json /etc/gre-panel/backup.key /etc/gre-panel/stopped \
              /etc/systemd/system/gre-*.service /etc/systemd/system/frps*.service \
              /etc/systemd/system/frpc*.service /etc/systemd/system/gre-chaff*.service; do
-        [[ -f "$f" ]] && FILES+=("$f")
+        [[ -f "$f" || -d "$f" ]] && FILES+=("$f")
     done
 
     if [[ ${#FILES[@]} -eq 0 ]]; then
@@ -6084,9 +6084,186 @@ restore_start_tunnels() {
     return "$failed"
 }
 
+# Rebind restored local GRE endpoints before starting services on a replacement host.
+restore_rebind_local_ip() {
+    local public=$1 routes
+    is_valid_ip "$public" || return 1
+    routes=$(ip -j -4 route get 1.1.1.1 2>/dev/null) || routes='[]'
+    RESTORE_ROUTES="$routes" python3 - "$PEERS_FILE" /etc/systemd/system "$public" <<'PYCODE'
+import ipaddress,json,os,re,sys,tempfile
+from pathlib import Path
+registry=Path(sys.argv[1]);units=Path(sys.argv[2]);public=str(ipaddress.IPv4Address(sys.argv[3]));local=public
+try:
+    routes=json.loads(os.environ['RESTORE_ROUTES'])
+    if routes:local=str(ipaddress.IPv4Address(routes[0].get('prefsrc') or routes[0].get('src') or public))
+except (ValueError,TypeError,KeyError):pass
+updates={}
+for path in units.glob('gre-t*.service'):
+    if not re.fullmatch(r'gre-(tunnel|t[0-9]+)\.service',path.name):continue
+    text=path.read_text();updates[path]=re.sub(r'\blocal\s+\d+\.\d+\.\d+\.\d+\b','local '+local,text)
+if registry.exists():
+    data=json.loads(registry.read_text())
+    for p in data.get('peers',[]):p['local_pub']=public
+    updates[registry]=json.dumps(data,indent=2)+'\n'
+for path,text in updates.items():
+    fd,tmp=tempfile.mkstemp(dir=path.parent,prefix='.restore-local-ip-')
+    try:
+        os.fchmod(fd,0o600)
+        with os.fdopen(fd,'w') as f:f.write(text)
+        os.replace(tmp,path)
+    finally:
+        if os.path.exists(tmp):os.unlink(tmp)
+print('Restored local endpoints rebound to '+public+' (local GRE binding: '+local+').')
+PYCODE
+}
+
+# Run in a subshell so credentials/session cleanup cannot alter the caller's traps.
+cli_migrate() (
+    local host='' user=root port=22 identity='' backup='' local_ip='' tmp='' remote='' root_prefix='' result
+    while [[ $# -gt 0 ]]; do
+        [[ $# -ge 2 ]] || { echo 'Missing migration option value.' >&2; return 1; }
+        case "$1" in
+            --host) host=$2;; --user) user=$2;; --port) port=$2;; --identity) identity=$2;;
+            --backup) backup=$2;; --local-ip) local_ip=$2;;
+            *) echo 'Usage: NavaTunnel migrate --host IP [--port 22] [--user root] [--identity FILE] [--backup FILE] [--local-ip IP]' >&2; return 1;;
+        esac
+        shift 2
+    done
+    is_valid_ip "$host" && is_valid_port "$port" || { echo 'Invalid SSH destination IPv4 or port.' >&2; return 1; }
+    [[ "$user" =~ ^[a-zA-Z_][a-zA-Z0-9_-]{0,31}$ ]] || { echo 'Invalid SSH username.' >&2; return 1; }
+    local_ip=${local_ip:-$host}
+    is_valid_ip "$local_ip" || { echo 'Invalid destination public IP.' >&2; return 1; }
+    [[ -z "$identity" || -f "$identity" ]] || { echo 'SSH identity file not found.' >&2; return 1; }
+    command -v ssh >/dev/null || { echo 'OpenSSH client is required (install openssh-client).' >&2; return 1; }
+    tmp=$(mktemp -d) || return 1
+    chmod 700 "$tmp" || return 1
+    local -a connection=(-p "$port" -o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o StrictHostKeyChecking=ask -o ControlMaster=auto -o ControlPersist=300 -o "ControlPath=$tmp/ssh")
+    [[ -z "$identity" ]] || connection+=(-i "$identity")
+    local destination="${user}@${host}"
+    cleanup_migration() {
+        if [[ "$remote" =~ ^/var/tmp/navatunnel-migrate\.[a-zA-Z0-9]+$ ]]; then
+            ssh "${connection[@]}" -o BatchMode=yes "$destination" "${root_prefix}rm -rf -- '$remote'" >/dev/null 2>&1 || true
+        fi
+        ssh "${connection[@]}" -o BatchMode=yes -O exit "$destination" >/dev/null 2>&1 || true
+        rm -rf "$tmp"
+    }
+    trap cleanup_migration EXIT
+    echo 'Checking SSH access. SSH may ask for the host fingerprint and login password.'
+    result=$(ssh "${connection[@]}" "$destination" 'if [ "$(id -u)" = 0 ]; then echo NAVATUNNEL_ROOT; elif command -v sudo >/dev/null && sudo -n true; then echo NAVATUNNEL_SUDO; else echo "Root or passwordless sudo is required." >&2; exit 1; fi') || return 1
+    case "$result" in
+        NAVATUNNEL_ROOT) root_prefix='' ;;
+        NAVATUNNEL_SUDO) root_prefix='sudo -n ' ;;
+        *) echo 'Unexpected SSH preflight response; migration was not started.' >&2; return 1 ;;
+    esac
+    echo 'Preparing encrypted backup and installation files...'
+    ensure_traffic_helper || return 1
+    if [[ -z "$backup" ]]; then
+        local outdir="$BACKUP_DIR/migration-$(date +%Y%m%d-%H%M%S)-${RANDOM}"
+        backup_now "$outdir" || return 1
+        local -a files=("$outdir"/navatunnel-backup-*.enc)
+        [[ ${#files[@]} == 1 && -f "${files[0]}" ]] || return 1
+        backup=${files[0]}
+    fi
+    [[ -f "$backup" && -f "${NAVATUNNEL_STATE_DIR}/backup.key" ]] || { echo 'Backup file or its original encryption key is missing.' >&2; return 1; }
+    openssl enc -d -aes-256-cbc -pbkdf2 -pass "file:${NAVATUNNEL_STATE_DIR}/backup.key" -in "$backup" -out "$tmp/verify.tar.gz" 2>/dev/null && tar -tzf "$tmp/verify.tar.gz" >/dev/null || {
+        echo 'Backup validation failed; destination was not modified.' >&2; return 1;
+    }
+    rm -f "$tmp/verify.tar.gz"
+    mkdir "$tmp/payload" || return 1
+    cp "${BASH_SOURCE[0]}" "$tmp/payload/NavaTunnel.sh" && cp /usr/local/bin/NavaTunnel-traffic.sh "$tmp/payload/NavaTunnel-traffic.sh" && cp "$backup" "$tmp/payload/backup.enc" && cp "${NAVATUNNEL_STATE_DIR}/backup.key" "$tmp/payload/backup.key" || return 1
+    chmod 600 "$tmp/payload/backup.key" "$tmp/payload/backup.enc"
+    bash -n "$tmp/payload/NavaTunnel.sh" && bash -n "$tmp/payload/NavaTunnel-traffic.sh" || return 1
+    cat > "$tmp/payload/run.sh" <<'REMOTE'
+#!/usr/bin/env bash
+set -euo pipefail
+stage=$1
+public_ip=$2
+[[ $EUID == 0 ]] || { echo 'Remote installer requires root.' >&2; exit 1; }
+umask 077
+command -v systemctl >/dev/null || { echo 'Destination must use systemd.' >&2; exit 1; }
+# Do not migrate a machine onto itself: replacing its key/config while making a backup is unsafe.
+if [[ -f /etc/machine-id && -f "$stage/source-machine-id" ]] && cmp -s /etc/machine-id "$stage/source-machine-id"; then
+    echo 'Source and destination are the same machine; migration stopped.' >&2; exit 1
+fi
+if ! command -v python3 >/dev/null || ! command -v curl >/dev/null || ! command -v openssl >/dev/null; then
+    if command -v apt-get >/dev/null; then
+        export DEBIAN_FRONTEND=noninteractive
+        apt-get update
+        apt-get install -y python3 curl openssl ca-certificates
+    elif command -v dnf >/dev/null; then
+        dnf install -y python3 curl openssl ca-certificates
+    elif command -v yum >/dev/null; then
+        yum install -y python3 curl openssl ca-certificates
+    else echo 'Install python3, curl and openssl on the destination first.' >&2; exit 1; fi
+fi
+mkdir -p /var/backups/navatunnel /usr/local/bin /etc/gre-panel
+stamp=$(date +%Y%m%d-%H%M%S)-$$
+# Keep the previous destination key and settings before installing the source key.
+previous=()
+for item in /etc/gre-panel /etc/frp /etc/systemd/system/gre-*.service /etc/systemd/system/frps*.service /etc/systemd/system/frpc*.service /usr/local/bin/NavaTunnel /usr/local/bin/NavaTunnel.sh /usr/local/bin/NavaTunnel-traffic.sh; do
+    [[ ! -e "$item" ]] || previous+=("${item#/}")
+done
+rollback="/var/backups/navatunnel/pre-migration-${stamp}.tar.gz"
+if ((${#previous[@]})); then tar -czf "$rollback" -C / "${previous[@]}"; chmod 600 "$rollback"; echo "Previous destination settings: $rollback"; fi
+install -m 755 "$stage/NavaTunnel.sh" /usr/local/bin/NavaTunnel.sh
+install -m 755 "$stage/NavaTunnel.sh" /usr/local/bin/NavaTunnel
+install -m 755 "$stage/NavaTunnel-traffic.sh" /usr/local/bin/NavaTunnel-traffic.sh
+ln -sf /usr/local/bin/NavaTunnel.sh /usr/local/bin/gre.sh
+install -m 600 "$stage/backup.key" /etc/gre-panel/backup.key
+archive="/var/backups/navatunnel/migrated-${stamp}.enc"
+install -m 600 "$stage/backup.enc" "$archive"
+# The restore path installs FRP cores, rebinds local IPs and repairs traffic monitoring.
+/usr/local/bin/NavaTunnel backup restore "$archive" --local-ip "$public_ip"
+commands="/var/backups/navatunnel/migration-${stamp}-foreign-commands.txt"
+if [[ -s /etc/gre-panel/peers.json ]] && python3 -c 'import json,sys;sys.exit(0 if json.load(open("/etc/gre-panel/peers.json")).get("peers") else 1)'; then
+    python3 -c 'import json;print("\n".join(str(p["id"]) for p in json.load(open("/etc/gre-panel/peers.json")).get("peers",[])))' |
+    while read -r id; do
+        [[ -n "$id" ]] || continue
+        output=$(/usr/local/bin/NavaTunnel peer-token --id "$id")
+        bundle=$(sed -n 's/^BUNDLE://p' <<< "$output")
+        [[ -n "$bundle" ]] || { echo 'Could not generate a foreign connection code.' >&2; exit 1; }
+        printf '# Iran tunnel ID %s\nNavaTunnel setup-foreign --bundle %q --force\n' "$id" "$bundle"
+    done > "$commands"
+    chmod 600 "$commands"
+    echo "New foreign connection commands (secret): $commands"
+fi
+echo 'Destination installation and restore completed.'
+echo 'The source server was not stopped. Update the opposite endpoints to the new public IP before retiring it.'
+REMOTE
+    [[ ! -f /etc/machine-id ]] || cp /etc/machine-id "$tmp/payload/source-machine-id" || return 1
+    remote=$(ssh "${connection[@]}" -o BatchMode=yes "$destination" "${root_prefix}mktemp -d /var/tmp/navatunnel-migrate.XXXXXXXX") || return 1
+    [[ "$remote" =~ ^/var/tmp/navatunnel-migrate\.[a-zA-Z0-9]+$ ]] || { echo 'Invalid remote staging path.' >&2; remote=''; return 1; }
+    echo 'Transferring encrypted backup, key and scripts over SSH...'
+    (set -o pipefail; tar -czf - -C "$tmp/payload" . | ssh "${connection[@]}" -o BatchMode=yes "$destination" "${root_prefix}tar -xzf - -C '$remote'") || return 1
+    echo 'Installing and restoring on the destination...'
+    ssh "${connection[@]}" -o BatchMode=yes "$destination" "${root_prefix}bash '$remote/run.sh' '$remote' '$local_ip'" || {
+        echo 'Migration failed on the destination. Review the error above; the source was not stopped.' >&2; return 1;
+    }
+    echo 'SSH migration completed. Do not stop the source until opposite endpoints have been updated and tested.'
+)
+
+menu_migrate() {
+    local host port user identity backup public
+    ui_clear
+    echo 'Migrate this server: install NavaTunnel and restore its backup on an SSH destination.'
+    echo 'Destination settings will be replaced; a private copy of its previous settings is kept there.'
+    echo 'The source stays running. Opposite tunnel endpoints need the new destination IP afterward.'
+    read -r -p 'Destination IPv4 [Enter: Cancel]: ' host || return 0
+    [[ -n "$host" ]] || return 0
+    read -r -p 'SSH port [22]: ' port || return 0; port=${port:-22}
+    read -r -p 'SSH user [root; otherwise passwordless sudo required]: ' user || return 0; user=${user:-root}
+    read -r -p 'SSH private key path [Enter: SSH agent or password prompt]: ' identity || return 0
+    read -r -p 'Existing encrypted backup path [Enter: make a fresh backup]: ' backup || return 0
+    read -r -p "Destination tunnel public IPv4 [${host}]: " public || return 0; public=${public:-$host}
+    local -a args=(--host "$host" --port "$port" --user "$user" --local-ip "$public")
+    [[ -z "$identity" ]] || args+=(--identity "$identity")
+    [[ -z "$backup" ]] || args+=(--backup "$backup")
+    cli_migrate "${args[@]}"
+}
+
 backup_restore() {
     local FILE=""
-    local DRY_RUN=0
+    local DRY_RUN=0 LOCAL_IP=""
     while [[ $# -gt 0 ]]; do
         if [[ "$1" == --* && $# -lt 2 ]]; then
             case "$1" in
@@ -6096,10 +6273,12 @@ backup_restore() {
         fi
         case "$1" in
             --dry-run) DRY_RUN=1; shift ;;
+            --local-ip) LOCAL_IP=$2; shift 2 ;;
             *) FILE="$1"; shift ;;
         esac
     done
 
+    [[ -z "$LOCAL_IP" ]] || is_valid_ip "$LOCAL_IP" || { echo "Invalid restore local public IP." >&2; return 1; }
     if [[ -z "$FILE" || ! -f "$FILE" ]]; then
         echo -e "${RED}[!] Backup file not found: '${FILE}'${NC}" >&2
         return 1
@@ -6141,6 +6320,7 @@ backup_restore() {
 
     echo -e "${CYAN}[*] Restoring settings and services...${NC}"
     tar -xzf "$TMP_D/backup.tar.gz" -C / || return 1
+    if [[ -n "$LOCAL_IP" ]]; then restore_rebind_local_ip "$LOCAL_IP" || return 1; fi
     chmod 600 /etc/gre-panel/*.json 2>/dev/null || true
     echo -e "${GREEN}[✔️] Restored files:${NC}"
     cat "$TMP_D/list.txt"
@@ -7141,9 +7321,10 @@ menu_diagnostics_backup() {
         echo "  5) Encrypted configuration backup"
         echo "  6) Restore backup file"
         echo "  7) Schedule automatic backups hourly or daily"
+        echo "  8) Migrate to another server over SSH"
         echo "  0) Return to the main menu"
         echo ""
-        read -r -p "Select option [0-7]: " D_OPT || return 0
+        read -r -p "Select option [0-8]: " D_OPT || return 0
         case "$D_OPT" in
             1) doctor_health_check; pause_prompt ;;
             2)
@@ -7198,6 +7379,7 @@ menu_diagnostics_backup() {
                 esac
                 pause_prompt
                 ;;
+            8) menu_migrate; pause_prompt ;;
             0) return 0 ;;
             *) echo -e "${RED}[!] Invalid option.${NC}"; sleep 1 ;;
         esac
@@ -7553,7 +7735,8 @@ Usage:
   NavaTunnel chaff on|off|status                   # Random ICMP cover traffic
   NavaTunnel dpi-shield on|off|status              # SYN rate limits against excessive scanning
   NavaTunnel watchdog on|off|status|test|tick      # Tunnel monitoring and warning
-  NavaTunnel backup now [--keep N] | restore <f> | schedule ... | status
+  NavaTunnel backup now [--keep N] | restore <f> [--local-ip IP] | schedule ... | status
+  NavaTunnel migrate --host IP [--port 22] [--user root] [--identity FILE] [--backup FILE] [--local-ip IP]
   NavaTunnel tgsend "msg"                          # Sending Telegram alerts manually
   NavaTunnel doctor [server|stop-server|fix]       # Check latency, jitter, MTU and speed
   NavaTunnel stress-test [host] [port] [conns]     # Concurrent connection stress test
@@ -7771,6 +7954,7 @@ if [[ $# -gt 0 ]]; then
         dpi-shield|dpi_shield|dpishield) shift; cli_dpi_shield "$@" ;;
         watchdog) shift; cli_watchdog "$@" ;;
         backup) shift; cli_backup "$@" ;;
+        migrate) shift; cli_migrate "$@" ;;
         tgsend) shift; watchdog_send "$1" ;;
         update|update-all) update_all ;;
         peer-token)
