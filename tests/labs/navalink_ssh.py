@@ -46,7 +46,7 @@ def main():
         engine.run=runner
         def inside(pid,args,**kwargs):return run(['nsenter','-t',pid,'-n',*args],**kwargs)
         try:
-            a=spawn(['unshare','-n','sleep','120'],'ns-iran');b=spawn(['unshare','-n','sleep','120'],'ns-foreign');time.sleep(.15)
+            a=spawn(['unshare','-n','sleep','300'],'ns-iran');b=spawn(['unshare','-n','sleep','300'],'ns-foreign');time.sleep(.15)
             run(['ip','link','add',tag+'a','type','veth','peer','name',tag+'b'])
             run(['ip','link','set',tag+'a','netns',a.pid]);run(['ip','link','set',tag+'b','netns',b.pid])
             for pid,dev,address in ((a.pid,tag+'a','198.19.0.1'),(b.pid,tag+'b','198.19.0.2')):

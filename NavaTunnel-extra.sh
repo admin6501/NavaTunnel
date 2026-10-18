@@ -205,7 +205,7 @@ def carrier_account(t,remove=False):
             account=pwd.getpwnam(user)
             if account.pw_dir!=str(home):raise ValueError('Carrier account name is already in use.')
         except KeyError:
-            run(['useradd','--system','--create-home','--home-dir',home,'--shell','/usr/sbin/nologin',user]);account=pwd.getpwnam(user)
+            run(['useradd','--system','--create-home','--home-dir',home,'--shell','/usr/sbin/nologin',user],timeout=120);account=pwd.getpwnam(user)
             run(['usermod','--password','*',user])
         home.mkdir(parents=True,exist_ok=True);home.chmod(0o700);os.chown(home,account.pw_uid,account.pw_gid)
         folder=home/'.ssh';folder.mkdir(parents=True,exist_ok=True);folder.chmod(0o700);os.chown(folder,account.pw_uid,account.pw_gid)
