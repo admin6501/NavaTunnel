@@ -3,7 +3,7 @@
 # No HTTP panel, activation service or Backhaul runtime is used.
 set -euo pipefail
 export NAVATUNNEL_EXTRA_SOURCE="$0"
-exec python3 - "$@" <<'PY'
+exec python3 - "$@" 3<&0 <<'PY'
 import argparse, atexit, base64, fcntl, io, ipaddress, json, os, re, secrets, shlex, subprocess, sys, tarfile, tempfile, time
 from pathlib import Path
 
@@ -647,6 +647,9 @@ def invoke(argv):
 
 
 if __name__=='__main__':
+    # The heredoc supplies code; fd 3 retains the caller's interactive input.
+    os.dup2(3,0);os.close(3)
+    sys.stdin=open(0)
     try:invoke(sys.argv[1:])
     except (ValueError,TypeError,KeyError,OSError,EOFError,subprocess.TimeoutExpired) as error:
         print('NavaTunnel operation failed: '+str(error),file=sys.stderr);sys.exit(1)

@@ -264,3 +264,19 @@ class ReservedConversionTests(ScriptHarness):
         self.assertIn('9443:NavaLink',result.stdout)
         result=self.run_shell('peer_control_port_check 42000 0')
         self.assertNotEqual(result.returncode,0)
+
+
+class HelperInputTests(unittest.TestCase):
+    def test_real_shell_wrapper_preserves_menu_input(self):
+        # Keep the actual heredoc/exec path, replacing only privileged setup.
+        with tempfile.TemporaryDirectory() as folder:
+            source=(ROOT/'NavaTunnel-extra.sh').read_text()
+            source=source.replace("STATE=Path('/etc/gre-panel')", "STATE=Path("+repr(folder)+")")
+            source=source.replace("if os.geteuid()!=0:", "if False:")
+            script=Path(folder)/'helper.sh';script.write_text(source)
+            for page,choice in (('navalink','2'),('cluster','3'),('network','3')):
+                with self.subTest(page=page):
+                    result=subprocess.run(['bash',str(script),'menu',page],input=choice+'\n\n0\n',text=True,capture_output=True,timeout=5)
+                    self.assertEqual(result.returncode,0,result.stderr)
+                    self.assertGreaterEqual(result.stdout.count('0) Back'),2)
+                    self.assertNotIn('operation failed',result.stderr)
