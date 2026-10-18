@@ -200,6 +200,7 @@ def carrier_account(t,remove=False):
             run(['userdel',user],False)
         updated=clean
     else:
+        CARRIER_HOME.mkdir(mode=0o755,parents=True,exist_ok=True)
         try:
             account=pwd.getpwnam(user)
             if account.pw_dir!=str(home):raise ValueError('Carrier account name is already in use.')
