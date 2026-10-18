@@ -40,9 +40,9 @@ def main():
             log=open(base/(name+'.log'),'w+');logs.append(log)
             process=subprocess.Popen(list(map(str,args)),stdout=log,stderr=log,start_new_session=True);children.append(process);return process
         original=engine.run
-        def runner(args,**kwargs):
+        def runner(args,*pos,**kwargs):
             if str(args[0])=='systemctl':return subprocess.CompletedProcess(args,0,'','')
-            return original(args,**kwargs)
+            return original(args,*pos,**kwargs)
         engine.run=runner
         def inside(pid,args,**kwargs):return run(['nsenter','-t',pid,'-n',*args],**kwargs)
         try:
