@@ -49,9 +49,14 @@ curl -fsSL --connect-timeout 8 --max-time 40 \
     "https://raw.githubusercontent.com/admin6501/NavaTunnel/main/NavaTunnel-traffic.sh" \
     -o "$TMP/NavaTunnel-traffic.sh"
 bash -n "$TMP/NavaTunnel-traffic.sh"
+curl -fsSL --connect-timeout 8 --max-time 40 \
+    "https://raw.githubusercontent.com/admin6501/NavaTunnel/main/NavaTunnel-extra.sh" \
+    -o "$TMP/NavaTunnel-extra.sh"
+bash -n "$TMP/NavaTunnel-extra.sh"
 chmod +x "$TMP/NavaTunnel.sh"
 mkdir -p /usr/local/bin
 install -m 755 "$TMP/NavaTunnel-traffic.sh" /usr/local/bin/NavaTunnel-traffic.sh
+install -m 755 "$TMP/NavaTunnel-extra.sh" /usr/local/bin/NavaTunnel-extra.sh
 cp "$TMP/NavaTunnel.sh" /usr/local/bin/NavaTunnel.sh
 cp "$TMP/NavaTunnel.sh" /usr/local/bin/NavaTunnel
 chmod +x /usr/local/bin/NavaTunnel.sh /usr/local/bin/NavaTunnel

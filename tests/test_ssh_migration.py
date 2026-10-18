@@ -13,6 +13,7 @@ class SshMigrationTests(ScriptHarness):
         with tarfile.open(self.backup,'w:gz') as tar:
             info=tarfile.TarInfo('etc/frp/frps.toml');data=b'bindPort=7000\n';info.size=len(data);tar.addfile(info,io.BytesIO(data))
         (self.root/'bin/NavaTunnel-traffic.sh').write_text('#!/bin/bash\ntrue\n')
+        (self.root/'bin/NavaTunnel-extra.sh').write_text('#!/bin/bash\ntrue\n')
         self.events=self.root/'events';self.upload=self.root/'uploaded.tar.gz'
         self.stubs='export MIG_EVENTS="'+str(self.events)+'" MIG_UPLOAD="'+str(self.upload)+'"\n'+'''
 ensure_traffic_helper() { return 0; }

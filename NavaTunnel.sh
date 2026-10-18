@@ -96,7 +96,7 @@ backup_configs() {
     local ts
     ts=$(date '+%Y%m%d_%H%M%S')
     local bdir="${BACKUP_DIR}/${ts}_${label}"
-    mkdir -p "$bdir" 2>/dev/null || return 1
+    mkdir -p "$bdir" 2>/dev/null && chmod 700 "$bdir" || return 1
 
     # Backup configuration folders
     [[ -d /etc/navatunnel ]] && cp -rp /etc/navatunnel "$bdir/" 2>/dev/null || true
@@ -501,6 +501,15 @@ except Exception:
         return 0
     fi
     echo 0
+}
+
+perf_get_tcp_mux() {
+    python3 - "$PERF_FILE" <<'PYMUX'
+import json,sys
+from pathlib import Path
+p=Path(sys.argv[1]); data=json.loads(p.read_text()) if p.exists() else {}
+print('true' if data.get('tcp_mux', True) else 'false')
+PYMUX
 }
 
 perf_get_dpi_rate() {
@@ -2699,7 +2708,7 @@ quicBindPort = ${QUIC_PORT}
 auth.method = "token"
 auth.token = "${TOKEN}"
 ${TLS_LINE:+$TLS_LINE
-}transport.tcpMux = true
+}transport.tcpMux = $(perf_get_tcp_mux)
 transport.tcpMuxKeepaliveInterval = 30
 transport.tcpKeepalive = 30
 transport.heartbeatTimeout = 90
@@ -2879,7 +2888,7 @@ ${TLS_ENABLE:+$TLS_ENABLE
 }${TLS_CUSTOM:+$TLS_CUSTOM
 }loginFailExit = false
 transport.protocol = "${FRP_TRANSPORT}"
-transport.tcpMux = true
+transport.tcpMux = $(perf_get_tcp_mux)
 transport.tcpMuxKeepaliveInterval = 30
 transport.heartbeatInterval = 30
 transport.heartbeatTimeout = 90
@@ -3048,8 +3057,12 @@ peer_next_id() {
     peer_require_py || return 1
     PEERS_F="$PEERS_FILE" python3 -c '
 import json,os
+from pathlib import Path
 with open(os.environ["PEERS_F"]) as f:
     used={int(p["id"]) for p in json.load(f).get("peers",[])}
+for path in (Path(os.environ["PEERS_F"]).parent/"navalink").glob("*/config.json"):
+    old=json.loads(path.read_text()).get("legacy",{}).get("peer",{})
+    if old.get("id"):used.add(int(old["id"]))
 candidate=1
 while candidate in used:
     candidate+=1
@@ -3060,7 +3073,13 @@ print(candidate)'
 peer_ports_used() {
     peer_init; peer_require_py || return 1
     PEERS_F="$PEERS_FILE" python3 -c \
-'import json,os; d=json.load(open(os.environ["PEERS_F"])); print(" ".join(str(p) + ":" + str(r.get("name","")) for r in d.get("peers",[]) for p in r.get("ports",[])))'
+'import json,os
+from pathlib import Path
+d=json.load(open(os.environ["PEERS_F"])); peers=d.get("peers",[])
+for path in (Path(os.environ["PEERS_F"]).parent/"navalink").glob("*/config.json"):
+    t=json.loads(path.read_text())
+    if t.get("role")=="iran":peers.append(t)
+print(" ".join(str(p)+":"+str(r.get("name","NavaLink")) for r in peers for p in r.get("ports",[])))'
 }
 
 # $1=id -> compact JSON record or empty
@@ -3134,7 +3153,7 @@ quicBindPort = ${QUIC_PORT}
 auth.method = "token"
 auth.token = "${TOKEN}"
 ${TLS_LINE:+$TLS_LINE
-}transport.tcpMux = true
+}transport.tcpMux = $(perf_get_tcp_mux)
 transport.tcpMuxKeepaliveInterval = 30
 transport.tcpKeepalive = 30
 transport.heartbeatTimeout = 90
@@ -3816,6 +3835,9 @@ import json,sys,ipaddress
 from pathlib import Path
 p=Path(sys.argv[1]); peers=json.loads(p.read_text()).get('peers',[]) if p.exists() else []
 used={t[k] for t in peers for k in ('local_gre','peer_gre') if t.get(k)}
+for path in (p.parent/'navalink').glob('*/config.json'):
+    old=json.loads(path.read_text()).get('legacy',{}).get('peer',{})
+    used.update(old[k] for k in ('local_gre','peer_gre') if old.get(k))
 used.update(('10.10.10.1','10.10.10.2'))
 base=int(ipaddress.IPv4Address('10.200.0.0'))
 for n in range(16384):
@@ -3841,6 +3863,10 @@ port=int(sys.argv[2]); exclude=int(sys.argv[3])
 quic=lambda p:p-1 if p==65535 else p+1
 needed_tcp={port}; needed_udp={port,quic(port)}
 peers=json.load(open(sys.argv[1])).get('peers',[])
+from pathlib import Path
+for path in (Path(sys.argv[1]).parent/'navalink').glob('*/config.json'):
+    t=json.loads(path.read_text())
+    if t.get('role')=='iran':peers.append(dict(id='navalink-'+t['id'],name=t.get('name','NavaLink'),frp_port=t['control_port'],ports=t['ports']))
 ignore_tcp=set(); ignore_udp=set()
 for peer in peers:
     control=int(peer.get('frp_port') or 0)
@@ -5180,6 +5206,22 @@ uninstall_all() {
 # `NavaTunnel` stops working.
 uninstall_all_force() {
         echo -e "${CYAN}[*] Complete deletion NavaTunnel...${NC}"
+        if [[ -f "$NAVATUNNEL_STATE_DIR/cluster.json" ]]; then cli_extra cluster disable || return 1; fi
+        if [[ -d "$NAVATUNNEL_STATE_DIR/navalink" ]]; then
+            local extra_id extra_ids
+            extra_ids=$(python3 - "$NAVATUNNEL_STATE_DIR/navalink" <<'PYCLEAN'
+import json,re,sys
+from pathlib import Path
+for path in Path(sys.argv[1]).glob('*/config.json'):
+    value=json.loads(path.read_text()).get('id','')
+    if re.fullmatch(r'[a-f0-9]{12}',value):print(value)
+PYCLEAN
+) || return 1
+            while read -r extra_id; do [[ -z "$extra_id" ]] || cli_extra navalink remove --id "$extra_id" || return 1; done <<< "$extra_ids"
+        fi
+        if [[ -f /usr/local/bin/NavaTunnel-extra.sh ]]; then cli_extra cluster purge || return 1; fi
+        rm -f /etc/systemd/system/NavaTunnel-cluster.service /etc/systemd/system/NavaTunnel-cluster.timer
+
         if [[ -f /etc/gre-panel/traffic.json ]]; then cli_traffic clear || return 1; fi
         # 1. Stop & disable all services & timers
         systemctl stop frps frpc "${TUNNEL_NAME}.service" gre-panel gre-chaff navatunnel-chaff navatunnel-watchdog.timer navatunnel-watchdog.service navatunnel-dpi >/dev/null 2>&1 || true
@@ -5246,7 +5288,7 @@ uninstall_all_force() {
         crontab -l 2>/dev/null | grep -v 'NavaTunnel' | crontab - 2>/dev/null || true
 
         # 9. Remove entrypoints last
-        rm -f /usr/local/bin/NavaTunnel /usr/local/bin/NavaTunnel.sh /usr/local/bin/navatunnel /usr/local/bin/navatunnel.sh /usr/local/bin/gre.sh
+        rm -f /usr/local/bin/NavaTunnel-extra.sh /usr/local/bin/NavaTunnel /usr/local/bin/NavaTunnel.sh /usr/local/bin/navatunnel /usr/local/bin/navatunnel.sh /usr/local/bin/gre.sh
 
         echo -e "${GREEN}[✔️] Complete deletion is done; All tunnels, services and files are removed.${NC}"
 }
@@ -6023,9 +6065,9 @@ backup_now() {
     local FILES=()
     local f
     for f in /etc/frp/*.toml /etc/gre-panel/peers.json /etc/gre-panel/watchdog.json \
-             /etc/gre-panel/perf.json /etc/gre-panel/traffic.json /etc/gre-panel/mtu.json /etc/gre-panel/backup.key /etc/gre-panel/stopped \
+             /etc/gre-panel/perf.json /etc/gre-panel/traffic.json /etc/gre-panel/mtu.json /etc/gre-panel/backup.key /etc/gre-panel/stopped /etc/gre-panel/navalink /etc/gre-panel/cluster.json /etc/gre-panel/cluster-runtime.json /etc/gre-panel/cluster-key /etc/gre-panel/cluster-key.pub /etc/gre-panel/ssh-known-hosts \
              /etc/systemd/system/gre-*.service /etc/systemd/system/frps*.service \
-             /etc/systemd/system/frpc*.service /etc/systemd/system/gre-chaff*.service; do
+             /etc/systemd/system/frpc*.service /etc/systemd/system/gre-chaff*.service /etc/systemd/system/navalink-*.service /etc/systemd/system/NavaTunnel-cluster.*; do
         [[ -f "$f" || -d "$f" ]] && FILES+=("$f")
     done
 
@@ -6105,6 +6147,14 @@ if registry.exists():
     data=json.loads(registry.read_text())
     for p in data.get('peers',[]):p['local_pub']=public
     updates[registry]=json.dumps(data,indent=2)+'\n'
+for path in (registry.parent/'navalink').glob('*/config.json'):
+    data=json.loads(path.read_text())
+    if data.get('role')=='iran':
+        data['local_pub']=public
+        if data.get('legacy',{}).get('peer'):data['legacy']['peer']['local_pub']=public
+        for oldunit in (path.parent/'previous/units').glob('gre-t*.service'):
+            updates[oldunit]=re.sub(r'\blocal\s+\d+\.\d+\.\d+\.\d+\b','local '+local,oldunit.read_text())
+        updates[path]=json.dumps(data,indent=2)+'\n'
 for path,text in updates.items():
     fd,tmp=tempfile.mkstemp(dir=path.parent,prefix='.restore-local-ip-')
     try:
@@ -6157,6 +6207,7 @@ cli_migrate() (
     esac
     echo 'Preparing encrypted backup and installation files...'
     ensure_traffic_helper || return 1
+    ensure_extra_helper || return 1
     if [[ -z "$backup" ]]; then
         local outdir="$BACKUP_DIR/migration-$(date +%Y%m%d-%H%M%S)-${RANDOM}"
         backup_now "$outdir" || return 1
@@ -6168,9 +6219,11 @@ cli_migrate() (
     openssl enc -d -aes-256-cbc -pbkdf2 -pass "file:${NAVATUNNEL_STATE_DIR}/backup.key" -in "$backup" -out "$tmp/verify.tar.gz" 2>/dev/null && tar -tzf "$tmp/verify.tar.gz" >/dev/null || {
         echo 'Backup validation failed; destination was not modified.' >&2; return 1;
     }
+    backup_archive manifest "$tmp/verify.tar.gz" || return 1
     rm -f "$tmp/verify.tar.gz"
     mkdir "$tmp/payload" || return 1
     cp "${BASH_SOURCE[0]}" "$tmp/payload/NavaTunnel.sh" && cp /usr/local/bin/NavaTunnel-traffic.sh "$tmp/payload/NavaTunnel-traffic.sh" && cp "$backup" "$tmp/payload/backup.enc" && cp "${NAVATUNNEL_STATE_DIR}/backup.key" "$tmp/payload/backup.key" || return 1
+    cp /usr/local/bin/NavaTunnel-extra.sh "$tmp/payload/NavaTunnel-extra.sh" || return 1
     chmod 600 "$tmp/payload/backup.key" "$tmp/payload/backup.enc"
     bash -n "$tmp/payload/NavaTunnel.sh" && bash -n "$tmp/payload/NavaTunnel-traffic.sh" || return 1
     cat > "$tmp/payload/run.sh" <<'REMOTE'
@@ -6208,6 +6261,7 @@ if ((${#previous[@]})); then tar -czf "$rollback" -C / "${previous[@]}"; chmod 6
 install -m 755 "$stage/NavaTunnel.sh" /usr/local/bin/NavaTunnel.sh
 install -m 755 "$stage/NavaTunnel.sh" /usr/local/bin/NavaTunnel
 install -m 755 "$stage/NavaTunnel-traffic.sh" /usr/local/bin/NavaTunnel-traffic.sh
+install -m 755 "$stage/NavaTunnel-extra.sh" /usr/local/bin/NavaTunnel-extra.sh
 ln -sf /usr/local/bin/NavaTunnel.sh /usr/local/bin/gre.sh
 install -m 600 "$stage/backup.key" /etc/gre-panel/backup.key
 archive="/var/backups/navatunnel/migrated-${stamp}.enc"
@@ -6239,6 +6293,28 @@ REMOTE
     ssh "${connection[@]}" -o BatchMode=yes "$destination" "${root_prefix}bash '$remote/run.sh' '$remote' '$local_ip'" || {
         echo 'Migration failed on the destination. Review the error above; the source was not stopped.' >&2; return 1;
     }
+    # A reverse SSH listener can have only one owning carrier. Cut over these
+    # owned connections after the destination restore has otherwise succeeded.
+    local nava_ids nava_id
+    nava_ids=$(python3 - "$NAVATUNNEL_STATE_DIR/navalink" <<'PYHANDOVER'
+import json,re,sys
+from pathlib import Path
+for path in Path(sys.argv[1]).glob('*/config.json'):
+    t=json.loads(path.read_text())
+    if t.get('role')=='iran' and not t.get('stopped') and not t.get('incomplete') and re.fullmatch(r'[a-f0-9]{12}',t.get('id','')):print(t['id'])
+PYHANDOVER
+) || return 1
+    while read -r nava_id; do
+        [[ -n "$nava_id" ]] || continue
+        echo "Handing over NavaLink carrier $nava_id; a brief connection interruption is expected."
+        cli_extra navalink stop --id "$nava_id" || return 1
+        if ! ssh "${connection[@]}" -o BatchMode=yes "$destination" "${root_prefix}/usr/local/bin/NavaTunnel navalink start --id '$nava_id'"; then
+            ssh "${connection[@]}" -o BatchMode=yes "$destination" "${root_prefix}/usr/local/bin/NavaTunnel navalink stop --id '$nava_id'" >/dev/null 2>&1 || true
+            cli_extra navalink start --id "$nava_id" || true
+            echo "NavaLink handover failed; source restart was attempted. Check both ends for $nava_id." >&2
+            return 1
+        fi
+    done <<< "$nava_ids"
     echo 'SSH migration completed. Do not stop the source until opposite endpoints have been updated and tested.'
 )
 
@@ -6259,6 +6335,54 @@ menu_migrate() {
     [[ -z "$identity" ]] || args+=(--identity "$identity")
     [[ -z "$backup" ]] || args+=(--backup "$backup")
     cli_migrate "${args[@]}"
+}
+
+# Validate all members before extracting anything; never follow archive links.
+backup_archive() {
+    python3 - "$1" "$2" <<'PYARCHIVE'
+import os,re,sys,tarfile,tempfile
+from pathlib import Path,PurePosixPath
+mode,archive=sys.argv[1:]
+def allowed(name):
+    if name.startswith('/') or any(p in ('..','') for p in name.split('/')):return False
+    if not re.fullmatch(r'[A-Za-z0-9_./-]+',name):return False
+    return name.startswith('etc/frp/') or name.startswith('etc/gre-panel/') or bool(re.fullmatch(r'etc/systemd/system/(?:gre-[A-Za-z0-9_-]+|frps(?:-[0-9]+)?|frpc(?:-[0-9]+)?|navalink-[a-f0-9]{12}-(?:server|ssh|client))\.service',name)) or name in ('etc/systemd/system/NavaTunnel-cluster.service','etc/systemd/system/NavaTunnel-cluster.timer')
+try:
+    with tarfile.open(archive,'r:gz') as tar:
+        members=tar.getmembers()
+        if not members:raise ValueError('Backup is empty.')
+        seen=set()
+        for member in members:
+            name=member.name.rstrip('/')
+            if not allowed(name) or not (member.isdir() or member.isfile()):raise ValueError('Unsupported or unsafe backup member: '+repr(name))
+            if name in seen:raise ValueError('Duplicate backup member.')
+            seen.add(name)
+            target=Path('/')/name
+            for parent in (() if mode=='manifest' else (target,*target.parents)):
+                if parent.is_symlink():raise ValueError('Destination path contains a symbolic link: '+str(parent))
+        if mode=='extract':
+            for member in members:
+                target=Path('/')/member.name.rstrip('/')
+                if member.isdir():
+                    target.mkdir(parents=True,exist_ok=True,mode=0o700)
+                    if str(target).startswith('/etc/gre-panel/'):target.chmod(0o700)
+                    continue
+                target.parent.mkdir(parents=True,exist_ok=True,mode=0o700)
+                fd,tmp=tempfile.mkstemp(dir=target.parent,prefix='.restore-')
+                try:
+                    os.fchmod(fd,0o600)
+                    with os.fdopen(fd,'wb') as out,tar.extractfile(member) as source:
+                        while True:
+                            chunk=source.read(1024*1024)
+                            if not chunk:break
+                            out.write(chunk)
+                        out.flush();os.fsync(out.fileno())
+                    os.replace(tmp,target)
+                finally:
+                    if os.path.exists(tmp):os.unlink(tmp)
+except (ValueError,OSError,tarfile.TarError) as error:
+    print('Backup validation/extraction failed: '+str(error),file=sys.stderr);sys.exit(1)
+PYARCHIVE
 }
 
 backup_restore() {
@@ -6306,6 +6430,7 @@ backup_restore() {
         return 1
     fi
 
+    backup_archive validate "$TMP_D/backup.tar.gz" || return 1
     if [[ "$DRY_RUN" -eq 1 ]]; then
         echo -e "${GREEN}[✔️] The backup is valid; files inside:${NC}"
         cat "$TMP_D/list.txt"
@@ -6319,7 +6444,8 @@ backup_restore() {
     install_frp_binaries all || { echo 'Restore stopped: FRP cores could not be installed or executed.' >&2; return 1; }
 
     echo -e "${CYAN}[*] Restoring settings and services...${NC}"
-    tar -xzf "$TMP_D/backup.tar.gz" -C / || return 1
+    backup_configs pre_restore >/dev/null || { echo "Could not create a pre-restore safety copy." >&2; return 1; }
+    backup_archive extract "$TMP_D/backup.tar.gz" || return 1
     if [[ -n "$LOCAL_IP" ]]; then restore_rebind_local_ip "$LOCAL_IP" || return 1; fi
     chmod 600 /etc/gre-panel/*.json 2>/dev/null || true
     echo -e "${GREEN}[✔️] Restored files:${NC}"
@@ -6334,6 +6460,11 @@ backup_restore() {
     restore_start_tunnels || tunnel_start_failed=1
 
     repair_traffic_monitor || { echo 'Tunnel files restored, but traffic monitoring could not be initialized.' >&2; return 1; }
+    if [[ -d "$NAVATUNNEL_STATE_DIR/navalink" ]]; then
+        if [[ -n "$LOCAL_IP" ]]; then NAVATUNNEL_DEFER_CARRIER=1 cli_extra navalink restore || return 1
+        else cli_extra navalink restore || return 1; fi
+    fi
+    if [[ -f "$NAVATUNNEL_STATE_DIR/cluster.json" ]]; then cli_extra cluster restore || return 1; fi
     ((tunnel_start_failed == 0)) || { echo 'Files restored, but some tunnel services failed to start. Check their journals.' >&2; return 1; }
     echo -e "${GREEN}[✔️] The restore was successful.${NC}"
     return 0
@@ -6942,6 +7073,10 @@ update_all() {
         echo "Failed to update Traffic Tool; Scripts were not replaced." >&2
         return 1
     fi
+    if ! download_with_fallback "$TMP_U/NavaTunnel-extra.sh" "$NAVATUNNEL_URL_BASE/NavaTunnel-extra.sh" 30 || ! bash -n "$TMP_U/NavaTunnel-extra.sh"; then
+        echo 'Optional engine helper update failed; scripts were not replaced.' >&2; return 1
+    fi
+    install -m 755 "$TMP_U/NavaTunnel-extra.sh" /usr/local/bin/NavaTunnel-extra.sh || return 1
     install -m 755 "$TMP_U/NavaTunnel-traffic.sh" /usr/local/bin/NavaTunnel-traffic.sh || return 1
     # 3. replace running script only after everything succeeded
     cp "$TMP_U/NavaTunnel.sh" "$0" 2>/dev/null || cp "$TMP_U/NavaTunnel.sh" ./NavaTunnel.sh
@@ -7180,6 +7315,7 @@ menu_list_tunnels() {
         foreign_tunnel_summary || return 1
         found=1
     fi
+    if [[ -d "$NAVATUNNEL_STATE_DIR/navalink" ]]; then cli_extra navalink status; found=1; fi
     ((found)) || echo 'No tunnel is registered on this server.'
 }
 
@@ -7291,9 +7427,12 @@ menu_optimization() {
         echo "  6) Performance settings, encryption, compression and TLS"
         echo "  7) Free cache memory and configure swap"
         echo "  8) Restore network settings"
+        echo "  9) NavaLink — FRP over reverse SSH"
+        echo "  10) Cluster — SSH-managed Iran peers"
+        echo "  11) Path MTU, tcpMux and pool diagnostics"
         echo "  0) Return to the main menu"
         echo ""
-        read -r -p "Select option [0-8]: " O_OPT || return 0
+        read -r -p "Select option [0-11]: " O_OPT || return 0
         case "$O_OPT" in
             1) tune_apply; pause_prompt ;;
             2) menu_carrier ;;
@@ -7303,6 +7442,9 @@ menu_optimization() {
             6) menu_perf ;;
             7) free_ram; pause_prompt ;;
             8) tune_restore; pause_prompt ;;
+            9) cli_extra menu navalink ;;
+            10) cli_extra menu cluster ;;
+            11) cli_extra menu network ;;
             0) return 0 ;;
             *) echo -e "${RED}[!] Invalid option.${NC}"; sleep 1 ;;
         esac
@@ -7455,6 +7597,31 @@ menu_server() { menu_optimization; }
 menu_bundle() { menu_tunnel; }
 menu_diagnostics() { menu_diagnostics_backup; }
 menu_update() { menu_maintenance; }
+
+ensure_extra_helper() {
+    local target=/usr/local/bin/NavaTunnel-extra.sh source_dir tmp
+    if [[ ! -f "$target" ]]; then
+        source_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+        if [[ -f "$source_dir/NavaTunnel-extra.sh" ]]; then
+            bash -n "$source_dir/NavaTunnel-extra.sh" || return 1
+            install -m 755 "$source_dir/NavaTunnel-extra.sh" "$target" || return 1
+        else
+            tmp=$(mktemp) || return 1
+            download_with_fallback "$tmp" "$NAVATUNNEL_URL_BASE/NavaTunnel-extra.sh" 30 && bash -n "$tmp" && install -m 755 "$tmp" "$target" || { rm -f "$tmp"; return 1; }
+            rm -f "$tmp"
+        fi
+    fi
+}
+
+cli_extra() {
+    ensure_extra_helper || return 1
+    if [[ "${1:-}" == navalink && "${2:-}" == setup || "${1:-}" == menu && "${2:-}" == navalink ]]; then
+        ensure_navatunnel_bin
+        ensure_dependencies_smart || return 1
+        ensure_traffic_helper || return 1
+    fi
+    bash /usr/local/bin/NavaTunnel-extra.sh "$@"
+}
 
 ensure_traffic_helper() {
     local target="/usr/local/bin/NavaTunnel-traffic.sh"
@@ -7706,6 +7873,11 @@ usage_cli() {
 Usage:
   NavaTunnel                                    # Interactive management menu
   NavaTunnel menu                               # Admin menu with all options
+  NavaTunnel navalink setup|status|start|stop|restart|remove  # Optional FRP over reverse SSH
+  NavaTunnel cluster init|trust|add|status|enable|disable  # Optional SSH-only cluster
+  NavaTunnel path-mtu --interface gre-tunnel --peer IP [--apply]
+  NavaTunnel tcp-mux status|on|off
+  NavaTunnel pool
   NavaTunnel traffic discover | list | repair
   NavaTunnel traffic add ID --interface gre-tunnel   # or --peer for a dedicated peer IP
   NavaTunnel traffic limit ID 100GB --mode download|upload|both
@@ -7955,6 +8127,8 @@ if [[ $# -gt 0 ]]; then
         watchdog) shift; cli_watchdog "$@" ;;
         backup) shift; cli_backup "$@" ;;
         migrate) shift; cli_migrate "$@" ;;
+        navalink|cluster|path-mtu|tcp-mux|pool) cli_extra "$@" ;;
+        prepare-runtime) ensure_dependencies_smart && ensure_traffic_helper && install_frp_binaries all ;;
         tgsend) shift; watchdog_send "$1" ;;
         update|update-all) update_all ;;
         peer-token)

@@ -60,6 +60,22 @@ class TrafficTests(TrafficHarness):
         self.assertTrue(all(('-j', 'DROP') not in self.fw.rules[c] for c in self.engine.chains('two')))
         t['mode'] = 'both'; self.assertEqual(self.engine.consumed(t), 580)
 
+    def test_retarget_preserves_usage_quota_and_direction(self):
+        self.charge('one',70,40)
+        self.data['one'].update(limit=100,mode='download')
+        self.engine.retarget(self.data,'one','192.0.2.99')
+        self.assertEqual(self.data['one']['peer'],'192.0.2.99')
+        self.assertEqual((self.data['one']['download'],self.data['one']['upload']),(70,40))
+        self.assertEqual((self.data['one']['limit'],self.data['one']['mode']),(100,'download'))
+        self.charge('one',5,7)
+        self.assertEqual((self.data['one']['download'],self.data['one']['upload']),(75,47))
+        self.assertEqual(self.data['two']['peer'],'192.0.2.2')
+
+    def test_retarget_rejects_overlapping_counter(self):
+        before=dict(self.data['one'])
+        with self.assertRaises(ValueError):self.engine.retarget(self.data,'one','192.0.2.2')
+        self.assertEqual(self.data['one'],before)
+
     def test_reset_keeps_baseline_and_reopens(self):
         t=self.data['one']; t['limit']=100
         self.charge('one', 70, 40); self.assertTrue(t['blocked'])

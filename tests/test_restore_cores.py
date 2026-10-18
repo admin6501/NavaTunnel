@@ -8,6 +8,8 @@ class RestoreCoreTests(ScriptHarness):
         self.events=self.root/'events'
         self.stubs='''
 ensure_backup_key() { :; }
+backup_configs() { echo safety >> "$EVENTS"; }
+backup_archive() { [[ "$1" != extract ]] || echo extract >> "$EVENTS"; }
 openssl() { while [[ $# -gt 0 ]]; do if [[ "$1" == -out ]]; then touch "$2"; break; fi; shift; done; }
 tar() { if [[ "$1" == -ztf ]]; then echo etc/frp/frps.toml; else echo extract >> "$EVENTS"; fi; }
 ensure_dependencies_smart() { echo deps >> "$EVENTS"; }
@@ -24,7 +26,7 @@ repair_traffic_monitor() { echo traffic >> "$EVENTS"; }
     def test_real_restore_installs_cores_before_extract_and_restart(self):
         result=self.restore()
         self.assertEqual(result.returncode,0,result.stderr)
-        self.assertEqual(self.events.read_text().splitlines(),['deps','cores:all','extract','start','traffic'])
+        self.assertEqual(self.events.read_text().splitlines(),['deps','cores:all','safety','extract','start','traffic'])
         self.assertIn('restore was successful',result.stdout)
 
     def test_core_failure_prevents_extract_restart_and_false_success(self):

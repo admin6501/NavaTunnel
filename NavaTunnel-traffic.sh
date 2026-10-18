@@ -148,6 +148,32 @@ def add(data, name, interface=None, peer=None, limit=0, mode='both'):
     enforce(name, t)
     save(data)
 
+def retarget(data, name, peer=None, interface=None):
+    if interface:
+        if not re.fullmatch(r'gre-(tunnel|t[0-9]+)',interface):raise ValueError('Invalid managed GRE interface.')
+        if not Path('/sys/class/net',interface).exists() and not Path('/etc/systemd/system',interface+'.service').exists():raise ValueError('GRE interface is not installed.')
+    else:peer = str(ipaddress.IPv4Address(peer))
+    for other_name, existing in data.items():
+        if other_name == name: continue
+        if (peer and existing.get('peer') == peer) or (interface and existing.get('interface') == interface): raise ValueError('Another counter already tracks this target.')
+        if peer and existing.get('interface'):
+            links = json.loads(run(['ip', '-j', '-d', 'link', 'show', 'dev', existing['interface']]).stdout)
+            remote = links[0].get('linkinfo', {}).get('info_data', {}).get('remote')
+            if remote == peer: raise ValueError('An existing GRE counter overlaps this peer.')
+    t = data[name]
+    if t.get('peer') == peer and t.get('interface') == interface: return
+    sample(name, t)
+    previous = dict(t)
+    try:
+        detach(name, t)
+        t.update(interface=interface, peer=peer, last_download=0, last_upload=0)
+        save(data); ensure(name, t); enforce(name, t); save(data)
+    except Exception:
+        try: detach(name, t)
+        finally:
+            t.clear(); t.update(previous); save(data); ensure(name, t); enforce(name, t)
+        raise
+
 def discover(data):
     # GRE/TUN counters count inner traffic; remote-IP counters count wire bytes.
     registry = Path('/etc/gre-panel/peers.json')
@@ -204,6 +230,7 @@ def main():
         p=sub.add_parser(cmd); p.add_argument('id')
     p=sub.add_parser('limit'); p.add_argument('id'); p.add_argument('size', type=argument_size)
     p.add_argument('--mode', choices=MODES)
+    p=sub.add_parser('retarget'); p.add_argument('id'); target=p.add_mutually_exclusive_group(required=True); target.add_argument('--peer'); target.add_argument('--interface')
     p=sub.add_parser('mode'); p.add_argument('id'); p.add_argument('mode', choices=MODES)
     args = parser.parse_args()
     if os.geteuid() != 0:
@@ -216,6 +243,8 @@ def main():
             raise ValueError('Counter ID is unknown; traffic discover, traffic list or traffic add run the.')
         if args.cmd == 'add':
             add(data, args.id, args.interface, args.peer, args.limit, args.mode)
+        elif args.cmd == 'retarget':
+            retarget(data, args.id, args.peer, args.interface)
         elif args.cmd == 'discover':
             discover(data)
         elif args.cmd in ('remove', 'clear'):
