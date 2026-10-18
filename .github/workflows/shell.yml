@@ -23,7 +23,7 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y iproute2 iptables openssh-server openssh-client
       - name: Verify pinned official FRP lab binaries
         run: python3 tests/labs/fetch_frp.py "$RUNNER_TEMP/nava-frp"
-      - name: Test owned cluster NAT and rollback in isolated namespaces
-        run: sudo unshare -n python3 tests/labs/cluster_netns.py
+      - name: Verify retired-feature cleanup preserves unrelated firewall rules
+        run: sudo unshare -n python3 tests/labs/retired_cleanup.py
       - name: Test NavaLink TCP, UDP and SSH authorization boundaries
         run: sudo python3 tests/labs/navalink_ssh.py "$RUNNER_TEMP/nava-frp"

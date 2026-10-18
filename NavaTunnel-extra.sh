@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Independent optional NavaTunnel engines and SSH-managed clustering.
+# Independent optional NavaTunnel transport and network tools.
 # No HTTP panel, activation service or Backhaul runtime is used.
 set -euo pipefail
 export NAVATUNNEL_EXTRA_SOURCE="$0"
@@ -16,8 +16,6 @@ SOURCE=Path(os.environ.get('NAVATUNNEL_EXTRA_SOURCE',str(EXTRA)))
 SSH_CONFIG=Path('/etc/ssh/sshd_config')
 ROOT_KEYS=Path('/root/.ssh')
 CARRIER_HOME=Path('/var/lib/navatunnel-ssh')
-MARK='0x4e560000/0xffff0000'
-BOOT=Path('/proc/sys/kernel/random/boot_id').read_text().strip()
 SSH_SESSIONS={}
 
 
@@ -173,15 +171,6 @@ def install_nava(t):
         unit(names(t)[1],['/usr/bin/ssh','-N','-T','-i',path/'key','-p',str(t['ssh_port']),'-o','BatchMode=yes','-o','IdentitiesOnly=yes','-o','StrictHostKeyChecking=yes','-o','UserKnownHostsFile='+str(STATE/'ssh-known-hosts'),'-o','ExitOnForwardFailure=yes','-o','ServerAliveInterval=10','-o','ServerAliveCountMax=3','-R','127.0.0.1:'+str(t['control_port'])+':127.0.0.1:'+str(t['control_port']),'nava'+t['id']+'@'+t['remote_host']],names(t)[0]+' network-online.target')
     else:unit(names(t)[0],[BIN/'frpc','-c',config])
     run(['systemctl','daemon-reload'])
-
-
-def authorize(public_key,tag,options):
-    if not re.fullmatch(r'ssh-ed25519 [A-Za-z0-9+/=]+(?: [^\n\r]*)?',public_key):raise ValueError('Invalid Ed25519 public key.')
-    folder=ROOT_KEYS;folder.mkdir(mode=0o700,exist_ok=True);folder.chmod(0o700)
-    path=folder/'authorized_keys';text=path.read_text() if path.exists() else ''
-    lines=[line for line in text.splitlines() if not line.endswith(' '+tag)]
-    lines.append(options+' '+public_key.split()[0]+' '+public_key.split()[1]+' '+tag)
-    save(path,'\n'.join(lines)+'\n')
 
 
 def carrier_account(t,remove=False):
@@ -406,143 +395,39 @@ def session_up(address,control_port):
     return False
 
 
-def local_health():
-    observations=[];healthy_ports=set()
-    for t in records():
-        if t.get('role')=='iran' and not t.get('stopped'):
-            good=all(run(['systemctl','is-active','--quiet',name],False).returncode==0 for name in names(t)) and session_up('127.0.0.1',t['control_port'])
-            observations.append(good)
-            if good:healthy_ports.update(t['ports'])
-    for p in load(STATE/'peers.json',{}).get('peers',[]):
-        if (STATE/'stopped'/p.get('gre_if','')).is_file():continue
-        if p.get('peer_gre') and p.get('frp_port'):
-            good=run(['systemctl','is-active','--quiet',p.get('frps_svc','frps')],False).returncode==0 and session_up(p['peer_gre'],p['frp_port'])
-            observations.append(good)
-            if good:healthy_ports.update(p.get('ports',[]))
-    return dict(healthy=bool(observations) and any(observations),links=len(observations),healthy_links=sum(observations),ports=sorted(healthy_ports),timestamp=int(time.time()))
 
-
-def cluster_rules(targets):
-    lines=['*nat',':NAVA-CLUSTER - [0:0]']
-    if targets:
-        lines+=['-A NAVA-CLUSTER -j CONNMARK --set-xmark '+MARK]
-        remaining=sum(t['weight'] for t in targets)
-        for i,t in enumerate(targets):
-            match='' if i==len(targets)-1 else ' -m statistic --mode random --probability '+format(t['weight']/remaining,'.10f')
-            action='RETURN' if t['host']=='local' else 'DNAT --to-destination '+ipv4(t['host'])
-            lines+=['-A NAVA-CLUSTER'+match+' -j '+action];remaining-=t['weight']
-    return '\n'.join(lines+['COMMIT',''])
-
-
-def cluster_firewall(config,targets):
-    # Only the declared chain is replaced. Other NAT rules and conntrack entries survive.
-    run(['iptables-restore','--noflush','-w','5'],input=cluster_rules(targets))
-    for proto in ('tcp','udp'):
-        for p in config['ports']:
-            rule=['-p',proto,'--dport',str(p),'-m','addrtype','--dst-type','LOCAL','-m','comment','--comment','navatunnel-cluster','-j','NAVA-CLUSTER']
-            if run(['iptables','-w','5','-t','nat','-C','PREROUTING',*rule],False).returncode:run(['iptables','-w','5','-t','nat','-I','PREROUTING','1',*rule])
-    for table,chain,rule in [('nat','POSTROUTING',['-m','connmark','--mark',MARK,'-m','conntrack','--ctstate','DNAT','-j','MASQUERADE']),('filter','FORWARD',['-m','connmark','--mark',MARK,'-m','conntrack','--ctstate','DNAT','-j','ACCEPT'])]:
-        if run(['iptables','-w','5','-t',table,'-C',chain,*rule],False).returncode:run(['iptables','-w','5','-t',table,'-I',chain,'1',*rule])
-    run(['sysctl','-w','net.ipv4.ip_forward=1'])
-
-
-def cluster_clear(config):
-    # Restore local forwarding first; leave no active DNAT in our chain.
-    if run(['iptables','-w','5','-t','nat','-S','NAVA-CLUSTER'],False).returncode==0:run(['iptables-restore','--noflush','-w','5'],input=cluster_rules([]))
-    for proto in ('tcp','udp'):
-        for p in config['ports']:
-            rule=['-p',proto,'--dport',str(p),'-m','addrtype','--dst-type','LOCAL','-m','comment','--comment','navatunnel-cluster','-j','NAVA-CLUSTER']
-            if run(['iptables','-w','5','-t','nat','-C','PREROUTING',*rule],False).returncode==0:run(['iptables','-w','5','-t','nat','-D','PREROUTING',*rule])
-    for table,chain,rule in [('nat','POSTROUTING',['-m','connmark','--mark',MARK,'-m','conntrack','--ctstate','DNAT','-j','MASQUERADE']),('filter','FORWARD',['-m','connmark','--mark',MARK,'-m','conntrack','--ctstate','DNAT','-j','ACCEPT'])]:
-        if run(['iptables','-w','5','-t',table,'-C',chain,*rule],False).returncode==0:run(['iptables','-w','5','-t',table,'-D',chain,*rule])
-
-
-def debounced(previous,success,failures,recoveries,initial=False):
-    value=dict(previous or dict(healthy=initial,up=0,down=0))
-    value['up']=value.get('up',0)+1 if success else 0;value['down']=value.get('down',0)+1 if not success else 0
-    if value['down']>=failures:value['healthy']=False
-    if value['up']>=recoveries:value['healthy']=True
-    return value
-
-
-def choose_targets(config,health):
-    local=health.get('local',{}).get('healthy',True)
-    available=[dict(host=n['host'],weight=n['weight']) for n in config['nodes'] if health.get(n['host'],{}).get('healthy')]
-    if config['mode']=='failover':return [] if local else available[:1]
-    if config['mode']=='lowest-latency':
-        if local:return []
-        return sorted(available,key=lambda t:health[t['host']].get('latency_ms',1e9))[:1]
-    return ([dict(host='local',weight=config['local_weight'])] if local else [])+available
-
-
-def cluster(args):
-    path=STATE/'cluster.json';cfg=load(path,dict(enabled=False,ports=[],mode='failover',nodes=[],failures=3,recoveries=3,local_weight=1))
-    if args.action=='health':print(json.dumps(local_health()));return
-    if args.action=='init':
-        if cfg['enabled']:raise ValueError('Disable the cluster before changing its service ports or mode.')
-        cfg.update(ports=ports(args.ports),mode=args.mode,failures=args.failures,recoveries=args.recoveries,local_weight=args.weight)
-        if not 1<=cfg['failures']<=30 or not 1<=cfg['recoveries']<=30 or not 1<=args.weight<=100:raise ValueError('Invalid debounce thresholds or weight.')
-        save(path,cfg);print('Cluster configured, disabled by default. Add healthy Iran peers before enabling.')
-    elif args.action=='trust':
-        # Provision only a forced read-only health key; no remote forwarding or shell access.
-        public=keypair(STATE/'cluster-key')
-        host=ipv4(args.host);ssh_port=port(args.ssh_port)
-        encoded=base64.urlsafe_b64encode(public.encode()).decode()
-        bootstrap(host,ssh_port,['cluster','accept-key','--bundle',encoded]);print('Cluster read-only SSH health key installed.')
-    elif args.action=='accept-key':
-        public=base64.b64decode(args.bundle,altchars=b'-_',validate=True).decode()
-        fingerprint=__import__('hashlib').sha256(public.encode()).hexdigest()[:12]
-        authorize(public,'nava-cluster-'+fingerprint,'restrict,command="/bin/bash /usr/local/bin/NavaTunnel-extra.sh cluster health"')
-    elif args.action=='add':
-        host=ipv4(args.host);ssh_port=port(args.ssh_port)
-        if not 1<=args.weight<=100:raise ValueError('Weight must be between 1 and 100.')
-        local_ips={p.get('local_pub') for p in load(STATE/'peers.json',{}).get('peers',[])}
-        for entry in json.loads(run(['ip','-j','-4','addr','show']).stdout):
-            local_ips.update(a.get('local') for a in entry.get('addr_info',[]))
-        if host in local_ips:raise ValueError('A cluster peer must not point to this server itself.')
-        if any(n['host']==host for n in cfg['nodes']):raise ValueError('Cluster node already exists.')
-        cfg['nodes'].append(dict(host=host,ssh_port=ssh_port,weight=args.weight));save(path,cfg)
-    elif args.action=='remove':
-        cfg['nodes']=[n for n in cfg['nodes'] if n['host']!=ipv4(args.host)];save(path,cfg)
-    elif args.action=='restore':
-        if cfg.get('enabled'):
-            save(STATE/'cluster-runtime.json',{})
-            args.action='enable';cluster(args)
-    elif args.action=='enable':
-        if not cfg['ports'] or not cfg['nodes'] or not (STATE/'cluster-key').exists():raise ValueError('Initialize cluster service ports and trust/add peers first.')
-        cfg['enabled']=True;save(path,cfg)
-        save(UNITS/'NavaTunnel-cluster.service','[Unit]\nDescription=NavaTunnel cluster monitor\nAfter=network-online.target\n\n[Service]\nType=oneshot\nExecStart=/bin/bash '+str(EXTRA)+' cluster tick\n')
-        save(UNITS/'NavaTunnel-cluster.timer','[Unit]\nDescription=NavaTunnel cluster interval\n\n[Timer]\nOnBootSec=10\nOnUnitActiveSec=10\nUnit=NavaTunnel-cluster.service\n\n[Install]\nWantedBy=timers.target\n')
-        run(['systemctl','daemon-reload']);run(['systemctl','enable','--now','NavaTunnel-cluster.timer']);print('Cluster monitor enabled; new connections are rerouted only after health thresholds are met.')
-    elif args.action=='purge':
-        key=ROOT_KEYS/'authorized_keys'
-        if key.exists():save(key,'\n'.join(line for line in key.read_text().splitlines() if not re.search(r' nava-cluster-[a-f0-9]{12}$',line))+'\n')
-    elif args.action=='disable':
-        run(['systemctl','disable','--now','NavaTunnel-cluster.timer'],False);cluster_clear(cfg);cfg['enabled']=False;save(path,cfg);save(STATE/'cluster-runtime.json',{})
-    elif args.action=='status':
-        safe=dict(cfg,runtime=load(STATE/'cluster-runtime.json',{}));print(json.dumps(safe,indent=2))
-    elif args.action=='tick':
-        if not cfg['enabled']:return
-        with open(STATE/'cluster-tick.lock','a') as lock:
-            try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
-            except BlockingIOError:return
-            runtime=load(STATE/'cluster-runtime.json',{});health=runtime.get('health',{})
-            local=local_health()
-            local_good=local['healthy'] and set(cfg['ports']).issubset(set(local.get('ports',[])))
-            health['local']=debounced(health.get('local'),local_good,cfg['failures'],cfg['recoveries'],True)
-            for node in cfg['nodes']:
-                begin=time.monotonic();good=False
-                try:
-                    result=run(['ssh','-T','-i',STATE/'cluster-key','-p',str(node['ssh_port']),'-o','BatchMode=yes','-o','IdentitiesOnly=yes','-o','StrictHostKeyChecking=yes','-o','UserKnownHostsFile='+str(STATE/'ssh-known-hosts'),'-o','ConnectTimeout=3','root@'+node['host'],'health'],timeout=6)
-                    reply=json.loads(result.stdout);good=reply.get('healthy') is True and set(cfg['ports']).issubset(set(reply.get('ports',[]))) and abs(time.time()-int(reply.get('timestamp',0)))<120
-                except (ValueError,TypeError,subprocess.TimeoutExpired,OSError):pass
-                value=debounced(health.get(node['host']),good,cfg['failures'],cfg['recoveries']);value['latency_ms']=round((time.monotonic()-begin)*1000,2);health[node['host']]=value
-            targets=choose_targets(cfg,health)
-            if targets!=runtime.get('targets',[]) or runtime.get('boot')!=BOOT:
-                try:cluster_firewall(cfg,targets)
-                except Exception:
-                    cluster_firewall(cfg,runtime.get('targets',[]));raise
-            save(STATE/'cluster-runtime.json',dict(health=health,targets=targets,boot=BOOT,updated=int(time.time())))
+def cleanup_retired():
+    # Migration only: remove the retired feature's own resources, never tunnel rules.
+    keys=ROOT_KEYS/'authorized_keys'
+    before=keys.read_text() if keys.exists() else ''
+    lines=[line for line in before.splitlines() if not re.search(r' nava-cluster-[a-f0-9]{12}$',line)]
+    after=before if lines==before.splitlines() else ('\n'.join(lines)+'\n' if lines else '')
+    artifacts=[STATE/name for name in ('cluster.json','cluster-runtime.json','cluster-key','cluster-key.pub','cluster-tick.lock')]
+    units=[UNITS/('NavaTunnel-cluster.'+suffix) for suffix in ('timer','service')]
+    if not any(p.exists() for p in artifacts+units) and after==before:return
+    for path in units:
+        if path.exists():run(['systemctl','disable','--now',path.name])
+    # Wait for any old timer invocation before deleting its state.
+    with open(STATE/'cluster-tick.lock','a') as lock:
+        fcntl.flock(lock,fcntl.LOCK_EX)
+        mark='0x4e560000/0xffff0000'
+        for table,chain,rule in [('nat','POSTROUTING',['-m','connmark','--mark',mark,'-m','conntrack','--ctstate','DNAT','-j','MASQUERADE']),('filter','FORWARD',['-m','connmark','--mark',mark,'-m','conntrack','--ctstate','DNAT','-j','ACCEPT'])]:
+            listing=run(['iptables','-w','5','-t',table,'-S',chain])
+            for line in listing.stdout.splitlines():
+                words=shlex.split(line)
+                if words==['-A',chain,*rule]:run(['iptables','-w','5','-t',table,'-D',chain,*rule])
+        listing=run(['iptables','-w','5','-t','nat','-S','PREROUTING'])
+        for line in listing.stdout.splitlines():
+            words=shlex.split(line)
+            if words[:2]==['-A','PREROUTING'] and '--comment' in words and '-j' in words and words[words.index('--comment')+1]=='navatunnel-cluster' and words[words.index('-j')+1]=='NAVA-CLUSTER':
+                run(['iptables','-w','5','-t','nat','-D',*words[1:]])
+        if run(['iptables','-w','5','-t','nat','-S','NAVA-CLUSTER'],False).returncode==0:
+            run(['iptables','-w','5','-t','nat','-F','NAVA-CLUSTER'])
+            run(['iptables','-w','5','-t','nat','-X','NAVA-CLUSTER'])
+        if after!=before:save(keys,after)
+        for path in artifacts+units:path.unlink(missing_ok=True)
+    run(['systemctl','daemon-reload'])
+    print('Retired Cluster services, owned firewall rules and health keys removed. Tunnels were preserved.')
 
 
 def nettools(args):
@@ -604,17 +489,6 @@ def menu(family):
             elif choice=='8':args=['navalink','logs','--id',input('Connection ID: ').strip()]
             elif choice in ('3','4','5','6'):args=['navalink',dict({'3':'start','4':'stop','5':'restart','6':'remove'})[choice],'--id',input('Connection ID: ').strip()]
             else:continue
-        elif family=='cluster':
-            print('SSH cluster — other Iran servers; no web API\n1) Configure (disabled by default)\n2) Trust and add Iran peer\n3) Status\n4) Enable monitor\n5) Disable / restore local route\n6) Remove peer\n0) Back')
-            choice=input('Select: ').strip()
-            if choice=='0':return
-            if choice=='1':args=['cluster','init','--ports',input('Public service ports: ').strip(),'--mode',input('Mode [failover / lowest-latency / weighted]: ').strip() or 'failover']
-            elif choice=='2':
-                host=input('Other Iran SSH IPv4: ').strip();ssh_port=input('SSH port [22]: ').strip() or '22'
-                invoke(['cluster','trust','--host',host,'--ssh-port',ssh_port]);args=['cluster','add','--host',host,'--ssh-port',ssh_port,'--weight',input('Weight [1]: ').strip() or '1']
-            elif choice in ('3','4','5'):args=['cluster',{'3':'status','4':'enable','5':'disable'}[choice]]
-            elif choice=='6':args=['cluster','remove','--host',input('Peer IPv4: ').strip()]
-            else:continue
         else:
             print('Network tools\n1) Measure path MTU (no changes)\n2) Measure and apply MTU\n3) tcpMux status\n4) Save tcpMux on\n5) Save tcpMux off\n6) Pool diagnostics\n0) Back')
             choice=input('Select: ').strip()
@@ -633,16 +507,16 @@ def invoke(argv):
     parser=argparse.ArgumentParser(description='Optional NavaTunnel engines and network tools')
     subs=parser.add_subparsers(dest='family',required=True)
     n=subs.add_parser('navalink');n.add_argument('action',choices=('setup','join','status','health','restore','start','stop','restart','remove','endpoint','logs'));n.add_argument('--replace-peer',type=int);n.add_argument('--host');n.add_argument('--public-ip');n.add_argument('--ssh-port',default=22,type=int);n.add_argument('--ports');n.add_argument('--control-port',type=int);n.add_argument('--name',default='');n.add_argument('--bundle');n.add_argument('--id')
-    c=subs.add_parser('cluster');c.add_argument('action',choices=('init','trust','accept-key','add','remove','enable','disable','status','tick','health','restore','purge'));c.add_argument('--host');c.add_argument('--ssh-port',type=int,default=22);c.add_argument('--bundle');c.add_argument('--ports');c.add_argument('--mode',choices=('failover','lowest-latency','weighted'),default='failover');c.add_argument('--weight',type=int,default=1);c.add_argument('--failures',type=int,default=3);c.add_argument('--recoveries',type=int,default=3)
     m=subs.add_parser('path-mtu');m.add_argument('--interface',default='gre-tunnel');m.add_argument('--peer',required=True);m.add_argument('--apply',action='store_true')
     mux=subs.add_parser('tcp-mux');mux.add_argument('action',choices=('on','off','status'),default='status',nargs='?')
-    subs.add_parser('pool');ui=subs.add_parser('menu');ui.add_argument('page',choices=('navalink','cluster','network'))
+    subs.add_parser('cleanup-retired')
+    subs.add_parser('pool');ui=subs.add_parser('menu');ui.add_argument('page',choices=('navalink','network'))
     args=parser.parse_args(argv)
     if os.geteuid()!=0:raise ValueError('Run as root.')
     STATE.mkdir(parents=True,exist_ok=True)
     if args.family=='menu':menu(args.page)
     elif args.family=='navalink':navalink(args)
-    elif args.family=='cluster':cluster(args)
+    elif args.family=='cleanup-retired':cleanup_retired()
     else:nettools(args)
 
 

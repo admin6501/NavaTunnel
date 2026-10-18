@@ -96,13 +96,6 @@ class NavaLinkTests(ExtraHarness):
         self.assertEqual(self.engine.SSH_CONFIG.read_bytes(),before)
         self.assertFalse((home/'.ssh/authorized_keys').exists())
 
-    def test_read_only_cluster_key_does_not_replace_unrelated_root_keys(self):
-        key=self.engine.ROOT_KEYS/'authorized_keys';key.write_text('existing-root-key\n')
-        self.engine.authorize(self.record['public_key'],'nava-cluster-test','restrict,command="/bin/false"')
-        self.engine.authorize(self.record['public_key'],'nava-cluster-test','restrict,command="/bin/false"')
-        text=key.read_text();self.assertIn('existing-root-key',text);self.assertEqual(text.count('nava-cluster-test'),1)
-        self.assertEqual(key.stat().st_mode & 0o777,0o600)
-
     def test_invalid_id_or_bundle_is_rejected_without_commands(self):
         for args in (['navalink','stop','--id','../../root'],['navalink','join','--bundle','not_a_bundle']):
             with self.assertRaises(ValueError):self.invoke(args)
@@ -144,71 +137,6 @@ class NavaLinkTests(ExtraHarness):
         self.calls=[];self.engine.ensure_cores=lambda:None;self.engine.wire_counter=lambda *a:None
         self.invoke(['navalink','restore'])
         self.assertFalse(any('start' in cmd for cmd,_ in self.calls))
-
-
-class ClusterTests(ExtraHarness):
-    def test_health_debounce_and_recovery_require_multiple_checks(self):
-        state=None
-        for _ in range(2):state=self.engine.debounced(state,False,3,2,True)
-        self.assertTrue(state['healthy'])
-        state=self.engine.debounced(state,False,3,2,True);self.assertFalse(state['healthy'])
-        state=self.engine.debounced(state,True,3,2);self.assertFalse(state['healthy'])
-        state=self.engine.debounced(state,True,3,2);self.assertTrue(state['healthy'])
-
-    def config(self):return dict(mode='failover',ports=[443],nodes=[dict(host='198.51.100.1',weight=2,ssh_port=22),dict(host='198.51.100.2',weight=1,ssh_port=22)],local_weight=1,failures=3,recoveries=3,enabled=True)
-
-    def test_failover_stays_local_while_local_is_healthy(self):
-        cfg=self.config();health={'local':{'healthy':True},'198.51.100.1':{'healthy':True}}
-        self.assertEqual(self.engine.choose_targets(cfg,health),[])
-        health['local']['healthy']=False
-        self.assertEqual(self.engine.choose_targets(cfg,health),[dict(host='198.51.100.1',weight=2)])
-
-    def test_low_latency_selects_healthy_candidate_only(self):
-        cfg=self.config();cfg['mode']='lowest-latency'
-        health={'local':{'healthy':False},'198.51.100.1':dict(healthy=False,latency_ms=1),'198.51.100.2':dict(healthy=True,latency_ms=90)}
-        self.assertEqual(self.engine.choose_targets(cfg,health),[dict(host='198.51.100.2',weight=1)])
-
-    def test_weighted_nat_keeps_local_share_and_preserves_other_chains(self):
-        cfg=self.config();cfg['mode']='weighted'
-        targets=self.engine.choose_targets(cfg,{'local':{'healthy':True},'198.51.100.1':{'healthy':True}})
-        text=self.engine.cluster_rules(targets)
-        self.assertIn('--probability 0.3333333333',text);self.assertIn('-j RETURN',text)
-        self.assertIn('DNAT --to-destination 198.51.100.1',text)
-        self.assertNotIn('-F PREROUTING',text);self.assertNotIn(':PREROUTING',text)
-        self.engine.cluster_firewall(cfg,targets)
-        self.assertIn('--noflush',self.calls[0][0])
-
-    def test_cluster_is_disabled_after_initial_configuration(self):
-        self.invoke(['cluster','init','--ports','443,8443'])
-        cfg=self.engine.load(self.engine.STATE/'cluster.json',{})
-        self.assertFalse(cfg['enabled']);self.assertEqual(self.calls,[])
-
-    def test_cluster_refuses_its_own_public_ip(self):
-        self.engine.save(self.engine.STATE/'peers.json',dict(peers=[dict(local_pub='203.0.113.1')]))
-        with self.assertRaises(ValueError):self.invoke(['cluster','add','--host','203.0.113.1'])
-
-    def test_boot_change_reapplies_saved_failover_rules(self):
-        cfg=self.config();self.engine.save(self.engine.STATE/'cluster.json',cfg)
-        self.engine.save(self.engine.STATE/'cluster-runtime.json',dict(boot='old-boot',health={},targets=[]))
-        self.engine.local_health=lambda:dict(healthy=True,ports=[443])
-        applied=[];self.engine.cluster_firewall=lambda config,targets:applied.append(targets)
-        self.invoke(['cluster','tick'])
-        self.assertEqual(applied,[[]])
-        self.assertEqual(self.engine.load(self.engine.STATE/'cluster-runtime.json',{})['boot'],self.engine.BOOT)
-
-    def test_cluster_disable_clears_only_its_owned_rules(self):
-        cfg=self.config();self.engine.save(self.engine.STATE/'cluster.json',cfg)
-        self.invoke(['cluster','disable'])
-        for cmd,body in self.calls:
-            self.assertNotIn('-F',cmd)
-            if '-D' in cmd:self.assertTrue('navatunnel-cluster' in cmd or self.engine.MARK in cmd)
-        self.assertFalse(self.engine.load(self.engine.STATE/'cluster.json',{})['enabled'])
-
-    def test_healthy_service_requires_a_control_session_not_only_active_process(self):
-        self.engine.save(self.engine.STATE/'peers.json',dict(peers=[dict(peer_gre='10.200.0.1',frp_port=42128,frps_svc='frps',ports=[443],gre_if='gre-tunnel')]))
-        self.assertFalse(self.engine.local_health()['healthy'])
-        self.engine.session_up=lambda *a:True
-        health=self.engine.local_health();self.assertTrue(health['healthy']);self.assertEqual(health['ports'],[443])
 
 
 class NetworkToolsTests(ExtraHarness):
@@ -274,9 +202,50 @@ class HelperInputTests(unittest.TestCase):
             source=source.replace("STATE=Path('/etc/gre-panel')", "STATE=Path("+repr(folder)+")")
             source=source.replace("if os.geteuid()!=0:", "if False:")
             script=Path(folder)/'helper.sh';script.write_text(source)
-            for page,choice in (('navalink','2'),('cluster','3'),('network','3')):
+            for page,choice in (('navalink','2'),('network','3')):
                 with self.subTest(page=page):
                     result=subprocess.run(['bash',str(script),'menu',page],input=choice+'\n\n0\n',text=True,capture_output=True,timeout=5)
                     self.assertEqual(result.returncode,0,result.stderr)
                     self.assertGreaterEqual(result.stdout.count('0) Back'),2)
                     self.assertNotIn('operation failed',result.stderr)
+
+class RetiredCleanupTests(ExtraHarness):
+    def test_empty_installation_is_a_noop_and_preserves_key_format(self):
+        path=self.engine.ROOT_KEYS/'authorized_keys';path.write_text('unrelated-key')
+        self.engine.cleanup_retired()
+        self.assertEqual(self.calls,[]);self.assertEqual(path.read_text(),'unrelated-key')
+
+    def test_cleanup_removes_only_owned_state_units_rules_and_health_keys(self):
+        state=self.engine.STATE
+        self.engine.save(state/'cluster.json',dict(enabled=True,ports=[443]))
+        self.engine.save(state/'traffic.json',dict(untouched=True))
+        self.engine.save(state/'navalink'/'012345abcdef'/'config.json',self.record)
+        for suffix in ('service','timer'):(self.engine.UNITS/('NavaTunnel-cluster.'+suffix)).write_text('old')
+        keys=self.engine.ROOT_KEYS/'authorized_keys'
+        keys.write_text('other-root-key\nrestrict,command="health" ssh-ed25519 AAA nava-cluster-012345abcdef\n')
+        original=self.fake_run
+        def runner(args,*pos,**kwargs):
+            result=original(args,*pos,**kwargs)
+            if '-S' in args:
+                if args[-1]=='PREROUTING':result.stdout='-A PREROUTING -p tcp --dport 443 -m comment --comment navatunnel-cluster -j NAVA-CLUSTER\n-A PREROUTING -p tcp --dport 80 -j OTHER\n'
+                if args[-1]=='POSTROUTING':result.stdout='-A POSTROUTING -m connmark --mark 0x4e560000/0xffff0000 -m conntrack --ctstate DNAT -j MASQUERADE\n-A POSTROUTING -o eth0 -j MASQUERADE\n'
+            return result
+        self.engine.run=runner;self.engine.cleanup_retired()
+        self.assertEqual(keys.read_text(),'other-root-key\n')
+        self.assertFalse((state/'cluster.json').exists())
+        self.assertTrue((state/'traffic.json').exists());self.assertTrue((state/'navalink'/'012345abcdef'/'config.json').exists())
+        for cmd,_ in self.calls:
+            if '-F' in cmd or '-X' in cmd:self.assertEqual(cmd[-1],'NAVA-CLUSTER')
+            if '-D' in cmd:self.assertTrue('navatunnel-cluster' in cmd or '0x4e560000/0xffff0000' in cmd)
+        self.calls=[];self.engine.cleanup_retired();self.assertEqual(self.calls,[])
+
+    def test_failure_preserves_configuration_for_retry(self):
+        self.engine.save(self.engine.STATE/'cluster.json',dict(enabled=True))
+        def fail(*args,**kwargs):raise ValueError('firewall unavailable')
+        self.engine.run=fail
+        with self.assertRaises(ValueError):self.engine.cleanup_retired()
+        self.assertTrue((self.engine.STATE/'cluster.json').exists())
+
+    def test_removed_commands_and_menu_are_not_available(self):
+        with contextlib.redirect_stderr(io.StringIO()),self.assertRaises(SystemExit):self.invoke(['cluster','enable'])
+        with contextlib.redirect_stderr(io.StringIO()),self.assertRaises(SystemExit):self.invoke(['menu','cluster'])

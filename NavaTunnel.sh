@@ -5206,7 +5206,7 @@ uninstall_all() {
 # `NavaTunnel` stops working.
 uninstall_all_force() {
         echo -e "${CYAN}[*] Complete deletion NavaTunnel...${NC}"
-        if [[ -f "$NAVATUNNEL_STATE_DIR/cluster.json" ]]; then cli_extra cluster disable || return 1; fi
+        cleanup_retired_features || return 1
         if [[ -d "$NAVATUNNEL_STATE_DIR/navalink" ]]; then
             local extra_id extra_ids
             extra_ids=$(python3 - "$NAVATUNNEL_STATE_DIR/navalink" <<'PYCLEAN'
@@ -5219,8 +5219,6 @@ PYCLEAN
 ) || return 1
             while read -r extra_id; do [[ -z "$extra_id" ]] || cli_extra navalink remove --id "$extra_id" || return 1; done <<< "$extra_ids"
         fi
-        if [[ -f /usr/local/bin/NavaTunnel-extra.sh ]]; then cli_extra cluster purge || return 1; fi
-        rm -f /etc/systemd/system/NavaTunnel-cluster.service /etc/systemd/system/NavaTunnel-cluster.timer
 
         if [[ -f /etc/gre-panel/traffic.json ]]; then cli_traffic clear || return 1; fi
         # 1. Stop & disable all services & timers
@@ -6065,9 +6063,9 @@ backup_now() {
     local FILES=()
     local f
     for f in /etc/frp/*.toml /etc/gre-panel/peers.json /etc/gre-panel/watchdog.json \
-             /etc/gre-panel/perf.json /etc/gre-panel/traffic.json /etc/gre-panel/mtu.json /etc/gre-panel/backup.key /etc/gre-panel/stopped /etc/gre-panel/navalink /etc/gre-panel/cluster.json /etc/gre-panel/cluster-runtime.json /etc/gre-panel/cluster-key /etc/gre-panel/cluster-key.pub /etc/gre-panel/ssh-known-hosts \
+             /etc/gre-panel/perf.json /etc/gre-panel/traffic.json /etc/gre-panel/mtu.json /etc/gre-panel/backup.key /etc/gre-panel/stopped /etc/gre-panel/navalink /etc/gre-panel/ssh-known-hosts \
              /etc/systemd/system/gre-*.service /etc/systemd/system/frps*.service \
-             /etc/systemd/system/frpc*.service /etc/systemd/system/gre-chaff*.service /etc/systemd/system/navalink-*.service /etc/systemd/system/NavaTunnel-cluster.*; do
+             /etc/systemd/system/frpc*.service /etc/systemd/system/gre-chaff*.service /etc/systemd/system/navalink-*.service; do
         [[ -f "$f" || -d "$f" ]] && FILES+=("$f")
     done
 
@@ -6464,7 +6462,7 @@ backup_restore() {
         if [[ -n "$LOCAL_IP" ]]; then NAVATUNNEL_DEFER_CARRIER=1 cli_extra navalink restore || return 1
         else cli_extra navalink restore || return 1; fi
     fi
-    if [[ -f "$NAVATUNNEL_STATE_DIR/cluster.json" ]]; then cli_extra cluster restore || return 1; fi
+    cleanup_retired_features || return 1
     ((tunnel_start_failed == 0)) || { echo 'Files restored, but some tunnel services failed to start. Check their journals.' >&2; return 1; }
     echo -e "${GREEN}[✔️] The restore was successful.${NC}"
     return 0
@@ -7076,6 +7074,7 @@ update_all() {
     if ! download_with_fallback "$TMP_U/NavaTunnel-extra.sh" "$NAVATUNNEL_URL_BASE/NavaTunnel-extra.sh" 30 || ! bash -n "$TMP_U/NavaTunnel-extra.sh"; then
         echo 'Optional engine helper update failed; scripts were not replaced.' >&2; return 1
     fi
+    bash "$TMP_U/NavaTunnel-extra.sh" cleanup-retired || return 1
     install -m 755 "$TMP_U/NavaTunnel-extra.sh" /usr/local/bin/NavaTunnel-extra.sh || return 1
     install -m 755 "$TMP_U/NavaTunnel-traffic.sh" /usr/local/bin/NavaTunnel-traffic.sh || return 1
     # 3. replace running script only after everything succeeded
@@ -7428,11 +7427,10 @@ menu_optimization() {
         echo "  7) Free cache memory and configure swap"
         echo "  8) Restore network settings"
         echo "  9) NavaLink — FRP over reverse SSH"
-        echo "  10) Cluster — SSH-managed Iran peers"
-        echo "  11) Path MTU, tcpMux and pool diagnostics"
+        echo "  10) Path MTU, tcpMux and pool diagnostics"
         echo "  0) Return to the main menu"
         echo ""
-        read -r -p "Select option [0-11]: " O_OPT || return 0
+        read -r -p "Select option [0-10]: " O_OPT || return 0
         case "$O_OPT" in
             1) tune_apply; pause_prompt ;;
             2) menu_carrier ;;
@@ -7443,8 +7441,7 @@ menu_optimization() {
             7) free_ram; pause_prompt ;;
             8) tune_restore; pause_prompt ;;
             9) cli_extra menu navalink ;;
-            10) cli_extra menu cluster ;;
-            11) cli_extra menu network ;;
+            10) cli_extra menu network ;;
             0) return 0 ;;
             *) echo -e "${RED}[!] Invalid option.${NC}"; sleep 1 ;;
         esac
@@ -7874,7 +7871,6 @@ Usage:
   NavaTunnel                                    # Interactive management menu
   NavaTunnel menu                               # Admin menu with all options
   NavaTunnel navalink setup|status|start|stop|restart|remove  # Optional FRP over reverse SSH
-  NavaTunnel cluster init|trust|add|status|enable|disable  # Optional SSH-only cluster
   NavaTunnel path-mtu --interface gre-tunnel --peer IP [--apply]
   NavaTunnel tcp-mux status|on|off
   NavaTunnel pool
@@ -8085,6 +8081,12 @@ cli_setup_foreign() {
     setup_foreign_server_noninteractive "$LOCAL_PUB" "$REMOTE_PUB" "$FRP_PORT" "$TOKEN" "$LOCAL_GRE" "$PEER_GRE" "$CLEANED" "$RELAY_IP" "$PROXY_PROTOCOL" "$FRP_TRANSPORT" "$FRP_ENCRYPTION" "$FRP_COMPRESSION"
 }
 
+cleanup_retired_features() {
+    if [[ -f "$NAVATUNNEL_STATE_DIR/cluster.json" || -f "$NAVATUNNEL_STATE_DIR/cluster-key" || -f "$NAVATUNNEL_STATE_DIR/cluster-runtime.json" || -f "$NAVATUNNEL_STATE_DIR/cluster-key.pub" || -f "$NAVATUNNEL_STATE_DIR/cluster-tick.lock" || -f /etc/systemd/system/NavaTunnel-cluster.service || -f /etc/systemd/system/NavaTunnel-cluster.timer ]] || grep -qE ' nava-cluster-[a-f0-9]{12}$' /root/.ssh/authorized_keys 2>/dev/null; then
+        cli_extra cleanup-retired || return 1
+    fi
+}
+
 if [[ $# -gt 0 ]]; then
     case "$1" in
         -h|--help|help) usage_cli; exit 0 ;;
@@ -8100,6 +8102,7 @@ if [[ $# -gt 0 ]]; then
 
     check_root
     ensure_navatunnel_bin
+    if [[ "$1" != update && "$1" != update-all ]]; then cleanup_retired_features || exit 1; fi
     case "$1" in
         menu) main_menu ;;
         setup-iran) shift; cli_setup_iran "$@" ;;
@@ -8127,7 +8130,7 @@ if [[ $# -gt 0 ]]; then
         watchdog) shift; cli_watchdog "$@" ;;
         backup) shift; cli_backup "$@" ;;
         migrate) shift; cli_migrate "$@" ;;
-        navalink|cluster|path-mtu|tcp-mux|pool) cli_extra "$@" ;;
+        navalink|path-mtu|tcp-mux|pool) cli_extra "$@" ;;
         prepare-runtime) ensure_dependencies_smart && ensure_traffic_helper && install_frp_binaries all ;;
         tgsend) shift; watchdog_send "$1" ;;
         update|update-all) update_all ;;
@@ -8162,4 +8165,5 @@ fi
 # ---- No arguments: interactive terminal management ----
 check_root
 ensure_navatunnel_bin
+cleanup_retired_features || exit 1
 main_menu

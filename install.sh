@@ -62,6 +62,7 @@ cp "$TMP/NavaTunnel.sh" /usr/local/bin/NavaTunnel
 chmod +x /usr/local/bin/NavaTunnel.sh /usr/local/bin/NavaTunnel
 ln -sf /usr/local/bin/NavaTunnel.sh /usr/local/bin/gre.sh 2>/dev/null || true
 
+bash /usr/local/bin/NavaTunnel-extra.sh cleanup-retired
 bash /usr/local/bin/NavaTunnel "$@"
 
 echo -e "\033[1;32mNavaTunnel installation completed\033[0m"

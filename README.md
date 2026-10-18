@@ -284,14 +284,12 @@ Existing destination settings and its encryption key are privately copied to `/v
 
 Moving one server does not update the opposite servers over SSH. After moving Iran, apply the new connection commands on its foreign servers. A private `migration-*-foreign-commands.txt` file is generated on the destination; it contains connection tokens. After moving a foreign server, update its public IP on Iran. Do not retire the source until the new endpoints work. End-to-end connectivity is not implied by successful service startup.
 
-## NavaLink, SSH cluster and network tools
+## NavaLink and network tools
 
 Optional terminal-only features are now under **2) Advanced settings → 9)
-NavaLink, 10) Cluster, 11) Network tools**. NavaLink is FRP over a restricted
+NavaLink, 10) Network tools**. NavaLink is FRP over a restricted
 reverse SSH carrier; it can explicitly convert an existing GRE peer while
-preserving its quota and keeping a rollback snapshot. Cluster supports local
-failover, low-latency backup selection and weighted new connections between
-Iran nodes, using SSH health keys instead of a web API. Network tools add
+preserving its quota and keeping a rollback snapshot. Network tools add
 path-MTU probes, a persistent tcpMux setting and read-only pool diagnostics.
 
 All new routing/engine options are opt-in. No web panel, Backhaul or paid

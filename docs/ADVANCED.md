@@ -2,15 +2,14 @@
 
 These features are independent of the web panel and do not use Backhaul or a
 paid activation service. The repository remains under its existing AGPL-3.0
-license. None of the new engines, cluster routing or tuning switches is enabled
+license. None of the new engines or tuning switches is enabled
 by updating the script.
 
 Update with `NavaTunnel update-all`, reopen `NavaTunnel`, then choose **2)
 Advanced settings for speed and security**:
 
 - **9) NavaLink:** FRP over a reverse SSH carrier.
-- **10) Cluster:** SSH-managed Iran peers, health debounce and owned NAT rules.
-- **11) Network tools:** path-MTU measurement, coordinated tcpMux settings and
+- **10) Network tools:** path-MTU measurement, coordinated tcpMux settings and
   pool diagnostics.
 
 ## NavaLink
@@ -114,63 +113,6 @@ addresses, client connection addresses and DNS still need the usual migration
 updates. Usage generated after the backup snapshot is not automatically
 merged from the old host.
 
-## SSH cluster
-
-This is a group of Iran ingress servers. Each member must already have a
-working route to the intended foreign services, the same public service ports,
-and compatible user/inbound settings. It does not create those services or
-synchronize VPN user databases.
-
-On the Iran ingress that should control routing:
-
-```bash
-NavaTunnel cluster init --ports 2443,8443 --mode failover --failures 3 --recoveries 3
-NavaTunnel cluster trust --host 203.0.113.20 --ssh-port 22
-NavaTunnel cluster add --host 203.0.113.20 --ssh-port 22 --weight 1
-NavaTunnel cluster status
-NavaTunnel cluster enable
-```
-
-Trust asks for normal root SSH authentication once and installs a key that
-can only report the peer's native cluster health. It cannot execute arbitrary
-commands or open forwards. There is no web API or additional listening panel.
-Configuration is disabled by default; enabling starts a 10-second systemd timer.
-Three consecutive failing checks are required by default, with three healthy
-checks for recovery.
-
-Modes:
-
-- `failover`: keep the local path while healthy; otherwise select the first
-  healthy configured backup.
-- `lowest-latency`: keep a healthy local path; choose the healthy backup with
-  the lowest SSH health-query round-trip time when local fails. This is not a
-  throughput or one-way latency benchmark.
-- `weighted`: distribute **new connections** across the healthy local path and
-  healthy peers in proportion to their weights.
-
-Health requires an active relay and an established FRP control session. A
-running process alone does not count, and ICMP loss alone does not trigger a
-route change. All requested ports must be advertised by healthy local links
-on a candidate. This is still not an end-to-end VPN authentication or download
-test, and it does not currently offer a packet-loss percentage switch threshold.
-
-Only NavaTunnel's dedicated NAT chain and marked forwarding/MASQUERADE rules
-are changed. Existing conntrack entries and unrelated firewall chains are
-preserved. The peer sees the forwarding Iran host's source IP. The original
-client IP is not preserved through this NAT hop.
-
-```bash
-NavaTunnel cluster status
-NavaTunnel cluster disable
-NavaTunnel cluster remove --host 203.0.113.20
-```
-
-Disable returns new flows to the local path and removes the owned forwarding
-rules. Existing TCP connections cannot be moved seamlessly to another server;
-clients may need to reconnect. If the public ingress server itself becomes
-unreachable, it cannot forward anything: DNS/client failover or an external
-entry mechanism is still necessary. This is not automatic public-IP takeover.
-
 ## Network tools
 
 ```bash
@@ -207,8 +149,9 @@ permissions. An old backup containing unsupported custom paths is rejected
 rather than extracted unrestrictedly.
 
 Regression tests cover permissions, key restrictions, rollback, preserving
-traffic quotas, health debounce, port/ID reservations, MTU and helper menus.
-The namespace NAT lab checks actual forwarding and cleanup. The privileged
-CI SSH lab checks actual FRP TCP/UDP over reverse SSH plus denied shell access,
+traffic quotas, retired-feature cleanup, port/ID reservations, MTU and helper menus.
+The privileged CI SSH lab checks actual FRP TCP/UDP over reverse SSH plus denied shell access,
 local forwarding and a different reverse listener. These do not replace tests
 on your own provider's network.
+
+Older Cluster installations are retired automatically during update or the first run: their timer, owned firewall rules and health keys are removed. Existing tunnels and NavaLink are preserved. Old backups do not reactivate Cluster.
