@@ -76,20 +76,6 @@ var errCatalog = map[string]errInfo{
 	"E-UPDATE-08": {400, "invalid update channel", "Channel must be stable or dev."},
 	"E-UPDATE-09": {500, "new version did not start (rolled back)", "The panel went back to the previous version. Check the Logs tab, then try again or pick another version."},
 
-	"E-LIC-01": {403, "premium license required for this feature", "Activate a valid Premium license key in Settings to unlock this feature."},
-	"E-LIC-02": {400, "invalid license key format", "Check that the complete license string was pasted without extra spaces or line breaks."},
-	"E-LIC-03": {400, "license key signature invalid", "This license token has been tampered with or issued by an unrecognized authority."},
-	"E-LIC-04": {400, "license key expired", "This license has expired. Contact your provider for renewal."},
-	"E-LIC-05": {400, "license machine id mismatch", "This license is bound to a different server. Machine hash does not match."},
-	"E-LIC-06": {500, "failed saving license", "Check that /etc/gre-panel is writable (disk full or read-only?)."},
-
-	"E-SENTINEL-01": {403, "license missing the sentinel feature", "Activate a license that includes the 'sentinel' feature."},
-	"E-SENTINEL-02": {500, "sentinel install failed", "The installer output is appended; check internet access for dependencies and Xray."},
-	"E-SENTINEL-03": {500, "sentinel service failed", "Check: journalctl -u sentinel -n 50"},
-	"E-SENTINEL-04": {409, "sentinel is not installed", "Install Sentinel first."},
-	"E-SENTINEL-05": {409, "a sentinel install is already running", "Wait for the current install to finish, then refresh."},
-	"E-SENTINEL-06": {400, "bad sentinel request", "Reload the page and try again."},
-
 	"E-GRE-01":     {0, "GRE interface missing / down", "Tunnel setup did not create it, or it was deleted — reinstall that peer."},
 	"E-GRE-02":     {0, "GRE ping failed (100% loss / unreachable)", "Peers cannot reach each other: firewall, wrong public IP, or GRE blocked."},
 	"E-FRP-01":     {0, "frps service not active", "Start it from the peer card (Restart) or check its log."},
@@ -101,9 +87,6 @@ var errCatalog = map[string]errInfo{
 	"E-FRP-07":     {0, "connection reset by peer / broken pipe", "Remote peer or network carrier reset the TCP stream."},
 	"E-FRP-08":     {0, "connection tracking table full (packet dropped)", "Kernel nf_conntrack_max limit reached under high concurrent connections. Run Optimize in Tunnel tab."},
 	"E-FRP-09":     {0, "yamux stream capacity / buffer overflow", "High stream contention on single TCP mux. Increase poolCount in frpc."},
-	"E-BH-01":      {0, "backhaul authentication failed (token mismatch)", "The client token differs from the server token. Re-copy it from the Iran side; the token shown in logs is masked."},
-	"E-BH-02":      {0, "backhaul control channel failed (EOF)", "Usually a wrong token or a transport mismatch (e.g. tcp vs tcpmux/ws) between hub and spoke. Make both ends use the same transport and token."},
-	"E-BH-03":      {0, "backhaul rejected the config file", "The binary does not understand this config dialect (sectioned premium schema vs flat server/client). Re-run the Backhaul setup in `NavaTunnel`."},
 	"E-FRP-10":     {0, "frpc login failed with EOF (likely tcpMux mismatch)", "tcpMux mismatch: hub is likely tcpMux=true, run `NavaTunnel perf tcpmux on|off` so both ends match (default OFF)."},
 	"E-SYS-01":     {0, "host tool unavailable", "journalctl/systemctl/ip missing on this host."},
 	"E-SYS-02":     {503, "panel is busy (too many requests in flight)", "Retry in a couple of seconds; /api/selfstats still answers."},
@@ -188,7 +171,7 @@ var (
 func errorLogPath() string { return filepath.Join(configDir, "core-errors.log") }
 
 var tunnelErrFamilies = map[string]bool{
-	"GRE": true, "FRP": true, "BH": true, "PEER": true, "ACTION": true,
+	"GRE": true, "FRP": true, "PEER": true, "ACTION": true,
 	"RESCUE": true, "CARRIER": true, "ENGINE": true, "SSHFWD": true,
 }
 
@@ -235,12 +218,6 @@ func matchLogCode(line string) (code, hint string) {
 		return false
 	}
 	switch {
-	case has("invalid security token"):
-		return "E-BH-01", errCatalog["E-BH-01"].Hint
-	case has("failed to receive control channel response"):
-		return "E-BH-02", errCatalog["E-BH-02"].Hint
-	case has("neither server nor client configuration is properly set"):
-		return "E-BH-03", errCatalog["E-BH-03"].Hint
 	case has("connect to server error: eof"):
 		return "E-FRP-10", errCatalog["E-FRP-10"].Hint
 	case has("too many open files") || has("emfile", "enfile") || has("socket: too many"):

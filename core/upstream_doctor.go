@@ -288,11 +288,6 @@ func doctorConfigFindings(st tunnelStatus) []doctorFinding {
 		out = append(out, f)
 	}
 
-	if issue, rec := backhaulDoctorIssue(st); issue != "" {
-		f := newFinding("warning", "tunnel", 10, false, "{0}", "", issue)
-		f.Fix, f.FixTpl = rec, rec
-		out = append(out, f)
-	}
 	return out
 }
 
@@ -719,7 +714,7 @@ func mssRuleFrom(save string) string {
 }
 
 func engineNOFILE() int {
-	for _, svc := range []string{"frps", "frpc", "backhaul-server", "backhaul-client"} {
+	for _, svc := range []string{"frps", "frpc"} {
 		out, err := runCmdTimeoutOut(3*time.Second, "systemctl", "show", "-p", "MainPID", "--value", svc)
 		pid := strings.TrimSpace(string(out))
 		if err != nil || pid == "" || pid == "0" {
@@ -915,9 +910,7 @@ func greExpected(st tunnelStatus) bool {
 	if st.Gre.Exists {
 		return true
 	}
-	if st.Engine == "backhaul" {
-		return false
-	}
+
 	_, err := os.Stat(filepath.Join(engineUnitDir, "gre-tunnel.service"))
 	return err == nil
 }
@@ -959,35 +952,4 @@ func frpcLoginEOF() bool {
 		}
 	}
 	return false
-}
-
-func classifyBackhaulLog(raw string) string {
-	lines := strings.Split(raw, "\n")
-	for i := len(lines) - 1; i >= 0; i-- {
-		l := strings.ToLower(lines[i])
-		if strings.Contains(l, "control channel established successfully") ||
-			strings.Contains(l, "control channel successfully established") {
-			return ""
-		}
-		if code, _ := matchLogCode(lines[i]); strings.HasPrefix(code, "E-BH-") {
-			return code
-		}
-	}
-	return ""
-}
-
-func backhaulDoctorIssue(st tunnelStatus) (issue, recommendation string) {
-	if !strings.HasPrefix(st.FrpSvc, "backhaul") {
-		return "", ""
-	}
-	out, err := runCmdTimeoutOut(5*time.Second, "journalctl", "-u", st.FrpSvc, "-n", "80", "--no-pager")
-	if err != nil {
-		return "", ""
-	}
-	code := classifyBackhaulLog(string(out))
-	if code == "" {
-		return "", ""
-	}
-	e := errCatalog[code]
-	return fmt.Sprintf("%s: %s (%s)", st.FrpSvc, e.Msg, code), e.Hint
 }

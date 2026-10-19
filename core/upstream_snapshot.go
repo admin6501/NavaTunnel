@@ -32,7 +32,7 @@ const (
 	snapTaskTimeout  = 6 * time.Second
 )
 
-var baseUnits = []string{"frps", "frpc", "backhaul-server", "backhaul-client"}
+var baseUnits = []string{"frps", "frpc"}
 
 type icmpResult struct {
 	OK    bool

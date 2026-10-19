@@ -17,8 +17,7 @@ import (
 var configDir = "/etc/gre-panel"
 
 var (
-	frpDir      = "/etc/frp"
-	backhaulDir = "/etc/backhaul"
+	frpDir = "/etc/frp"
 )
 
 var runSystemctl = func(args ...string) error {

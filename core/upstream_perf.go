@@ -406,11 +406,7 @@ func perfEngine() string {
 	if m, _ := filepath.Glob(filepath.Join(frpDir, "frp[sc]*.toml")); len(m) > 0 {
 		return "frp"
 	}
-	for _, c := range staleConfigCandidates() {
-		if c.engine == "backhaul" && fileExists(c.path) {
-			return "backhaul"
-		}
-	}
+
 	return ""
 }
 

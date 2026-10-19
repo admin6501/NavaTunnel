@@ -62,12 +62,11 @@ type AutoPilotStatus struct {
 }
 
 type BenchmarkRunRequest struct {
-	TargetHost   string `json:"target_host,omitempty"`
-	TargetRole   string `json:"target_role,omitempty"`
-	FrpPort      int    `json:"frp_port,omitempty"`
-	WssPort      int    `json:"wss_port,omitempty"`
-	SshPort      int    `json:"ssh_port,omitempty"`
-	BackhaulPort int    `json:"backhaul_port,omitempty"`
+	TargetHost string `json:"target_host,omitempty"`
+	TargetRole string `json:"target_role,omitempty"`
+	FrpPort    int    `json:"frp_port,omitempty"`
+	WssPort    int    `json:"wss_port,omitempty"`
+	SshPort    int    `json:"ssh_port,omitempty"`
 }
 
 type BenchmarkApplyRequest struct {
@@ -388,7 +387,6 @@ func runCarrierBenchmark(customReq ...BenchmarkRunRequest) *BenchmarkReport {
 	}
 
 	sshPort := 22
-	backhaulPort := 3080
 
 	if len(customReq) > 0 {
 		req := customReq[0]
@@ -418,9 +416,7 @@ func runCarrierBenchmark(customReq ...BenchmarkRunRequest) *BenchmarkReport {
 		if req.SshPort > 0 {
 			sshPort = req.SshPort
 		}
-		if req.BackhaulPort > 0 {
-			backhaulPort = req.BackhaulPort
-		}
+
 	}
 
 	if remotePub == "" {
@@ -478,13 +474,6 @@ func runCarrierBenchmark(customReq ...BenchmarkRunRequest) *BenchmarkReport {
 			Type:     "wss",
 			Port:     wssPort,
 			IsActive: strings.HasPrefix(activeCarrier, "wss"),
-		},
-		{
-			ID:       fmt.Sprintf("backhaul:%d", backhaulPort),
-			Name:     fmt.Sprintf("Backhaul Transport (Port %d)", backhaulPort),
-			Type:     "backhaul",
-			Port:     backhaulPort,
-			IsActive: strings.Contains(activeCarrier, "backhaul"),
 		},
 		{
 			ID:       fmt.Sprintf("navalink:%d", sshPort),
@@ -550,7 +539,7 @@ func runCarrierBenchmark(customReq ...BenchmarkRunRequest) *BenchmarkReport {
 				c.ErrorDetail = "not measurable without a KCP/QUIC handshake; switch to it only if TCP carriers are blocked"
 				return
 
-			case "frp_tcp", "frp_ws", "backhaul", "frp", "navalink":
+			case "frp_tcp", "frp_ws", "frp", "navalink":
 				targetHost := remotePub
 				addr := net.JoinHostPort(targetHost, strconv.Itoa(c.Port))
 				avg, min, max, loss, jit, err := probeTCP(cctx, addr, probeCount, timeout)
@@ -577,11 +566,11 @@ func runCarrierBenchmark(customReq ...BenchmarkRunRequest) *BenchmarkReport {
 	bestCarrier := ""
 	bestCarrierName := ""
 	for i := range candidates {
-		if candidates[i].Status == benchUnmeasured {
+		if candidates[i].Status == benchUnmeasured || carrierApplicable(candidates[i].ID) != nil {
 			continue
 		}
 		id := candidates[i].ID
-		if id == "direct" || strings.HasPrefix(id, "wss:") || strings.HasPrefix(id, "frp:") || strings.HasPrefix(id, "backhaul:") || strings.HasPrefix(id, "navalink:") {
+		if id == "direct" || strings.HasPrefix(id, "wss:") || strings.HasPrefix(id, "frp:") {
 			if bestCarrier == "" && candidates[i].Score >= 10 {
 				bestCarrier = id
 				bestCarrierName = candidates[i].Name
@@ -592,7 +581,7 @@ func runCarrierBenchmark(customReq ...BenchmarkRunRequest) *BenchmarkReport {
 	}
 	if bestCarrier == "" {
 		for i := range candidates {
-			if candidates[i].Status != benchUnmeasured {
+			if candidates[i].Status != benchUnmeasured && carrierApplicable(candidates[i].ID) == nil {
 				bestCarrier = candidates[i].ID
 				bestCarrierName = candidates[i].Name
 				candidates[i].IsRecommended = true

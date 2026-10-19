@@ -7,13 +7,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net"
 
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -205,8 +203,7 @@ type tunnelStatus struct {
 }
 
 var (
-	engineBinDirs     = []string{"/usr/local/bin"}
-	backhaulExtraBins = []string{"/root/backhaul-core/backhaul_premium"}
+	engineBinDirs = []string{"/usr/local/bin"}
 )
 
 func executableFile(p string) bool {
@@ -220,13 +217,7 @@ func engineBinaryPresent(engine string) bool {
 			return true
 		}
 	}
-	if engine == "backhaul" {
-		for _, p := range backhaulExtraBins {
-			if executableFile(p) {
-				return true
-			}
-		}
-	}
+
 	return false
 }
 
@@ -238,11 +229,6 @@ func staleConfigCandidates() []staleConfigCandidate {
 	return []staleConfigCandidate{
 		{filepath.Join(frpDir, "frps.toml"), "frps", "iran (server)", "frps"},
 		{filepath.Join(frpDir, "frpc.toml"), "frpc", "foreign (client)", "frpc"},
-		{filepath.Join(backhaulDir, "config.toml"), "backhaul", "iran (backhaul)", "backhaul-server"},
-		{filepath.Join(backhaulDir, "server.toml"), "backhaul", "iran (backhaul)", "backhaul-server"},
-		{filepath.Join(configDir, "server.toml"), "backhaul", "iran (backhaul)", "backhaul-server"},
-		{filepath.Join(backhaulDir, "client.toml"), "backhaul", "foreign (backhaul)", "backhaul-client"},
-		{filepath.Join(configDir, "client.toml"), "backhaul", "foreign (backhaul)", "backhaul-client"},
 	}
 }
 
@@ -289,29 +275,11 @@ func localStatusFrom(v *hostView) tunnelStatus {
 				st.Role = "iran (server)"
 			case "frpc":
 				st.Role = "foreign (client)"
-			case "backhaul-server":
-				st.Role = "iran (backhaul)"
-			case "backhaul-client":
-				st.Role = "foreign (backhaul)"
 			}
 			break
 		}
 	}
-	if st.Role == "" {
 
-		var per []string
-		for u, on := range v.active {
-			if on && strings.HasPrefix(u, "backhaul-server-") {
-				per = append(per, u)
-			}
-		}
-		if len(per) > 0 {
-			sort.Strings(per)
-			st.FrpUp = true
-			st.FrpSvc = per[0]
-			st.Role = "iran (backhaul)"
-		}
-	}
 	if st.Role == "" {
 
 		for _, c := range staleConfigCandidates() {
@@ -323,112 +291,56 @@ func localStatusFrom(v *hostView) tunnelStatus {
 		}
 	}
 
-	if strings.HasPrefix(st.FrpSvc, "backhaul") {
-		if st.Gre.Exists {
-			st.Engine = "gre-backhaul"
-		} else {
-			st.Engine = "backhaul"
-		}
-		st.TunnelEngine = st.Engine
-		st.TunnelType = st.Engine
-		bhPath := filepath.Join(backhaulDir, "config.toml")
-		if _, err := os.Stat(bhPath); err != nil {
-			if _, err := os.Stat(filepath.Join(backhaulDir, "server.toml")); err == nil {
-				bhPath = filepath.Join(backhaulDir, "server.toml")
-			} else if _, err := os.Stat(filepath.Join(configDir, "server.toml")); err == nil {
-				bhPath = filepath.Join(configDir, "server.toml")
+	if st.FrpSvc != "" {
+		st.Engine = "frp"
+	}
+	tomlPath := filepath.Join(frpDir, "frps.toml")
+	if st.FrpSvc == "frpc" {
+		tomlPath = filepath.Join(frpDir, "frpc.toml")
+	}
+	if data, err := os.ReadFile(tomlPath); err == nil {
+		inProxy := false
+		for _, line := range strings.Split(string(data), "\n") {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "serverAddr = ") {
+				addr := strings.Trim(strings.TrimPrefix(line, "serverAddr = "), `"' `)
+				st.RemotePub = addr
+				if st.Gre.PeerIP == "" {
+					st.Gre.PeerIP = addr
+				}
 			}
-		}
-		if st.FrpSvc == "backhaul-client" {
-			if _, err := os.Stat(filepath.Join(backhaulDir, "client.toml")); err == nil {
-				bhPath = filepath.Join(backhaulDir, "client.toml")
-			} else if _, err := os.Stat(filepath.Join(configDir, "client.toml")); err == nil {
-				bhPath = filepath.Join(configDir, "client.toml")
-			}
-		}
-		if data, err := os.ReadFile(bhPath); err == nil {
-			bc := parseBackhaulConf(string(data))
-			if bc.Transport != "" {
-				st.Transport = bc.Transport
-			}
-			if bc.RemoteAddr != "" {
-				if host, portStr, err := net.SplitHostPort(bc.RemoteAddr); err == nil {
-					st.RemotePub = host
-					st.Gre.PeerIP = host
-					if v, err := strconv.Atoi(portStr); err == nil {
+			if strings.HasPrefix(line, "bindPort") || strings.HasPrefix(line, "serverPort") {
+
+				if parts := strings.SplitN(line, "=", 2); len(parts) == 2 {
+					if v, err := strconv.Atoi(strings.TrimSpace(parts[1])); err == nil && v > 0 {
 						st.BindPort = v
 						st.FrpPort = v
 					}
 				}
+				continue
 			}
-			if bc.BindAddr != "" {
-				if _, portStr, err := net.SplitHostPort(bc.BindAddr); err == nil {
-					if v, err := strconv.Atoi(portStr); err == nil {
-						st.BindPort = v
-						st.FrpPort = v
-					}
-				}
+
+			if strings.HasPrefix(line, "[[proxies]]") {
+
+				inProxy = true
+				continue
 			}
-			for _, pStr := range bc.Ports {
-				st.Proxies = append(st.Proxies, pStr)
-				basePart := strings.Split(strings.Split(pStr, "-")[0], "=")[0]
-				if v, err := strconv.Atoi(basePart); err == nil {
-					st.ProxyPorts = append(st.ProxyPorts, v)
-				}
+			if strings.HasPrefix(line, "[") {
+				inProxy = false
+				continue
 			}
-		}
-	} else {
-		if st.FrpSvc != "" {
-			st.Engine = "frp"
-		}
-		tomlPath := filepath.Join(frpDir, "frps.toml")
-		if st.FrpSvc == "frpc" {
-			tomlPath = filepath.Join(frpDir, "frpc.toml")
-		}
-		if data, err := os.ReadFile(tomlPath); err == nil {
-			inProxy := false
-			for _, line := range strings.Split(string(data), "\n") {
-				line = strings.TrimSpace(line)
-				if strings.HasPrefix(line, "serverAddr = ") {
-					addr := strings.Trim(strings.TrimPrefix(line, "serverAddr = "), `"' `)
-					st.RemotePub = addr
-					if st.Gre.PeerIP == "" {
-						st.Gre.PeerIP = addr
-					}
+			if strings.HasPrefix(line, "name = ") {
+				name := strings.Trim(strings.TrimPrefix(line, "name = "), `"`)
+				if inProxy {
+					st.Proxies = append(st.Proxies, name)
 				}
-				if strings.HasPrefix(line, "bindPort") || strings.HasPrefix(line, "serverPort") {
+				continue
+			}
 
-					if parts := strings.SplitN(line, "=", 2); len(parts) == 2 {
-						if v, err := strconv.Atoi(strings.TrimSpace(parts[1])); err == nil && v > 0 {
-							st.BindPort = v
-							st.FrpPort = v
-						}
-					}
-					continue
-				}
-
-				if strings.HasPrefix(line, "[[proxies]]") {
-
-					inProxy = true
-					continue
-				}
-				if strings.HasPrefix(line, "[") {
-					inProxy = false
-					continue
-				}
-				if strings.HasPrefix(line, "name = ") {
-					name := strings.Trim(strings.TrimPrefix(line, "name = "), `"`)
-					if inProxy {
-						st.Proxies = append(st.Proxies, name)
-					}
-					continue
-				}
-
-				if inProxy && (strings.HasPrefix(line, "remotePort") || strings.HasPrefix(line, "localPort")) {
-					if parts := strings.SplitN(line, "=", 2); len(parts) == 2 {
-						if v, err := strconv.Atoi(strings.TrimSpace(parts[1])); err == nil && v > 0 {
-							st.ProxyPorts = append(st.ProxyPorts, v)
-						}
+			if inProxy && (strings.HasPrefix(line, "remotePort") || strings.HasPrefix(line, "localPort")) {
+				if parts := strings.SplitN(line, "=", 2); len(parts) == 2 {
+					if v, err := strconv.Atoi(strings.TrimSpace(parts[1])); err == nil && v > 0 {
+						st.ProxyPorts = append(st.ProxyPorts, v)
 					}
 				}
 			}
@@ -486,7 +398,7 @@ func grePeerInner(cidr string) string {
 
 var engineUnitDir = "/etc/systemd/system"
 
-var engineSwitchServices = []string{"gre-tunnel", "frps", "frpc", "backhaul-server", "backhaul-client"}
+var engineSwitchServices = []string{"gre-tunnel", "frps", "frpc"}
 
 var (
 	engineServiceActive = func(svc string) bool {

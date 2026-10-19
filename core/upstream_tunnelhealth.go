@@ -87,24 +87,9 @@ type thTarget struct {
 	probeCached bool
 }
 
-func thEngine(declared, unit string, greUp bool) string {
-	switch e := strings.ToLower(strings.TrimSpace(declared)); e {
-	case "frp", "backhaul", "gre-backhaul":
-		return e
-	}
-	switch {
-	case strings.HasPrefix(unit, "backhaul") && greUp:
-		return "gre-backhaul"
-	case strings.HasPrefix(unit, "backhaul"):
-		return "backhaul"
-	}
-	return "frp"
-}
+func thEngine(declared, unit string, greUp bool) string { return "frp" }
 
 func thBinary(engine, unit string) string {
-	if engine != "frp" {
-		return "backhaul"
-	}
 	if strings.HasPrefix(unit, "frpc") {
 		return "frpc"
 	}
