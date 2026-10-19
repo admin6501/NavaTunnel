@@ -23,7 +23,7 @@ import (
 	"time"
 )
 
-const coreVersion = "v1.1.0"
+const coreVersion = "v1.1.1"
 
 func socketPath() string { return filepath.Join(configDir, "core.sock") }
 
@@ -37,11 +37,11 @@ type controlCall struct {
 
 func localHandler(c controlCall) (http.HandlerFunc, error) {
 	handlers := map[string]http.HandlerFunc{
-		"errors/status": handleErrors, "audit/status": handleAuditGet,
-		"cluster/status": handleClusterStatus, "cluster/config": handleClusterConfigPost, "cluster/add-foreign": handleClusterForeignNodeAdd, "cluster/del-foreign": handleClusterForeignNodeDelete, "cluster/switch-foreign": handleClusterForeignSwitch, "cluster/add-iran": handleClusterNodeAdd, "cluster/del-iran": handleClusterNodeDelete, "cluster/failover": handleClusterFailoverTrigger, "cluster/revert": handleClusterFailoverRevert,
-		"doctor/status": handleDoctorGet, "doctor/config": handleDoctorPost, "fleet/status": handleFleet, "perf/status": handlePerfGet, "perf/config": handlePerfPost, "history/status": handleHistoryGet, "usage/status": handleUsageGet, "metrics/status": handleMetrics, "metrics/token": handleMetricsTokenPost,
-		"alerts/status": handleAlertsGet, "alerts/config": handleAlertsPost, "revpath/status": handleRevPathGet, "revpath/run": handleRevPathRun, "revpath/fix": handleRevPathFix, "revpath/fixes": handleRevPathFixes,
-		"rescue/status": handleRescueGet, "rescue/config": handleRescuePost, "benchmark/status": handleBenchmarkGet, "benchmark/run": handleBenchmarkRun, "benchmark/apply": handleBenchmarkApply, "benchmark/autopilot": handleBenchmarkAutoPilot, "suggest/status": handleSuggest, "advisor/status": handleCarrierAdvice,
+		"cluster/status": handleClusterStatus, "cluster/config": handleClusterConfigPost,
+		"cluster/add-foreign": handleClusterForeignNodeAdd, "cluster/del-foreign": handleClusterForeignNodeDelete,
+		"cluster/switch-foreign": handleClusterForeignSwitch, "cluster/add-iran": handleClusterNodeAdd,
+		"cluster/del-iran": handleClusterNodeDelete, "cluster/failover": handleClusterFailoverTrigger,
+		"cluster/revert": handleClusterFailoverRevert,
 	}
 	if h := handlers[c.Family+"/"+c.Action]; h != nil {
 		return h, nil
@@ -85,11 +85,7 @@ func dispatch(c controlCall) (int, []byte) {
 		if e := purgeClusterRules(); e != nil {
 			return 500, []byte(e.Error())
 		}
-		rescueDisable()
-		return 200, []byte("Owned Cluster and Rescue state removed.\n")
-	}
-	if len(c.Body) > 0 && c.Action != "status" {
-		defer LogSecurityAudit("local_control", "root", "unix", c.Family+"/"+c.Action)
+		return 200, []byte("Owned Cluster state removed.\n")
 	}
 	if c.Family == "daemon" && c.Action == "ping" {
 		return 200, []byte(`{"running":true,"version":"` + coreVersion + `"}` + "\n")
@@ -100,16 +96,6 @@ func dispatch(c controlCall) (int, []byte) {
 			return 500, []byte(e.Error())
 		}
 		return 200, []byte(pin + "\n")
-	}
-	if c.Family == "peer-link" {
-		return peerLinkControl(c)
-	}
-	if c.Family == "wss" {
-		return wssControl(c)
-	}
-	if c.Family == "netstack" {
-		b, _ := json.MarshalIndent(readNetStack(), "", "  ")
-		return 200, append(b, '\n')
 	}
 	if e := validateControl(c); e != nil {
 		return 400, []byte(e.Error() + "\n")
@@ -124,9 +110,6 @@ func dispatch(c controlCall) (int, []byte) {
 	}
 	req := httptest.NewRequest(http.MethodPost, "http://localhost/control?"+c.Query, bytes.NewReader(body)).WithContext(cliContext())
 	req.RemoteAddr = "127.0.0.1:0"
-	if c.Family == "metrics" {
-		req.Header.Set("Authorization", "Bearer "+cfg.MetricsToken)
-	}
 	w := httptest.NewRecorder()
 	h(w, req)
 	return w.Code, maskOutput(w.Body.Bytes(), c.Secrets)
@@ -143,48 +126,6 @@ func remoteControl(c controlCall) (int, []byte, error) {
 	defer resp.Body.Close()
 	out, e := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	return resp.StatusCode, out, e
-}
-func wssControl(c controlCall) (int, []byte) {
-	if c.Action == "status" {
-		b, _ := json.Marshal(getWSSStatus())
-		return 200, maskOutput(b, c.Secrets)
-	}
-	if c.Action == "stop" {
-		v := loadWSSConfig()
-		v.Enabled = false
-		if e := saveWSSConfig(v); e != nil {
-			return 500, []byte(e.Error())
-		}
-		if e := stopWSSCarrier(); e != nil {
-			return 500, []byte(e.Error())
-		}
-		return 200, []byte("WSS carrier stopped.\n")
-	}
-	if c.Action != "config" {
-		return 400, []byte("Use wss status|config|stop\n")
-	}
-	v := loadWSSConfig()
-	if e := json.Unmarshal(c.Body, &v); e != nil {
-		return 400, []byte(e.Error())
-	}
-	if v.ListenPort < 1 || v.ListenPort > 65535 || v.LocalBridgeUDP < 1024 || v.LocalBridgeUDP > 65535 {
-		return 400, []byte("Invalid WSS or bridge port\n")
-	}
-	if v.Role != "server" && v.Role != "client" {
-		return 400, []byte("Role must be server or client\n")
-	}
-	if len(v.AuthToken) < 24 {
-		return 400, []byte("A shared token of at least 24 characters is required\n")
-	}
-	if v.Enabled {
-		if e := startWSSCarrier(v); e != nil {
-			return 500, []byte(e.Error())
-		}
-	}
-	if e := saveWSSConfig(v); e != nil {
-		return 500, []byte(e.Error())
-	}
-	return 200, []byte("WSS carrier saved; select the matching GRE WSS carrier on BOTH endpoints.\n")
 }
 func serve(listen string, useTLS bool) error {
 	if listen != "" {
@@ -233,15 +174,8 @@ func serve(listen string, useTLS bool) error {
 	// No browser UI or public administration routes are mounted.
 	if listen != "" {
 		peer := http.NewServeMux()
-		peer.HandleFunc("/metrics", handleMetrics)
 		peer.HandleFunc("/api/cluster/heartbeat", limitedHeartbeat)
 		peer.HandleFunc("/_hp/api/cluster/heartbeat", limitedHeartbeat)
-		peer.HandleFunc("/_hp/api/peer/ping", requirePeerAuth(handlePeerPing))
-		peer.HandleFunc("/_hp/api/peer/status", requirePeerAuth(handlePeerStatus))
-		peer.HandleFunc("/_hp/api/peer/apply-carrier", requirePeerAuth(handlePeerApplyCarrier))
-		peer.HandleFunc("/_hp/api/peer/revpath/probe", requirePeerAuth(handlePeerRevPathProbe))
-		peer.HandleFunc("/_hp/api/peer/rescue/offer", requirePeerAuth(handlePeerRescueOffer))
-		peer.HandleFunc("/_hp/api/peer/rescue/ack", requirePeerAuth(handlePeerRescueAck))
 		srv := &http.Server{Addr: listen, Handler: peer, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, MaxHeaderBytes: 8192}
 		listener, e := net.Listen("tcp", listen)
 		if e != nil {
@@ -258,36 +192,8 @@ func serve(listen string, useTLS bool) error {
 		go func() { _ = srv.Serve(listener) }()
 		defer srv.Close()
 	}
-	startHistoryPersistence(ctx.Done())
-	startUsagePersistence(ctx.Done())
 	go startClusterMonitor()
-	go startRescueMonitor()
-	go startAutoPilotMonitor()
-	startFleetSampler()
-	go peerHeartbeatLoop(ctx)
-	if w := loadWSSConfig(); w.Enabled {
-		if e := startWSSCarrier(w); e != nil {
-			return e
-		}
-		defer stopWSSCarrier()
-	}
-	go func() {
-		_ = snapshotTick()
-		t := time.NewTicker(snapshotEvery)
-		defer t.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case now := <-t.C:
-				snapIcmp.pass(now)
-				snapshotTick()
-			}
-		}
-	}()
 	<-ctx.Done()
-	_ = linkHist.save(histFile(), time.Now())
-	_ = trafficUsage.save(usageFile(), time.Now())
 	return nil
 }
 func runCLI(args []string) int {
@@ -349,7 +255,7 @@ func runCLI(args []string) int {
 			return 1
 		}
 	} else {
-		if c.Family == "daemon" || c.Family == "wss" && c.Action == "config" || c.Family == "cluster" && c.Action == "config" && controlEnables(c.Body) {
+		if c.Family == "daemon" || c.Family == "cluster" && c.Action == "config" && controlEnables(c.Body) {
 			fmt.Fprintln(os.Stderr, "Start the background core first: NavaTunnel core-service start")
 			return 1
 		}

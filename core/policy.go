@@ -10,7 +10,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"time"
 )
 
 var identifierRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$`)
@@ -49,8 +48,8 @@ func validateControl(c controlCall) error {
 			if w := number("weight"); w < 1 || w > 100 {
 				return fmt.Errorf("weight must be 1-100")
 			}
-			if proto := str("protocol"); proto != "gre" && proto != "wss" && proto != "navalink" && proto != "tcp" {
-				return fmt.Errorf("supported paths: gre, wss, navalink, tcp")
+			if proto := str("protocol"); proto != "gre" && proto != "navalink" && proto != "tcp" {
+				return fmt.Errorf("supported paths: gre, navalink, tcp")
 			}
 			var targets map[int]int
 			if len(v["target_ports"]) > 0 {
@@ -98,28 +97,6 @@ func validateControl(c controlCall) error {
 		}
 	}
 	return nil
-}
-func requirePeerAuth(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		c := loadPeerConfig()
-		got := strings.TrimSpace(r.Header.Get("X-Peer-Secret"))
-		if got == "" {
-			got = strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-		}
-		if len(c.PeerSecret) < 24 || !ConstantTimeCompare(got, c.PeerSecret) {
-			http.NotFound(w, r)
-			return
-		}
-		r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
-		next(w, r)
-	}
-}
-func handlePeerPing(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, map[string]any{"status": "pong", "version": coreVersion, "active_carrier": loadCarrierConfig().ActiveCarrier, "time": time.Now().UnixNano()})
-}
-func handlePeerStatus(w http.ResponseWriter, r *http.Request) {
-	state, loss, lat := nativeTunnelStatus()
-	writeJSON(w, map[string]any{"status": state, "loss": loss, "latency_ms": lat, "version": coreVersion})
 }
 func endpointPort(s string) int {
 	_, p, e := net.SplitHostPort(s)

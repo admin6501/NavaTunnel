@@ -6,15 +6,17 @@ FRP reverse tunnel management over GRE, developed and maintained by **admin6501*
 This NavaTunnel version includes English menus, per-tunnel traffic controls, protocol selection, persistent MTU settings, Iran IP migration, documentation, and bug fixes.
 Management runs through SSH and an English terminal menu. No web administration panel or Backhaul engine is included. Optional networking tools use a standalone Go core, distributed as verified binaries; servers do not need Go installed.
 
-GRE can run directly or use FOU over UDP. FRP transport, encryption, and compression are applied on the foreign client; the Iran menu stores each tunnel's selection and passes it through a connection bundle. An optional WSS relay carrier for GRE is now available in the standalone tools menu.
+GRE can run directly or use FOU over UDP. FRP transport, encryption, and compression are applied on the foreign client; the Iran menu stores each tunnel's selection and passes it through a connection bundle. The GRE carrier supports direct GRE and FOU; the independent WSS GRE relay has been removed.
 
 There is no fixed limit on the number of foreign servers. Each tunnel needs a separate foreign IP and internal addresses, plus available control and service ports. Currently, each foreign server manages one FRPC connection.
 
-## New standalone tools
+## Cluster and NavaLink
 
-**Advanced settings → 11** includes the original upstream Cluster backend (foreign exit pool and Iran mesh), WSS GRE relay, connectivity Rescue, adaptive FRP Auto Pool, reverse-path repairs, benchmark/Auto Pilot, history, alerts and authenticated peer linking. NavaLink also offers an explicit TCP-only direct SSH mode. New routing and automatic switching are opt-in; updating preserves current tunnels.
+The retained optional features are **NavaLink (Advanced → 9)** and **Cluster (Advanced → 10)**. Cluster provides foreign exit selection and an Iran mesh; NavaLink offers FRP over SSH or explicit TCP-only direct forwarding. Both require explicit setup.
 
-Read the [operation guide](docs/UPSTREAM_TOOLS.md) before enabling these features and the [upstream feature map](docs/UPSTREAM_PARITY.md) for scope and differences. Cluster forwards connections; it does not copy application users/inbounds or provision missing opposite tunnels. [Source attribution and license](THIRD_PARTY_NOTICES.md) remain included.
+The additional 1.1.0 tools have been removed: the GRE WSS relay, Rescue, Auto Pool, reverse-path doctor, benchmark/Auto Pilot, history/reporting/metrics, standalone alerts, Peer Link, dial-route controls and the separate network-tools menu. Their owned settings and services are retired on update/startup, with a private settings archive under `/var/backups/navatunnel/removed-tools-*`. Existing Cluster/NavaLink state, FRP files, quotas and manual traffic counters are preserved. Existing FRP protocols, including FRP WSS, remain available.
+
+Read [the retained features guide](docs/UPSTREAM_TOOLS.md) and [source attribution](THIRD_PARTY_NOTICES.md). Cluster forwards connections; it does not replicate application users/inbounds or create missing endpoint tunnels.
 
 ## Installation and updates
 
@@ -290,14 +292,6 @@ Existing destination settings and its encryption key are privately copied to `/v
 
 Moving one server does not update the opposite servers over SSH. After moving Iran, apply the new connection commands on its foreign servers. A private `migration-*-foreign-commands.txt` file is generated on the destination; it contains connection tokens. After moving a foreign server, update its public IP on Iran. Do not retire the source until the new endpoints work. End-to-end connectivity is not implied by successful service startup.
 
-## NavaLink and network tools
+## Optional feature setup
 
-Optional terminal-only features are now under **2) Advanced settings → 9)
-NavaLink, 10) Network tools**. NavaLink is FRP over a restricted
-reverse SSH carrier; it can explicitly convert an existing GRE peer while
-preserving its quota and keeping a rollback snapshot. Network tools add
-path-MTU probes, a persistent tcpMux setting and read-only pool diagnostics.
-
-All new routing/engine options are opt-in. No web panel, Backhaul or paid
-activation service is installed. See [the complete setup, rollback and safety
-guide](docs/ADVANCED.md) before switching a live connection.
+Use **2) Advanced settings → 9) NavaLink** or **10) Cluster**. Read [the setup and rollback guide](docs/ADVANCED.md) and [the Cluster guide](docs/UPSTREAM_TOOLS.md) before changing a live connection.

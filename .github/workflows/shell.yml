@@ -12,8 +12,6 @@ jobs:
           for script in *.sh; do bash -n "$script"; done
       - name: Check shell errors
         run: shellcheck --severity=error *.sh
-      - name: Test original Auto Pool and dial routing
-        run: bash tests/test_upstream_autopool.sh && bash tests/test_upstream_dial.sh
       - name: Test peers, CLI regressions and traffic quotas
         run: python3 -m unittest discover -s tests -v
 
@@ -24,12 +22,12 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: 1.23.12
-          cache-dependency-path: core/go.sum
+          cache-dependency-path: core/go.mod
       - name: Build race-instrumented standalone core
         run: cd core && go build -race -o "$RUNNER_TEMP/NavaTunnel-core-lab" .
       - name: Install namespace and SSH lab tools
-        run: sudo apt-get update -qq && sudo apt-get install -y iproute2 iptables openssh-server openssh-client
-      - name: Test original Cluster forwarding, failover and WSS over TLS
+        run: sudo apt-get update -qq && sudo apt-get install -y iproute2 iptables nftables openssh-server openssh-client
+      - name: Test original Cluster forwarding, failover and TLS heartbeat
         run: sudo unshare -n python3 tests/labs/upstream_core.py "$RUNNER_TEMP/NavaTunnel-core-lab"
       - name: Verify pinned official FRP lab binaries
         run: python3 tests/labs/fetch_frp.py "$RUNNER_TEMP/nava-frp"
@@ -45,6 +43,6 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: 1.23.12
-          cache-dependency-path: core/go.sum
-      - name: Test extracted networking backend and race safety
+          cache-dependency-path: core/go.mod
+      - name: Test Cluster backend and race safety
         run: cd core && go test -race ./...

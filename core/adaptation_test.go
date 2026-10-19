@@ -2,7 +2,7 @@ package main
 
 import (
 	"bytes"
-	"context"
+
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -65,21 +65,6 @@ func TestControlRejectsInvalidDestinationsAndCapacity(t *testing.T) {
 		}
 	}
 }
-func TestPerfSavePreservesExistingSecurityAndCoverTraffic(t *testing.T) {
-	old := configDir
-	configDir = t.TempDir()
-	defer func() { configDir = old }()
-	_ = os.WriteFile(perfConfigPath(), []byte(`{"force_tls":true,"dpi_enabled":true,"chaff_mode":"low"}`), 0600)
-	if e := savePerfConfig(perfConfig{FRPPoolCount: 40, FRPMaxPool: 100, AutoPool: false}); e != nil {
-		t.Fatal(e)
-	}
-	b, _ := os.ReadFile(perfConfigPath())
-	for _, x := range []string{`"force_tls": true`, `"dpi_enabled": true`, `"chaff_mode": "low"`} {
-		if !bytes.Contains(b, []byte(x)) {
-			t.Fatal(string(b))
-		}
-	}
-}
 func TestClusterStatusRedactsSecretsUnlessExplicit(t *testing.T) {
 	b := []byte(`{"cluster_secret":"private","nested":{"auth_token":"token"},"node_id":"public"}`)
 	out := string(maskOutput(b, false))
@@ -88,26 +73,6 @@ func TestClusterStatusRedactsSecretsUnlessExplicit(t *testing.T) {
 	}
 	if !bytes.Equal(maskOutput(b, true), b) {
 		t.Fatal("explicit reveal changed output")
-	}
-}
-func TestPeerAuthenticationHasNoBrowserSessionFallback(t *testing.T) {
-	old := configDir
-	configDir = t.TempDir()
-	defer func() { configDir = old }()
-	_ = savePeerConfig(PeerConfig{PeerSecret: strings.Repeat("a", 32)})
-	hit := false
-	h := requirePeerAuth(func(w http.ResponseWriter, r *http.Request) { hit = true; w.WriteHeader(204) })
-	req := httptest.NewRequest("POST", "/peer", nil).WithContext(context.WithValue(context.Background(), localCLIKey{}, true))
-	w := httptest.NewRecorder()
-	h(w, req)
-	if hit || w.Code != 404 {
-		t.Fatal("CLI session leaked into public peer API")
-	}
-	req.Header.Set("X-Peer-Secret", strings.Repeat("a", 32))
-	w = httptest.NewRecorder()
-	h(w, req)
-	if !hit || w.Code != 204 {
-		t.Fatal(w.Code)
 	}
 }
 func TestPeerCertificatePinIsEnforced(t *testing.T) {
@@ -150,53 +115,6 @@ func TestCertificatesPersistPrivately(t *testing.T) {
 	st, e := os.Stat(filepath.Join(configDir, "peer-api.key"))
 	if e != nil || st.Mode().Perm() != 0600 {
 		t.Fatal(st, e)
-	}
-}
-
-func TestTransportSwitchUsesUnshiftedControlMetadata(t *testing.T) {
-	old := frpDir
-	frpDir = t.TempDir()
-	defer func() { frpDir = old }()
-	bin := t.TempDir()
-	if e := os.WriteFile(filepath.Join(bin, "systemctl"), []byte("#!/bin/sh\nexit 0\n"), 0700); e != nil {
-		t.Fatal(e)
-	}
-	t.Setenv("PATH", bin+":"+os.Getenv("PATH"))
-	os.WriteFile(filepath.Join(frpDir, "dial.env"), []byte("DIAL_CONTROL=65535\n"), 0600)
-	path := filepath.Join(frpDir, "frpc.toml")
-	os.WriteFile(path, []byte("serverPort = 65533\ntransport.protocol = \"wss\"\n[[proxies]]\nname=\"keep\"\n"), 0600)
-	for _, test := range []struct {
-		proto string
-		port  string
-	}{{"tcp", "65535"}, {"quic", "65534"}, {"wss", "65533"}} {
-		if e := updateFrpcTransport(test.proto); e != nil {
-			t.Fatal(e)
-		}
-		data, _ := os.ReadFile(path)
-		if !strings.Contains(string(data), "serverPort = "+test.port) || !strings.Contains(string(data), "name=\"keep\"") {
-			t.Fatal(string(data))
-		}
-	}
-}
-
-func TestPersistentErrorAndAuditRedactCredentials(t *testing.T) {
-	old := configDir
-	configDir = t.TempDir()
-	defer func() { configDir = old }()
-	recordError("E-FRP-01", "test", `auth.token = "my-secret-credential"`)
-	LogSecurityAudit("test", "root", "unix", `auth.token = "my-secret-credential"`)
-	for _, path := range []string{errorLogPath(), auditLogPath()} {
-		data, e := os.ReadFile(path)
-		if e != nil {
-			t.Fatal(e)
-		}
-		if strings.Contains(string(data), "my-secret-credential") {
-			t.Fatal(string(data))
-		}
-		info, _ := os.Stat(path)
-		if info.Mode().Perm() != 0600 {
-			t.Fatal(info.Mode())
-		}
 	}
 }
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Real Cluster TCP/UDP failover and WSS bridge in disposable network namespaces.
+"""Real Cluster TCP/UDP failover and TLS mesh authentication in disposable network namespaces.
 Run only as: unshare -Urn python3 tests/labs/upstream_core.py /absolute/core-binary
 or sudo unshare -n ... on a disposable CI runner. No host firewall is changed.
 """
@@ -78,18 +78,18 @@ while True:
             own=run(['iptables','-t','nat','-S','NAVA-CLUSTER-PREROUTING']).stdout
             assert '--to-destination' not in own
             print('PASS: original Cluster exit pool carried TCP/UDP, failed over, weighted new flows and reverted without changing unrelated NAT rules.')
-            # A private point-to-point link for the two WSS/peer API endpoints.
+            # A private point-to-point link for the two Cluster heartbeat endpoints.
             run(['ip','link','add','nvwa','type','veth','peer','name','nvwb']);run(['ip','link','set','nvwa','netns',a]);run(['ip','link','set','nvwb','netns',b])
             for pid,dev,ip in [(a,'nvwa','198.18.1.1'),(b,'nvwb','198.18.1.2')]:inside(pid,['ip','addr','add',ip+'/24','dev',dev]);inside(pid,['ip','link','set',dev,'up'])
             states=[]
             for name,pid in [('a',a),('b',b)]:
-                st=base/('wss-'+name);st.mkdir();states.append(st);env=dict(os.environ,NAVATUNNEL_CORE_STATE=str(st),NAVATUNNEL_FRP_DIR=str(base/'frp'));spawn(['nsenter','-t',pid,'-n',binary,'serve','--listen','0.0.0.0:47777','--tls'],'core-wss-'+name,env);wait(lambda st=st:(st/'core.sock').exists());wait(lambda st=st:(st/'peer-api.crt').exists())
+                st=base/('mesh-'+name);st.mkdir();states.append(st);env=dict(os.environ,NAVATUNNEL_CORE_STATE=str(st),NAVATUNNEL_FRP_DIR=str(base/'frp'));spawn(['nsenter','-t',pid,'-n',binary,'serve','--listen','0.0.0.0:47777','--tls'],'core-mesh-'+name,env);wait(lambda st=st:(st/'core.sock').exists());wait(lambda st=st:(st/'peer-api.crt').exists())
             sa,sb=states;secret=secrets.token_hex(32)
             for st in states:core(st,'cluster','config',dict(cluster_secret=secret))
             api_probe="""import urllib.request,ssl,json
 ctx=ssl._create_unverified_context()
 opener=urllib.request.build_opener(urllib.request.ProxyHandler({}),urllib.request.HTTPSHandler(context=ctx))
-for path,secret,expected in [('/',None,404),('/api/cluster/config',None,404),('/api/cluster/heartbeat','wrong',401),('/api/cluster/heartbeat',__import__('sys').argv[1],200)]:
+for path,secret,expected in [('/',None,404),('/api/cluster/config',None,404),('/metrics',None,404),('/_hp/api/peer/ping',None,404),('/_hp/api/peer/revpath/probe',None,404),('/_hp/api/peer/rescue/offer',None,404),('/api/cluster/heartbeat','wrong',401),('/api/cluster/heartbeat',__import__('sys').argv[1],200)]:
  req=urllib.request.Request('https://198.18.1.1:47777'+path,data=b'{}',headers={'X-Cluster-Secret':secret or ''})
  try:
   with opener.open(req,timeout=4) as r:code=r.status
@@ -97,25 +97,13 @@ for path,secret,expected in [('/',None,404),('/api/cluster/config',None,404),('/
  assert code==expected,(path,code,expected)
 """
             inside(b,['python3','-c',api_probe,secret])
-            token=secrets.token_hex(24)
-            core(sa,'wss','config',dict(enabled=True,role='server',listen_port=18444,local_bridge_udp=19998,auth_token=token,use_tls=True))
-            core(sb,'wss','config',dict(enabled=True,role='client',listen_port=18444,remote_addr='198.18.1.1:18444',local_bridge_udp=19998,auth_token='wrong-token-that-is-long-enough',use_tls=True,insecure_tls=True))
-            wait(lambda:'unauthorized' in json.loads(core(sb,'wss')).get('last_error','').lower())
-            assert not json.loads(core(sb,'wss'))['connected']
-            core(sb,'wss','config',dict(enabled=True,role='client',listen_port=18444,remote_addr='198.18.1.1:18444',local_bridge_udp=19998,auth_token=token,use_tls=True,insecure_tls=True))
-            wait(lambda:json.loads(core(sb,'wss'))['connected'])
-            udp_echo="import socket;s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM);s.bind(('127.0.0.1',19998));\nwhile True:\n d,a=s.recvfrom(65535);s.sendto(b'wss:'+d,a)"
-            spawn(['nsenter','-t',a,'-n','python3','-c',udp_echo],'wss-echo');time.sleep(.15)
-            bridge_probe="import socket;s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM);s.bind(('127.0.0.1',19998));s.settimeout(5);data=b'x'*1360;s.sendto(data,('127.0.0.1',19999));assert s.recvfrom(65535)[0]==b'wss:'+data"
-            inside(b,['python3','-c',bridge_probe])
+            for pid in (a,b):
+                assert ':19999' not in inside(pid,['ss','-Hlun']).stdout
             for log in logs:
                 log.flush();assert 'WARNING: DATA RACE' not in Path(log.name).read_text(),log.name
-            print('PASS: TLS peer API has no browser/admin routes and rejects bad secrets; authenticated WSS carried real 1360-byte datagrams and rejected a wrong token.')
+            print('PASS: TLS Cluster heartbeat rejects bad secrets; removed peer APIs and metrics are unavailable.')
         except Exception as error:
             if isinstance(error,subprocess.CalledProcessError):print(error.stderr,file=sys.stderr)
-            if 'sb' in locals():
-                try:print('Last WSS status: '+core(sb,'wss'),file=sys.stderr)
-                except Exception:pass
             for log in logs:
                 log.flush();text=Path(log.name).read_text()
                 if text:print(Path(log.name).name+':\n'+text[-2500:],file=sys.stderr)

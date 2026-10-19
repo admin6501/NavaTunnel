@@ -1,63 +1,48 @@
-# Standalone networking tools
+# Cluster and NavaLink
 
-Update **both** endpoints with `NavaTunnel update-all`, then reopen `NavaTunnel`. Go is not required on servers. The optional standalone core is downloaded from this repository's `core-v1.1.0` release, checked against its SHA256 manifest and executed only when requested. Source is under `core/`; build with Go 1.23 or later: `cd core && go build -o NavaTunnel-core .`.
+Update Iran and each foreign server with `NavaTunnel update-all`, then reopen `NavaTunnel`.
 
-Open **2) Advanced settings → 11) Cluster, WSS, Rescue, Auto Pool and monitoring tools**. Every new screen is in English. Existing GRE/FRP/NavaLink management, counters and backups continue to work. Neither Cluster nor automatic carrier switching is silently enabled by updating.
+The retained optional menus are **2 → 9: NavaLink** and **2 → 10: Cluster**. The former multi-tool menu and all other added 1.1.0 tools have been removed. Normal GRE/FRP management, saved MTU, traffic quotas, backup/restore, migration, the existing shell watchdog and DPI/chaff controls remain available.
 
-## Cluster: what the two modes actually do
+## Cluster: one Iran with several exits
 
-This is the original project's networking backend, adapted without its panel. It has two independent parts:
+Each exit must already have a reachable application listener and compatible user/inbound settings. Cluster does not replicate users or create additional FRPC instances. Start with a test port.
 
-- **One Iran entry, several foreign exits:** register reachable backend addresses and application ports. Choose `failover`, `wrr` (weighted new connections), or `lowest_latency`. A TCP-connect probe determines eligibility; it is not a continuous end-to-end packet-loss SLA. Import existing GRE peers to use their **foreign private GRE IP**, not their public address or FRPS control port. Enter an application TCP port which really listens on that foreign server. All service ports you publish must exist on the selected exits, with compatible client credentials/inbounds.
-- **Several Iran nodes:** each node runs the standalone core, has its own working outgoing service path, a unique node ID, the same mesh secret and service ports. Add peers with their public address and authenticated TLS API URL/fingerprint. Heartbeats report tunnel health; when the original monitor confirms local failure and a healthy alternative, the entry forwards new traffic to that alternative Iran. This does not configure the alternative's tunnels for you.
+On Iran, open **2 → 10**:
 
-For the first mode: menu **1 → 2** sets entry service ports and mode; **3** imports an existing GRE exit (or **4** adds an address and optional port mapping); **10** starts the daemon and enables routing. Start with one test port. **11** disables owned routing; **13** reverts an active mesh handoff. Client addresses change through SNAT; existing connections may need to reconnect after switching.
+1. Option 2: enter public service ports and select `failover`, `wrr` or `lowest_latency`.
+2. Option 3: import an existing GRE peer. The destination is its foreign **private GRE IP**. Enter a TCP application port that really listens on that destination, not the FRPS control port.
+3. Repeat for each exit; option 4 also accepts a reachable address and optional entry-to-destination port mapping.
+4. Option 6: choose the preferred exit for failover mode.
+5. Option 10: start the retained core and enable routing. Option 1 shows status; option 11 disables routing.
 
-For an Iran mesh: on every Iran configure **1 → 7** with its unique ID/public IP and an identical random secret of at least 24 characters. Enable its TLS peer listener with **12**, record the SHA256 certificate fingerprint, and permit that port only from intended peers in your provider firewall. Add the other Iran under **8**, including its URL and fingerprint. Complete this on both sides, inspect status, then enable. A server that is completely unreachable from clients cannot redirect packets it never receives: client/DNS failover is still needed for that case.
+`failover` picks a healthy alternative when the preferred exit becomes unavailable. `wrr` distributes new flows by weight; `lowest_latency` selects a healthy exit with the lowest measured TCP-connect delay. A successful probe of one application port does not test every port or guarantee a packet-loss percentage. Existing connections may need to reconnect after switching.
 
-Cluster uses kernel DNAT/SNAT. A GRE exit route can bypass the FRP reverse data path and reach the foreign application directly over GRE. GRE/FOU alone do not encrypt payloads: use application TLS or an encrypted carrier where needed. Several Iran nodes can target the same reachable application, but Cluster does **not** provision several FRPC instances on a foreign host. Account/inbound replication is your responsibility. It also cannot guarantee that an upstream loss event disappears.
+Cluster uses kernel DNAT/SNAT and dedicated `NAVA-CLUSTER-*` chains. A GRE exit may reach the foreign application directly rather than using FRP's reverse data path. GRE/FOU alone do not encrypt payloads; application TLS or an encrypted path is needed where appropriate. Provider firewalls still need to allow traffic. Existing quota rules remain in place.
 
-Only private `NAVA-CLUSTER-*` chains and its marked flows are managed. Existing provider firewalls still need the traffic allowed. The menu displays selected/configured state, which is not a guarantee that every application port has been tested.
+## Cluster: several Iran nodes
 
-## WSS: carrier versus FRP transport
+Every Iran needs its own working exit path and service configuration. On each Iran:
 
-These are different features:
+1. Option 7: configure a unique node ID and local public IP, using the same private shared secret (at least 24 characters) on trusted nodes.
+2. Option 12: enable the TLS heartbeat listener and obtain its certificate fingerprint. Permit the listener only from intended peers where possible.
+3. Option 8: register the other Iran's node ID, public IP, TLS heartbeat URL and fingerprint. Configure both directions.
+4. Inspect status, then enable routing with option 10.
 
-- **FRP WSS transport:** select WSS for a tunnel, then reapply its foreign bundle. Iran uses a small TLS front at `control + 2` (or `control - 2` near the port maximum). This forwards to that tunnel's existing FRPS control port. Keep the front port free and reachable.
-- **WSS carrier for GRE:** configure **11 → 2** on both endpoints with server/client roles, matching token (at least 24 characters), listener/remote address, SNI and a selected GRE interface. Start the relay, then select the matching WSS carrier on both ends. One WSS GRE bridge per host is supported; other GRE peers retain their carriers. It uses the original FOU/UDP-to-WebSocket bridge. Local bridge ports 19998/19999 must be free. Configure the same MTU on both ends. A self-signed relay certificate requires an explicit client choice to allow it; do not assume public WebPKI validation will trust it.
+The original monitor exchanges authenticated heartbeat messages. The retained local health check inspects established FRP control sessions and NavaLink state; unknown local observations do not count as recovery. It is a coarse UP/DOWN signal rather than a precise packet-loss measurement. Exit-pool probes remain separate.
 
-WSS is TLS transport; it does not make traffic invisible or guarantee DPI evasion. Encapsulation, TLS and any retransmissions consume additional bytes.
+If the first Iran's outgoing path fails while that Iran can still receive user traffic and reach its alternative, it can hand traffic to a healthy Iran. A fully unreachable server cannot forward packets it never receives; client or DNS failover is needed for that case. Option 13 reverts a mesh handoff.
 
-## NavaLink modes
+## NavaLink
 
-The existing NavaLink menu now offers **FRP** (default, forwards TCP and UDP over its SSH carrier) and **direct** (SSH local forwarding, **TCP only**). Direct mode binds the chosen service ports on Iran and forwards them to the same localhost ports on foreign. It creates no FRP data path. Use unused service ports and separately configured application listeners. Existing GRE conversions retain FRP mode so UDP/custom proxy options are not silently dropped. The dedicated SSH account has no interactive shell, no agent forwarding and only the specific forwarding direction/destinations allowed. Keys and verified host fingerprints remain required. FRP-mode pool size is configurable per link; default 20.
+Open **2 → 9 → 1** on Iran. Choose `frp` for TCP/UDP over SSH, or `direct` for TCP-only local SSH forwarding. Enter the foreign SSH address/port, Iran public IP and unused service ports. Root SSH authentication follows the normal agent/key/password flow; host keys are verified. A dedicated restricted forwarding account is used afterward.
 
-## Rescue
+For an existing GRE tunnel, choose its ID to convert it in FRP mode. Its configuration and quota are retained for rollback. Direct mode uses a separate connection and does not silently discard UDP from an existing tunnel. Use its menu to inspect, start, stop, restart, change a peer address, view logs or remove locally. See [the detailed guide](ADVANCED.md).
 
-**11 → 3** carries the original one-way connectivity recovery backend. The blocked/origin side creates a private connection code; enter it on a reachable entry server. Their service ports and application path must already be correct. It uses FRP services and dedicated nftables tables; install `nftables` and verified FRP binaries first (`NavaTunnel download-cores`). The operation checks prerequisites and reports failures. Codes contain credentials. Use status/probe first; automatic activation is a separate explicit choice. Disable removes owned Rescue units/rules. A successful restore does not by itself repair all opposite endpoint addresses.
+## Runtime and backups
 
-## Auto Pool, dial route and performance
+The optional core now contains only Cluster, its TLS heartbeat/control plumbing and the small TLS front needed by the existing FRP WSS transport. It has no history collectors, standalone alerts, metrics, diagnostics, Auto Pilot, Rescue, Peer Link or GRE WSS relay. No Go installation is required on the server; the script fetches checksum-verified binaries from the `core-v1.1.1` release when needed.
 
-**11 → 4** controls the original Auto Pool algorithm. It is initially off. Once enabled, the watchdog samples each minute, scales pool size within bounds, and uses cooldown, quiet-sample, CPU, RAM and active-connection gates before restarting FRPC. A restart can briefly interrupt sessions. FRPS maximum changes may still require a planned server restart; status reports that. Manual pool changes and tcpMux need coordinated endpoints. A `work connection pool is full` log alone does not prove that a larger pool will help.
+`NavaTunnel core-service start` starts the private Unix control socket. `NavaTunnel core-service start --listen 0.0.0.0:47777` explicitly enables the TLS Cluster heartbeat listener. No web administration routes are mounted. Cluster configuration and certificate identity are included in encrypted backups.
 
-**11 → 10** or `NavaTunnel dial status|gre|public|auto` controls the foreign FRPC destination. Automatic mode may fall back from a failed GRE control path to Iran's public IPv4; that public control listener must be reachable and allowed. It keeps a working public connection rather than forcing an automatic return; use `dial gre` to switch back deliberately. After migration, reapply the new connection bundle to refresh both addresses/base control-port metadata.
-
-Optimize uses RAM-scaled values and merges, rather than overwrites, existing `ip_local_reserved_ports`. MTU/MSS rules are managed per interface. None of these controls removes physical path loss.
-
-## Diagnosis and linked changes
-
-**11 → 5** offers reverse-path analysis, a repair preview, explicit repair and repair history. The full doctor can start an owned iperf3 server bound to the GRE address; install iperf3 separately if needed. Remote probes, paired carrier changes, benchmarks and Auto Pilot use **11 → 9** peer linking. Configure master/worker, the same private peer secret, opposite TLS API URL and fingerprint. Test the link before applying changes. Auto Pilot is opt-in and can interrupt connections while switching a carrier. Both endpoints must support the selected carrier and have matching relay settings.
-
-Benchmark/advisor output is a measurement and recommendation, not an automatic promise of better throughput. The existing MTU probe in the network menu is also available without the core.
-
-## Reports, alerts and local security
-
-Start background collection under **11 → 7 → 6**. The core preserves up to 24 hours of link samples and seven days of traffic history. Those reports are separate from existing persistent quota counters; a seven-day history is not a billing total. The original peer history covers its registered GRE topology; per-link NavaLink quota accounting remains in its own traffic controls.
-
-State alerts under **11 → 8** can use a webhook or the Telegram bot already configured in the watchdog. They include state transitions and disk/RAM/certificate warnings with hysteresis. Nothing is sent until you configure/enable alerts; the test action explicitly sends a test. Resource thresholds follow the original defaults. Cover traffic and DPI controls remain in the existing advanced menus.
-
-Reports can rotate/show a Prometheus token or disable scraping. To scrape remotely, enable the TLS peer listener and use `Authorization: Bearer TOKEN` on `/metrics`; protect the token and verify the certificate. Metrics names use `navatunnel_`. Error and audit logs are private, redacted and rotated; local CLI access is `NavaTunnel advanced errors status` / `audit status`. JSON output is intentionally available for automation.
-
-`NavaTunnel core-service start` enables the root-only Unix control service without a public listener. `NavaTunnel core-service start --listen 0.0.0.0:47777` explicitly enables its TLS interserver listener. The listener provides authenticated peer/heartbeat routes and token-protected metrics, **no browser administration UI**. Administration uses `/etc/gre-panel/core.sock` (0600). Default CLI output hides secrets; reveal only intentionally with `--show-secrets`.
-
-Encrypted backups include core configuration and peer certificate identity. Preserve the backup encryption key. Disabling the core disables Cluster routing but is not a request to stop standalone Rescue services; disable Rescue from its menu when desired. Full uninstall removes only the core's owned Cluster/Rescue resources before the existing tunnel cleanup.
+Removed 1.1.0 settings are privately archived under `/var/backups/navatunnel/removed-tools-*`; only their owned services and Rescue nftables tables are retired. Cluster, NavaLink, main FRP files and quota state are retained. Current FRP address/pool values are not automatically retuned by this migration. An active removed GRE WSS relay is moved to the existing FOU carrier; update both endpoints when retiring such a relay. FRP WSS remains a supported pre-existing protocol and uses its own TLS front.

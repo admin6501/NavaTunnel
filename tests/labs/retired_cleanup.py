@@ -15,7 +15,7 @@ def main():
         engine=types.ModuleType('cleanup_lab')
         code=(ROOT/'NavaTunnel-extra.sh').read_text().split("<<'PY'\n",1)[1].rsplit('\nPY',1)[0]
         exec(compile(code,'helper','exec'),engine.__dict__)
-        for name in ('STATE','UNITS','ROOT_KEYS'):
+        for name in ('STATE','UNITS','ROOT_KEYS','FRP','BACKUPS','SYSCTL'):
             path=Path(folder)/name;path.mkdir();setattr(engine,name,path)
         original=engine.run
         def run(args,*pos,**kwargs):
@@ -42,6 +42,26 @@ def main():
         assert key.read_text()=='keep-root-key\n'
         assert (engine.STATE/'traffic.json').exists()
         engine.cleanup_retired()
+        # The new cleanup must preserve the retained original Cluster while removing Rescue.
+        ipt('-t','nat','-N','NAVA-CLUSTER-PREROUTING')
+        ipt('-t','nat','-A','NAVA-CLUSTER-PREROUTING','-j','RETURN')
+        retained_nat=ipt('-t','nat','-S')
+        def nft(*args):return original(['nft',*args]).stdout
+        for table in ('navatunnel_rescue','navatunnel_dnat','UNRELATED_LAB'):nft('add','table','inet',table)
+        engine.save(engine.STATE/'cluster_v2.json',dict(enabled=True,cluster_secret='retained'))
+        engine.save(engine.STATE/'rescue.json',dict(role='origin',token='retire-private'))
+        engine.save(engine.STATE/'alerts.json',dict(enabled=True))
+        engine.save(engine.UNITS/'navatunnel-rescue-frpc.service','owned')
+        cluster_before=(engine.STATE/'cluster_v2.json').read_bytes()
+        traffic_before=(engine.STATE/'traffic.json').read_bytes()
+        engine.cleanup_extra_tools()
+        assert retained_nat==ipt('-t','nat','-S')
+        tables=nft('list','tables')
+        assert 'UNRELATED_LAB' in tables and 'navatunnel_rescue' not in tables and 'navatunnel_dnat' not in tables
+        assert (engine.STATE/'cluster_v2.json').read_bytes()==cluster_before
+        assert (engine.STATE/'traffic.json').read_bytes()==traffic_before
+        engine.cleanup_extra_tools()
+        print('PASS: removed Rescue tables and units retired; retained Cluster NAT, unrelated nftables, quotas and configuration preserved.')
         print('PASS: retired units, marked NAT/forwarding rules and health keys removed; unrelated rules, keys and traffic state preserved; retry is a no-op.')
 
 

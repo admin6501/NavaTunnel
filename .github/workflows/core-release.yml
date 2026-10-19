@@ -17,7 +17,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: 1.23.12
-          cache-dependency-path: core/go.sum
+          cache-dependency-path: core/go.mod
       - name: Verify version and networking tests
         run: |
           test "$(sed -n 's/^const coreVersion = "\([^"]*\)"/\1/p' core/main.go)" = "${GITHUB_REF_NAME#core-}"
@@ -38,4 +38,4 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" dist/NavaTunnel-core_linux_* dist/checksums.txt --verify-tag --title "NavaTunnel ${GITHUB_REF_NAME#core-v} — Standalone networking tools" --notes-file "docs/releases/${GITHUB_REF_NAME#core-v}.md"
+          gh release create "$GITHUB_REF_NAME" dist/NavaTunnel-core_linux_* dist/checksums.txt --verify-tag --title "NavaTunnel ${GITHUB_REF_NAME#core-v} — Cluster core" --notes-file "docs/releases/${GITHUB_REF_NAME#core-v}.md"

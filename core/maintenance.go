@@ -2,8 +2,6 @@ package main
 
 import (
 	"fmt"
-	"os"
-	"os/exec"
 	"strings"
 )
 
@@ -46,19 +44,5 @@ func purgeClusterRules() error {
 		}
 	}
 	installedClusterBody = ""
-	return nil
-}
-
-func rescuePrerequisites() error {
-	for _, bin := range []string{"nft", "systemctl", "ip"} {
-		if _, e := exec.LookPath(bin); e != nil {
-			return fmt.Errorf("Rescue requires %s; install the dependency first", bin)
-		}
-	}
-	for _, bin := range []string{"/usr/local/bin/frps", "/usr/local/bin/frpc"} {
-		if fi, e := os.Stat(bin); e != nil || fi.Mode()&0111 == 0 {
-			return fmt.Errorf("Rescue requires verified FRP binaries; run NavaTunnel download-cores")
-		}
-	}
 	return nil
 }

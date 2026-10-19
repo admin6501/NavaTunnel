@@ -8,10 +8,8 @@ by updating the script.
 Update with `NavaTunnel update-all`, reopen `NavaTunnel`, then choose **2)
 Advanced settings for speed and security**:
 
-- **9) NavaLink:** FRP over a reverse SSH carrier.
-- **11) Standalone upstream tools:** original Cluster, WSS carrier, Rescue, Auto Pool, diagnostics, history and alerts. See [the dedicated guide](UPSTREAM_TOOLS.md).
-- **10) Network tools:** path-MTU measurement, coordinated tcpMux settings and
-  pool diagnostics.
+- **9) NavaLink:** FRP over SSH or explicit TCP-only Direct SSH.
+- **10) Cluster:** the original exit-pool and Iran mesh backend. See [the Cluster guide](UPSTREAM_TOOLS.md).
 
 ## NavaLink
 
@@ -114,33 +112,6 @@ addresses, client connection addresses and DNS still need the usual migration
 updates. Usage generated after the backup snapshot is not automatically
 merged from the old host.
 
-## Network tools
-
-```bash
-# Read-only size probes, constrained by the current interface MTU:
-NavaTunnel path-mtu --interface gre-tunnel --peer 10.200.0.1
-# Explicitly save/apply the confirmed size through the existing MTU command:
-NavaTunnel path-mtu --interface gre-tunnel --peer 10.200.0.1 --apply
-
-NavaTunnel tcp-mux status
-NavaTunnel tcp-mux off
-NavaTunnel pool
-```
-
-MTU probes need meaningful ICMP responses and can be affected by filtering or
-loss. No change is made when the baseline test fails. Applying an MTU still
-requires the same value on the matching opposite tunnel; the existing KCP
-minimum-size validation remains in force.
-
-The tcpMux switch saves the setting for **legacy FRP configs on this host** and
-future generated configs. Set the same value on both ends, then restart only
-the intended tunnel when ready. Saving it does not automatically restart active
-connections. NavaLink retains its own `tcpMux=false` configuration.
-
-Pool diagnostics read recent messages and current limits. They do not silently
-resize pools or restart frpc: `pool is full` is not by itself evidence that user
-connections have failed.
-
 ## Restore safety and tests
 
 Restore validates every archive member before any extraction, rejects path
@@ -150,9 +121,8 @@ permissions. An old backup containing unsupported custom paths is rejected
 rather than extracted unrestrictedly.
 
 Regression tests cover permissions, key restrictions, rollback, preserving
-traffic quotas, retired-feature cleanup, port/ID reservations, MTU and helper menus.
-The privileged CI SSH lab checks actual FRP TCP/UDP over reverse SSH plus denied shell access,
-local forwarding and a different reverse listener. These do not replace tests
+traffic quotas, retired-feature cleanup, port/ID reservations, MTU and retained helper menus.
+The privileged CI SSH lab checks actual FRP TCP/UDP over reverse SSH and the TCP-only Direct mode, including their forwarding and shell restrictions. These do not replace tests
 on your own provider's network.
 
 The earlier custom Cluster schema (`cluster.json`) remains retired: its timer, owned rules and health keys are cleaned up. The newly ported original backend uses `cluster_v2.json` and `NavaTunnel-core.service`; legacy cleanup does not remove it. It starts disabled and requires new explicit configuration. See [the original-backend guide](UPSTREAM_TOOLS.md).

@@ -21,7 +21,7 @@ class ExtraHarness(unittest.TestCase):
         self.engine=types.ModuleType('extra_test')
         code=(ROOT/'NavaTunnel-extra.sh').read_text().split("<<'PY'\n",1)[1].rsplit('\nPY',1)[0]
         exec(compile(code,'NavaTunnel-extra.sh','exec'),self.engine.__dict__)
-        for name in ('STATE','UNITS','BIN','FRP','ROOT_KEYS','CARRIER_HOME'):
+        for name in ('STATE','UNITS','BIN','FRP','ROOT_KEYS','CARRIER_HOME','BACKUPS','SYSCTL'):
             path=self.root/name;path.mkdir();setattr(self.engine,name,path)
         self.engine.EXTRA=self.engine.BIN/'NavaTunnel-extra.sh'
         self.engine.SSH_CONFIG=self.root/'sshd_config';self.engine.SSH_CONFIG.write_text('Port 22\n')
@@ -139,37 +139,6 @@ class NavaLinkTests(ExtraHarness):
         self.assertFalse(any('start' in cmd for cmd,_ in self.calls))
 
 
-class NetworkToolsTests(ExtraHarness):
-    def test_mux_setting_is_saved_without_restarting_services_or_losing_tokens(self):
-        path=self.engine.FRP/'frpc.toml';path.write_text('auth.token="preserved"\ntransport.tcpMux = true\n[[proxies]]\nname="one"\ntype="tcp"\nlocalPort=443\nremotePort=443\n')
-        self.invoke(['tcp-mux','off'])
-        cfg=tomllib.loads(path.read_text());self.assertFalse(cfg['transport']['tcpMux']);self.assertEqual(cfg['auth']['token'],'preserved')
-        self.assertFalse(self.engine.load(self.engine.STATE/'perf.json',{})['tcp_mux'])
-        self.assertFalse(any('restart' in cmd for cmd,_ in self.calls))
-
-    def test_mtu_probe_stays_below_interface_mtu_and_is_readonly_by_default(self):
-        original=self.fake_run
-        def run(args,check=True,**kwargs):
-            result=original(args,check=check,**kwargs)
-            if args[0]=='ip':result.stdout='[{"mtu":1380}]'
-            if args[0]=='ping':result.returncode=0 if int(args[args.index('-s')+1])<=1172 else 1
-            return result
-        self.engine.run=run
-        out=io.StringIO()
-        with contextlib.redirect_stdout(out):self.invoke(['path-mtu','--peer','10.200.0.1'])
-        self.assertIn('1200',out.getvalue())
-        probes=[int(cmd[cmd.index('-s')+1]) for cmd,_ in self.calls if cmd[0]=='ping']
-        self.assertLessEqual(max(probes),1352)
-        self.assertFalse(any(cmd[0].endswith('/NavaTunnel') for cmd,_ in self.calls))
-
-    def test_no_icmp_baseline_means_no_mtu_mutation(self):
-        def run(args,check=True,**kwargs):return subprocess.CompletedProcess(args,1 if args[0]=='ping' else 0,'[{"mtu":1380}]' if args[0]=='ip' else '','')
-        self.engine.run=run
-        with self.assertRaises(ValueError):self.invoke(['path-mtu','--peer','10.200.0.1','--apply'])
-
-    def test_pool_advisor_never_changes_settings_or_restarts(self):
-        self.invoke(['pool'])
-        self.assertTrue(all(cmd[0]=='journalctl' for cmd,_ in self.calls))
 
 
 from test_regressions import ScriptHarness
@@ -202,7 +171,7 @@ class HelperInputTests(unittest.TestCase):
             source=source.replace("STATE=Path('/etc/gre-panel')", "STATE=Path("+repr(folder)+")")
             source=source.replace("if os.geteuid()!=0:", "if False:")
             script=Path(folder)/'helper.sh';script.write_text(source)
-            for page,choice in (('navalink','2'),('network','3')):
+            for page,choice in (('navalink','2'),):
                 with self.subTest(page=page):
                     result=subprocess.run(['bash',str(script),'menu',page],input=choice+'\n\n0\n',text=True,capture_output=True,timeout=5)
                     self.assertEqual(result.returncode,0,result.stderr)
@@ -248,7 +217,7 @@ class RetiredCleanupTests(ExtraHarness):
 
     def test_removed_commands_and_menu_are_not_available(self):
         with contextlib.redirect_stderr(io.StringIO()),self.assertRaises(SystemExit):self.invoke(['cluster','enable'])
-        with contextlib.redirect_stderr(io.StringIO()),self.assertRaises(SystemExit):self.invoke(['menu','cluster'])
+        with patch('builtins.input',return_value='0'),contextlib.redirect_stdout(io.StringIO()):self.invoke(['menu','cluster'])
 
 class UpstreamToolsTests(ExtraHarness):
     def test_direct_mode_only_installs_tcp_ssh_unit(self):
@@ -266,13 +235,95 @@ class UpstreamToolsTests(ExtraHarness):
         conf=tomllib.loads(self.engine.nava_config(dict(self.record,role='foreign',pool_count=73)))
         self.assertEqual(conf['transport']['poolCount'],73)
 
-    def test_each_upstream_submenu_opens_and_returns(self):
-        # Exercise the real Bash/heredoc stdin path for every added menu.
-        source=(ROOT/'NavaTunnel-extra.sh').read_text().replace("STATE=Path('/etc/gre-panel')",'STATE=Path('+repr(str(self.root))+')').replace('if os.geteuid()!=0:', 'if False:')
-        helper=self.root/'upstream.sh';helper.write_text(source)
-        for topic in range(1,11):
-            with self.subTest(topic=topic):
-                result=subprocess.run(['bash',str(helper),'menu','upstream'],input=str(topic)+'\n0\n0\n',text=True,capture_output=True,timeout=5)
-                self.assertEqual(result.returncode,0,result.stderr)
-                self.assertGreaterEqual(result.stdout.count('0) Back'),3)
-                self.assertNotIn('operation failed',result.stderr)
+    def test_cluster_menu_status_is_read_only_and_no_other_tools_are_shown(self):
+        with patch('builtins.input',side_effect=['1','','0']),contextlib.redirect_stdout(io.StringIO()) as output:
+            self.engine.menu('cluster')
+        calls=[args for args,_ in self.calls]
+        self.assertTrue(any(args[1:4]==['advanced','cluster','status'] for args in calls),calls)
+        for label in ('Reverse-path doctor','Auto Pool','Benchmark','Connectivity Rescue','State-change alerts','History, usage'):
+            self.assertNotIn(label,output.getvalue())
+
+    def test_removed_commands_are_rejected(self):
+        for args in (['path-mtu','--peer','10.200.0.1'],['tcp-mux','status'],['pool'],['menu','upstream'],['menu','network']):
+            with self.subTest(args=args),contextlib.redirect_stderr(io.StringIO()),self.assertRaises(SystemExit):self.engine.invoke(args)
+
+
+class RemovedToolsMigrationTests(ExtraHarness):
+    def test_empty_server_is_a_noop(self):
+        self.engine.cleanup_extra_tools()
+        self.assertEqual(self.calls,[])
+        self.assertEqual(list(self.engine.BACKUPS.iterdir()),[])
+
+    def test_cleanup_archives_removed_state_and_preserves_cluster_navalink_and_quotas(self):
+        state=self.engine.STATE
+        preserved={'cluster_v2.json':{'enabled':True,'cluster_secret':'keep-private'},'traffic.json':{'gre-tunnel':{'download':123,'limit':456}},'peers.json':{'peers':[{'id':1,'gre_if':'gre-tunnel'}]},'navalink/012345abcdef/config.json':self.record}
+        for name,value in preserved.items():self.engine.save(state/name,value)
+        self.engine.save(state/'alerts.json',{'enabled':True,'webhook_url':'https://example.test/private'})
+        self.engine.save(state/'rescue.json',{'role':'origin','token':'secret'})
+        self.engine.save(state/'auto_pool.json',{'pool_count':80})
+        self.engine.save(state/'perf.json',{'auto_pool':True,'proxy_encryption':True,'chaff_profile':'off'})
+        self.engine.save(state/'core.json',{'port':47777,'metrics_token':'secret','revpath_auto':True})
+        self.engine.save(self.engine.FRP/'dial.env','DIAL_MODE=auto\n')
+        self.engine.save(self.engine.UNITS/'navatunnel-rescue-frpc.service','owned unit')
+        self.engine.save(self.engine.UNITS/'NavaTunnel-core.service','retained Cluster unit')
+        self.engine.save(self.engine.UNITS/'frps.service','retained FRP unit')
+        self.engine.save(self.engine.UNITS/'frps-wss.service','retained FRP TLS front')
+        before={name:(state/name).read_bytes() for name in preserved}
+        with patch('shutil.which',return_value='/usr/sbin/nft'):
+            self.engine.cleanup_extra_tools()
+        for name,value in before.items():self.assertEqual((state/name).read_bytes(),value)
+        for name in ('alerts.json','rescue.json','auto_pool.json'):self.assertFalse((state/name).exists())
+        self.assertEqual(json.loads((state/'core.json').read_text()),{'port':47777})
+        self.assertEqual(json.loads((state/'perf.json').read_text()),{'proxy_encryption':True,'chaff_profile':'off'})
+        for name in ('NavaTunnel-core.service','frps.service','frps-wss.service'):self.assertTrue((self.engine.UNITS/name).exists())
+        self.assertTrue((state/'core-restart-required').exists())
+        calls=[a for a,_ in self.calls]
+        self.assertIn(['systemctl','stop','NavaTunnel-core.service'],calls)
+        self.assertNotIn(['systemctl','disable','--now','NavaTunnel-core.service'],calls)
+        self.assertFalse(any(a[0]=='iptables' for a in calls),calls)
+        self.assertEqual([a[-1] for a in calls if a[:3]==['nft','delete','table']],['navatunnel_rescue','navatunnel_dnat'])
+        archive=next(self.engine.BACKUPS.iterdir())
+        self.assertEqual(archive.stat().st_mode & 0o777,0o700)
+        self.assertEqual((archive/'alerts.json').stat().st_mode & 0o777,0o600)
+        self.assertEqual(json.loads((archive/'rescue.json').read_text())['token'],'secret')
+        calls_before=len(self.calls);self.engine.cleanup_extra_tools();self.assertEqual(len(self.calls),calls_before)
+
+    def test_failed_owned_service_stop_is_reported_and_keeps_configuration(self):
+        self.engine.save(self.engine.STATE/'rescue.json',{'role':'entry'})
+        self.engine.save(self.engine.UNITS/'navatunnel-rescue-frpc.service','owned')
+        def fail(args,**kwargs):
+            if list(map(str,args))==['systemctl','disable','--now','navatunnel-rescue-frpc.service']:raise ValueError('stop failed')
+            return self.fake_run(args,**kwargs)
+        self.engine.run=fail
+        with self.assertRaises(ValueError):self.engine.cleanup_extra_tools()
+        self.assertTrue((self.engine.STATE/'rescue.json').exists())
+        self.assertTrue((self.engine.UNITS/'navatunnel-rescue-frpc.service').exists())
+
+    def test_active_gre_wss_is_moved_to_fou_without_rewriting_other_peers(self):
+        self.engine.save(self.engine.STATE/'wss_carrier.json',{'enabled':True,'gre_interface':'gre-t3'})
+        self.engine.save(self.engine.STATE/'carrier.json',{'active_carrier':'wss:8443','mode':'wss:8443','fou_port1':443,'candidates':['direct','wss:8443','fou:443']})
+        peers={'peers':[{'id':1,'gre_if':'gre-tunnel','carrier':'direct'},{'id':3,'gre_if':'gre-t3','carrier':'wss:8443'}]}
+        self.engine.save(self.engine.STATE/'peers.json',peers)
+        with patch('subprocess.run',return_value=subprocess.CompletedProcess([],0,'','')) as migrate:
+            self.engine.cleanup_extra_tools()
+        args=migrate.call_args.args[0]
+        self.assertEqual(args,[str(self.engine.BIN/'NavaTunnel'),'retire-wss-carrier','gre-t3','443'])
+        self.assertEqual(migrate.call_args.kwargs['env']['NAVATUNNEL_RETIRING_TOOLS'],'1')
+        current=json.loads((self.engine.STATE/'peers.json').read_text())
+        self.assertEqual(current['peers'][0],peers['peers'][0])
+        self.assertEqual(current['peers'][1]['carrier'],'fou:443')
+        carrier=json.loads((self.engine.STATE/'carrier.json').read_text())
+        self.assertEqual(carrier['active_carrier'],'fou:443')
+        self.assertEqual(carrier['candidates'],['direct','fou:443'])
+
+    def test_current_cluster_daemon_is_not_stopped_during_retirement(self):
+        self.engine.save(self.engine.STATE/'alerts.json',{'enabled':True})
+        self.engine.save(self.engine.UNITS/'NavaTunnel-core.service','retained')
+        def run(args,*pos,**kwargs):
+            result=self.fake_run(args,*pos,**kwargs)
+            if list(map(str,args))[1:]==['daemon','ping']:result.stdout='{"version":"v1.1.1"}'
+            return result
+        self.engine.run=run
+        self.engine.cleanup_extra_tools()
+        self.assertFalse((self.engine.STATE/'core-restart-required').exists())
+        self.assertNotIn(['systemctl','stop','NavaTunnel-core.service'],[a for a,_ in self.calls])
