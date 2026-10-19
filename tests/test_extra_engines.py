@@ -249,3 +249,30 @@ class RetiredCleanupTests(ExtraHarness):
     def test_removed_commands_and_menu_are_not_available(self):
         with contextlib.redirect_stderr(io.StringIO()),self.assertRaises(SystemExit):self.invoke(['cluster','enable'])
         with contextlib.redirect_stderr(io.StringIO()),self.assertRaises(SystemExit):self.invoke(['menu','cluster'])
+
+class UpstreamToolsTests(ExtraHarness):
+    def test_direct_mode_only_installs_tcp_ssh_unit(self):
+        t=dict(self.record,mode='direct')
+        self.engine.install_nava(t)
+        self.assertEqual(self.engine.names(t),['navalink-012345abcdef-ssh.service'])
+        self.assertEqual(self.engine.names(dict(t,role='foreign')),[])
+        command=list(map(str,self.engine.ssh_carrier_command(t)))
+        self.assertNotIn('-R',command)
+        self.assertIn('0.0.0.0:443:127.0.0.1:443',command)
+        self.assertIn('StrictHostKeyChecking=yes',command)
+        self.assertFalse(list((self.engine.STATE/'navalink'/t['id']).glob('*.toml')))
+
+    def test_per_link_pool_is_preserved(self):
+        conf=tomllib.loads(self.engine.nava_config(dict(self.record,role='foreign',pool_count=73)))
+        self.assertEqual(conf['transport']['poolCount'],73)
+
+    def test_each_upstream_submenu_opens_and_returns(self):
+        # Exercise the real Bash/heredoc stdin path for every added menu.
+        source=(ROOT/'NavaTunnel-extra.sh').read_text().replace("STATE=Path('/etc/gre-panel')",'STATE=Path('+repr(str(self.root))+')').replace('if os.geteuid()!=0:', 'if False:')
+        helper=self.root/'upstream.sh';helper.write_text(source)
+        for topic in range(1,11):
+            with self.subTest(topic=topic):
+                result=subprocess.run(['bash',str(helper),'menu','upstream'],input=str(topic)+'\n0\n0\n',text=True,capture_output=True,timeout=5)
+                self.assertEqual(result.returncode,0,result.stderr)
+                self.assertGreaterEqual(result.stdout.count('0) Back'),3)
+                self.assertNotIn('operation failed',result.stderr)

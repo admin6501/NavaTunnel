@@ -57,7 +57,9 @@ def ident(value):
     return value
 
 
-def names(t):return ['navalink-'+ident(t['id'])+'-'+part+'.service' for part in (('server','ssh') if t['role']=='iran' else ('client',))]
+def names(t):
+    if t.get('mode')=='direct':return ['navalink-'+ident(t['id'])+'-ssh.service'] if t['role']=='iran' else []
+    return ['navalink-'+ident(t['id'])+'-'+part+'.service' for part in (('server','ssh') if t['role']=='iran' else ('client',))]
 
 
 def record(value):
@@ -92,7 +94,7 @@ def power(t,action):
 
     if action!='stop' and t['role']=='iran':
         for attempt in range(15):
-            if session_up('127.0.0.1',t['control_port']):break
+            if (direct_ready(t) if t.get('mode')=='direct' else session_up('127.0.0.1',t['control_port'])):break
             time.sleep(1)
         else:raise ValueError('NavaLink service started, but no FRP control session appeared within 15 seconds. Inspect its SSH/client journals.')
 
@@ -147,8 +149,8 @@ def check_ports(values,extra=()):
 def nava_config(t):
     cp=t['control_port'];token=json.dumps(t['token'])
     if t['role']=='iran':
-        return 'bindAddr = "127.0.0.1"\nbindPort = '+str(cp)+'\nproxyBindAddr = "0.0.0.0"\nauth.token = '+token+'\ntransport.tcpMux = false\nallowPorts = ['+','.join('{start='+str(p)+',end='+str(p)+'}' for p in t['ports'])+']\n'
-    lines=['serverAddr = "127.0.0.1"','serverPort = '+str(cp),'auth.token = '+token,'loginFailExit = false','transport.tls.enable = true','transport.tcpMux = false','transport.poolCount = 20']
+        return 'bindAddr = "127.0.0.1"\nbindPort = '+str(cp)+'\nproxyBindAddr = "0.0.0.0"\nauth.token = '+token+'\ntransport.tcpMux = false\ntransport.maxPoolCount = 2000\nallowPorts = ['+','.join('{start='+str(p)+',end='+str(p)+'}' for p in t['ports'])+']\n'
+    lines=['serverAddr = "127.0.0.1"','serverPort = '+str(cp),'auth.token = '+token,'loginFailExit = false','transport.tls.enable = true','transport.tcpMux = false','transport.poolCount = '+str(t.get('pool_count',20))]
     retained=set()
     for block in t.get('proxy_sections','').split('[[proxies]]')[1:]:
         remote=re.search(r'^\s*remotePort\s*=\s*(\d+)',block,re.M)
@@ -162,14 +164,36 @@ def nava_config(t):
     return '\n'.join(lines)+'\n'
 
 
+def direct_ready(t):
+    listing=run(['ss','-H','-lnt']).stdout
+    found=set()
+    for row in listing.splitlines():
+        fields=row.split()
+        if len(fields)>=4:
+            try:found.add(int(fields[-2].rsplit(':',1)[-1]))
+            except ValueError:pass
+    return set(t['ports']).issubset(found)
+
+
+def ssh_carrier_command(t):
+    path=STATE/'navalink'/t['id']
+    command=['/usr/bin/ssh','-N','-T','-i',path/'key','-p',str(t['ssh_port']),'-o','BatchMode=yes','-o','IdentitiesOnly=yes','-o','StrictHostKeyChecking=yes','-o','UserKnownHostsFile='+str(STATE/'ssh-known-hosts'),'-o','ExitOnForwardFailure=yes','-o','ServerAliveInterval=10','-o','ServerAliveCountMax=3']
+    if t.get('mode')=='direct':
+        for p in t['ports']:command+=['-L','0.0.0.0:'+str(p)+':127.0.0.1:'+str(p)]
+    else:command+=['-R','127.0.0.1:'+str(t['control_port'])+':127.0.0.1:'+str(t['control_port'])]
+    return command+['nava'+t['id']+'@'+t['remote_host']]
+
+
 def install_nava(t):
-    path=STATE/'navalink'/t['id'];path.mkdir(parents=True,exist_ok=True);path.chmod(0o700)
-    config=path/('frps.toml' if t['role']=='iran' else 'frpc.toml');save(config,nava_config(t));save(path/'config.json',t)
-    run([BIN/('frps' if t['role']=='iran' else 'frpc'),'verify','-c',config])
-    if t['role']=='iran':
-        unit(names(t)[0],[BIN/'frps','-c',config])
-        unit(names(t)[1],['/usr/bin/ssh','-N','-T','-i',path/'key','-p',str(t['ssh_port']),'-o','BatchMode=yes','-o','IdentitiesOnly=yes','-o','StrictHostKeyChecking=yes','-o','UserKnownHostsFile='+str(STATE/'ssh-known-hosts'),'-o','ExitOnForwardFailure=yes','-o','ServerAliveInterval=10','-o','ServerAliveCountMax=3','-R','127.0.0.1:'+str(t['control_port'])+':127.0.0.1:'+str(t['control_port']),'nava'+t['id']+'@'+t['remote_host']],names(t)[0]+' network-online.target')
-    else:unit(names(t)[0],[BIN/'frpc','-c',config])
+    path=STATE/'navalink'/t['id'];path.mkdir(parents=True,exist_ok=True);path.chmod(0o700);save(path/'config.json',t)
+    if t.get('mode')=='direct':
+        if t['role']=='iran':unit(names(t)[0],ssh_carrier_command(t))
+    else:
+        config=path/('frps.toml' if t['role']=='iran' else 'frpc.toml');save(config,nava_config(t))
+        run([BIN/('frps' if t['role']=='iran' else 'frpc'),'verify','-c',config])
+        if t['role']=='iran':
+            unit(names(t)[0],[BIN/'frps','-c',config]);unit(names(t)[1],ssh_carrier_command(t),names(t)[0]+' network-online.target')
+        else:unit(names(t)[0],[BIN/'frpc','-c',config])
     run(['systemctl','daemon-reload'])
 
 
@@ -201,14 +225,19 @@ def carrier_account(t,remove=False):
         public=t['public_key']
         if not re.fullmatch(r'ssh-ed25519 [A-Za-z0-9+/=]+(?: [^\n\r]*)?',public):raise ValueError('Invalid Ed25519 carrier key.')
         key=folder/'authorized_keys'
-        save(key,'restrict,port-forwarding,permitlisten="127.0.0.1:'+str(t['control_port'])+'",command="/bin/false" '+' '.join(public.split()[:2])+' navalink-'+t['id']+'\n');os.chown(key,account.pw_uid,account.pw_gid)
-        updated=clean.rstrip()+'\n'+start+'\nMatch User '+user+'\n    AuthenticationMethods publickey\n    PasswordAuthentication no\n    AllowTcpForwarding remote\n    PermitListen 127.0.0.1:'+str(t['control_port'])+'\n    PermitOpen none\n    AllowAgentForwarding no\n    X11Forwarding no\n    PermitTTY no\n    ForceCommand /bin/false\n'+end+'\n'
+        if t.get('mode')=='direct':
+            options=','.join('permitopen="127.0.0.1:'+str(p)+'"' for p in t['ports'])
+            forwarding='local';listen='none';open_targets=' '.join('127.0.0.1:'+str(p) for p in t['ports'])
+        else:
+            options='permitlisten="127.0.0.1:'+str(t['control_port'])+'"';forwarding='remote';listen='127.0.0.1:'+str(t['control_port']);open_targets='none'
+        save(key,'restrict,port-forwarding,'+options+',command="/bin/false" '+' '.join(public.split()[:2])+' navalink-'+t['id']+'\n');os.chown(key,account.pw_uid,account.pw_gid)
+        updated=clean.rstrip()+'\n'+start+'\nMatch User '+user+'\n    AuthenticationMethods publickey\n    PasswordAuthentication no\n    AllowTcpForwarding '+forwarding+'\n    PermitListen '+listen+'\n    PermitOpen '+open_targets+'\n    AllowAgentForwarding no\n    X11Forwarding no\n    PermitTTY no\n    ForceCommand /bin/false\n'+end+'\n'
     save(config,updated)
     try:
         run(['/usr/sbin/sshd','-t','-f',config])
         if not remove:
             effective=run(['/usr/sbin/sshd','-T','-f',config,'-C','user='+user+',host=localhost,addr=127.0.0.1']).stdout
-            if not re.search(r'^allowtcpforwarding remote$',effective,re.M):raise ValueError('SSH configuration does not allow the restricted carrier account.')
+            if not re.search(r'^allowtcpforwarding '+forwarding+r'$',effective,re.M):raise ValueError('SSH configuration does not allow the restricted carrier account.')
         service='ssh' if run(['systemctl','is-active','--quiet','ssh'],False).returncode==0 else 'sshd'
         run(['systemctl','reload',service])
     except Exception:
@@ -284,7 +313,9 @@ def resume_legacy(t):
 
 def navalink(args):
     if args.action=='setup':
+        if not 2<=args.pool_count<=1000:raise ValueError('Pool count must be 2-1000.')
         if args.replace_peer is not None and args.replace_peer<1:raise ValueError('The existing tunnel ID must be positive.')
+        if args.replace_peer and args.mode=='direct':raise ValueError('Direct SSH is TCP-only; create it separately with unused service ports. Use FRP mode to convert an existing tunnel.')
         if args.replace_peer:
             old=next((p for p in load(STATE/'peers.json',{}).get('peers',[]) if p['id']==args.replace_peer),None)
             if old is None:raise ValueError('Existing Iran tunnel ID not found.')
@@ -299,7 +330,7 @@ def navalink(args):
         ensure_cores()
         number=secrets.token_hex(6);path=STATE/'navalink'/number
         public_key=keypair(path/'key')
-        t=dict(id=number,name=args.name or 'NavaLink-'+remote,role='iran',local_pub=public,remote_host=remote,ssh_port=ssh_port,control_port=cp,ports=service_ports,token=secrets.token_hex(24),stopped=False)
+        t=dict(mode=args.mode,pool_count=args.pool_count,id=number,name=args.name or 'NavaLink-'+remote,role='iran',local_pub=public,remote_host=remote,ssh_port=ssh_port,control_port=cp,ports=service_ports,token=secrets.token_hex(24),stopped=False)
         bundle=dict(t,public_key=public_key,replace_legacy=bool(args.replace_peer));bundle['role']='foreign';bundle['remote_host']=public
         encoded=base64.urlsafe_b64encode(json.dumps(bundle).encode()).decode()
         provisioning_started=False
@@ -326,13 +357,16 @@ def navalink(args):
     elif args.action=='join':
         try:t=json.loads(base64.b64decode(args.bundle,altchars=b'-_',validate=True))
         except (ValueError,TypeError):raise ValueError('Invalid NavaLink connection bundle.')
+        if t.get('mode','frp') not in ('frp','direct') or not 2<=int(t.get('pool_count',20))<=1000:raise ValueError('Invalid connection mode or pool count.')
         ident(t.get('id'));t['remote_host']=ipv4(t['remote_host']);t['local_pub']=ipv4(t['local_pub']);t['control_port']=port(t['control_port']);t['ports']=ports(','.join(map(str,t['ports'])))
         if t['control_port']<1024 or t['control_port'] in t['ports']:raise ValueError('Invalid NavaLink control port.')
         if not re.fullmatch(r'[a-f0-9]{48}',t['token']) or t.get('role')!='foreign':raise ValueError('Invalid NavaLink token or role.')
         if (STATE/'navalink'/t['id']/'config.json').exists():raise ValueError('This connection already exists; remove it explicitly before joining again.')
         check_ports([], [t['control_port']]);ensure_cores()
         try:
-            if t.get('replace_legacy'):suspend_legacy(t)
+            if t.get('replace_legacy'):
+                if t.get('mode')=='direct':raise ValueError('Use a separate direct SSH connection; automatic conversion retains TCP/UDP and proxy options in FRP mode only.')
+                suspend_legacy(t)
             install_nava(t);wire_counter(t);carrier_account(t);power(t,'start')
         except Exception:
             t['stopped']=True;t['incomplete']=True;save(STATE/'navalink'/t['id']/'config.json',t)
@@ -354,13 +388,14 @@ def navalink(args):
         results=[]
         for t in records():
             active=not t.get('stopped') and all(run(['systemctl','is-active','--quiet',name],False).returncode==0 for name in names(t))
-            results.append(dict(id=t['id'],healthy=active and session_up('127.0.0.1',t['control_port'])))
+            results.append(dict(id=t['id'],healthy=active and (direct_ready(t) if t.get('mode')=='direct' and t['role']=='iran' else session_up('127.0.0.1',t['control_port']))))
         print(json.dumps(results))
     elif args.action=='status':
         for t in records():
             print(t['id']+' | '+t['name']+' | '+t['role']+' | '+t['remote_host'])
             for name in names(t):print('  '+name+': '+(run(['systemctl','is-active',name],False).stdout.strip() or 'unknown'))
-            print('  FRP control session: '+('connected' if session_up('127.0.0.1',t['control_port']) else 'not detected'))
+            print('  Mode: '+t.get('mode','frp')+(' (TCP only)' if t.get('mode')=='direct' else ' | pool count: '+str(t.get('pool_count',20))))
+            if t.get('mode')!='direct':print('  FRP control session: '+('connected' if session_up('127.0.0.1',t['control_port']) else 'not detected'))
             print('  Counter: '+(t.get('counter') or 'navalink-'+t['id'])+' (all IPv4 wire traffic to/from this peer; includes SSH overhead)')
     else:
         path,t=record(args.id)
@@ -469,7 +504,175 @@ def nettools(args):
                 if match:print(path.name+': '+key+'='+match[1])
 
 
+
+def core_call(family,action='status',body=None,query='',secrets=False):
+    args=[BIN/'NavaTunnel','advanced',family,action,'--json',json.dumps(body or {})]
+    if query:args+=['--query',query]
+    if secrets:args+=['--show-secrets']
+    run(args,capture=False,timeout=240)
+
+
+def core_start(listen=None):
+    args=[BIN/'NavaTunnel','core-service','start']
+    if listen:args+=['--listen',listen]
+    run(args,capture=False,timeout=240)
+
+
+def ask_bool(prompt,default=False):
+    value=input(prompt+(' [Y/n]: ' if default else ' [y/N]: ')).strip().lower()
+    if value in ('y','yes'):return True
+    if value in ('n','no'):return False
+    if not value:return default
+    raise ValueError('Enter y or n.')
+
+
+def cluster_menu_action(choice):
+    if choice=='1':core_call('cluster');return
+    if choice=='2':
+        ps=ports(input('Public entry service ports (443,8443): '));mode=input('Mode [wrr / failover / lowest_latency]: ').strip() or 'failover'
+        core_call('cluster','config',dict(service_ports=ps,balancing_mode=mode));return
+    if choice=='3':
+        peers=load(STATE/'peers.json',{}).get('peers',[])
+        for p in peers:print(str(p['id'])+') '+p.get('name','')+' | '+p.get('remote_pub','')+' | GRE '+p.get('peer_gre',''))
+        selected=int(input('Existing GRE tunnel ID: '));p=next((p for p in peers if p['id']==selected),None)
+        if p is None:raise ValueError('Tunnel not found.')
+        print('This routes to the foreign inbound over its GRE address. Exits need compatible users and inbounds.')
+        probe=port(input('TCP health-check port on the foreign service: '))
+        core_call('cluster','add-foreign',dict(id='peer-'+str(selected),name=p.get('name',''),public_ip=p['peer_gre'],tunnel_port=probe,protocol='gre',weight=int(input('Weight [1]: ') or '1')));return
+    if choice=='4':
+        number=input('Unique exit ID: ').strip();name=input('Exit name: ').strip();host=ipv4(input('Reachable destination IPv4 (GRE inner or public): ').strip());probe=port(input('TCP health-check port ON the destination: '));weight=int(input('Weight [1]: ') or '1');mapping={}
+        text=input('Optional entry:destination port mappings (443:8443,2083:2083): ').strip()
+        if text:
+            for pair in text.split(','):
+                a,b=pair.split(':');mapping[port(a)]=port(b)
+        core_call('cluster','add-foreign',dict(id=number,name=name,public_ip=host,tunnel_port=probe,protocol='tcp',weight=weight,target_ports=mapping));return
+    if choice in ('5','6','9'):
+        core_call('cluster');target=input('Node ID: ').strip();action={'5':'del-foreign','6':'switch-foreign','9':'del-iran'}[choice];key='target_id' if choice=='6' else 'id';core_call('cluster',action,{key:target});return
+    if choice=='7':
+        print('Each Iran node needs its own working exit path. Set the SAME secret on every trusted Iran node.')
+        public=ipv4(input('This Iran public IPv4: ').strip());node=input('This Iran node ID: ').strip();secret=input('Shared cluster secret [Enter: generate]: ').strip() or secrets.token_hex(32)
+        core_call('cluster','config',dict(node_id=node,public_ip=public,cluster_secret=secret,auto_failover=True));print('Shared cluster secret (private): '+secret);return
+    if choice=='8':
+        number=input('Other Iran node ID: ').strip();host=ipv4(input('Other Iran public IPv4: ').strip());url=input('Other Iran peer API URL (https://IP:47777): ').strip();pin=input('Its TLS SHA256 fingerprint (from that server): ').strip().replace(':','')
+        core_call('cluster','add-iran',dict(id=number,name=number,public_ip=host,api_url=url,tls_fingerprint=pin));return
+    if choice=='10':
+        if ask_bool('Enable routing for the configured service ports?'):
+            core_start();core_call('cluster','config',dict(enabled=True))
+        return
+    if choice=='11':core_call('cluster','config',dict(enabled=False));return
+    if choice=='12':
+        listen=input('Peer API bind IPv4:port [0.0.0.0:47777]: ').strip() or '0.0.0.0:47777';core_start(listen);core_call('certificate');return
+    if choice=='13':core_call('cluster','revert');return
+    raise ValueError('Invalid option.')
+
+
+def menu_upstream():
+    topics={
+        '1':('Cluster (ported upstream logic)', '1) Status\n2) Set entry ports and balancing mode\n3) Add an existing GRE exit\n4) Add an exit address and port mapping\n5) Remove exit\n6) Select preferred exit\n7) Configure this Iran mesh identity and shared secret\n8) Add an Iran mesh peer\n9) Remove Iran mesh peer\n10) Enable Cluster routing\n11) Disable Cluster routing\n12) Enable TLS peer listener / show certificate fingerprint\n13) Revert current failover rules'),
+        '2':('WSS carrier for GRE','1) Status\n2) Configure carrier\n3) Stop carrier'),
+        '3':('Connectivity Rescue','1) Status\n2) Probe reachability\n3) Enable on blocked/origin side\n4) Show origin connection code\n5) Join on entry/reachable side\n6) Disable and remove owned rescue rules\n7) Set automatic rescue mode'),
+        '4':('FRP Auto Pool and manual capacity','1) Status\n2) Enable Auto Pool\n3) Disable Auto Pool\n4) Set manual pool sizes\n5) Run one Auto Pool check'),
+        '5':('Reverse-path doctor','1) Diagnose all registered peers\n2) Preview repairs for one peer\n3) Apply repairs for one peer\n4) Show previous fixes\n5) Full doctor report\n6) Start iperf3 on GRE address\n7) Stop the owned iperf3 server'),
+        '6':('Benchmark and carrier advice','1) Run benchmark\n2) Last benchmark\n3) Carrier advice\n4) Apply measured carrier on linked endpoints\n5) Configure Auto Pilot'),
+        '7':('History, usage and host reports','1) Current fleet status\n2) Link history (24 hours)\n3) Traffic history (7 days)\n4) Kernel/network stack\n5) Port and SNI suggestions\n6) Enable background collection\n7) Core service status\n8) Rotate / show Prometheus token\n9) Disable Prometheus\n10) Security audit\n11) Structured error history'),
+        '8':('State-change alerts','1) Status\n2) Configure webhook / existing Telegram settings\n3) Disable alerts\n4) Send an explicit test alert'),
+        '9':('Authenticated peer link','1) Status\n2) Configure link\n3) Test link\n4) Enable TLS peer listener\n5) Show this server certificate fingerprint'),
+        '10':('Foreign client dial route','1) Status\n2) Force GRE\n3) Force Iran public IPv4\n4) Enable automatic GRE/public fallback')}
+    while True:
+        print('\033[2J\033[H',end='');print('Standalone upstream networking tools')
+        for key,(title,_) in topics.items():print(key+') '+title)
+        print('0) Back');topic=input('Select: ').strip()
+        if topic=='0':return
+        if topic not in topics:continue
+        while True:
+            title,items=topics[topic];print('\033[2J\033[H'+title+'\n'+items+'\n0) Back')
+            choice=input('Select: ').strip()
+            if choice=='0':break
+            try:
+                if topic=='1':cluster_menu_action(choice)
+                elif topic=='2':
+                    if choice=='1':core_call('wss')
+                    elif choice=='3':core_call('wss','stop')
+                    elif choice=='2':
+                        role=input('Role [server / client]: ').strip();listen=port(input('WSS TCP port [8443]: ') or '8443');remote=input('Remote IPv4:port (client only): ').strip();token=input('Shared WSS token (same on both ends): ').strip();sni=input('TLS SNI [Enter: unset]: ').strip();insecure=ask_bool('Explicitly allow the peer self-signed certificate?',False)
+                        iface=input('Managed GRE interface [gre-tunnel]: ').strip() or 'gre-tunnel';core_start();core_call('wss','config',dict(gre_interface=iface,enabled=True,role=role,listen_port=listen,remote_addr=remote,local_bridge_udp=19998,auth_token=token,sni=sni,use_tls=True,insecure_tls=insecure))
+                        print('Configure the same token on the opposite endpoint, then select wss:'+str(listen)+' as the GRE carrier on each matching interface.')
+                    else:raise ValueError('Invalid option.')
+                elif topic=='3':
+                    if choice=='1':core_call('rescue','status',query='full=1')
+                    elif choice=='2':core_call('rescue','config',dict(action='probe'))
+                    elif choice=='3':
+                        host=ipv4(input('Reachable entry server IPv4: ').strip());ps=input('Service ports to rescue: ').strip();core_start();core_call('rescue','config',dict(action='enable',remote_ip=host,ports=ps))
+                    elif choice=='4':core_call('rescue','config',dict(action='code'),secrets=True)
+                    elif choice=='5':core_call('rescue','config',dict(action='join',code=input('Origin rescue code: ').strip()))
+                    elif choice=='6':core_call('rescue','config',dict(action='disable'))
+                    elif choice=='7':
+                        enabled=ask_bool('Allow automatic rescue activation after confirmed one-way failures?');core_start();core_call('rescue','config',dict(action='auto',enabled=enabled))
+                    else:raise ValueError('Invalid option.')
+                elif topic=='4':
+                    if choice in ('1','2','3','5'):run([BIN/'NavaTunnel','autopool',{'1':'status','2':'on','3':'off','5':'tick'}[choice]],capture=False)
+                    elif choice=='4':
+                        pool=int(input('frpc pool count (2-1000): '));maximum=int(input('frps maximum pool (10-2000): '))
+                        if ask_bool('Save these sizes and restart affected legacy FRP services?'):core_call('perf','config',dict(action='set-tuning',auto_pool=False,frp_pool_count=pool,frp_max_pool=maximum))
+                    else:raise ValueError('Invalid option.')
+                elif topic=='5':
+                    if choice=='1':core_call('revpath','run')
+                    elif choice in ('2','3'):core_call('revpath','fix',dict(peer_id=int(input('Iran tunnel ID: ')),apply=choice=='3',auto=False))
+                    elif choice=='4':core_call('revpath','fixes')
+                    elif choice=='5':core_call('doctor','config',dict(action='run'))
+                    elif choice in ('6','7'):core_call('doctor','config',dict(action='iperf-start' if choice=='6' else 'iperf-stop'))
+                    else:raise ValueError('Invalid option.')
+                elif topic=='6':
+                    if choice=='1':core_call('benchmark','run',dict(target_host=input('Target IPv4 [Enter: linked peer]: ').strip()))
+                    elif choice=='2':core_call('benchmark')
+                    elif choice=='3':core_call('advisor')
+                    elif choice=='4':
+                        carrier=input('Measured carrier ID: ').strip()
+                        if ask_bool('Apply this carrier on linked endpoints (brief interruption)?'):core_call('benchmark','apply',dict(carrier=carrier))
+                    elif choice=='5':core_call('benchmark','autopilot',dict(enabled=ask_bool('Enable Auto Pilot on this linked Iran endpoint?'),threshold=float(input('Loss threshold percent [20]: ') or '20')))
+                    else:raise ValueError('Invalid option.')
+                elif topic=='7':
+                    options={'1':('fleet',''),'2':('history','hours=24'),'3':('usage','range=7d'),'4':('netstack',''),'5':('suggest','')}
+                    if choice in options:
+                        family,query=options[choice]
+                        if choice=='2':
+                            core_call('history');link=input('Link name from the list above [Enter: cancel]: ').strip()
+                            if not link:continue
+                            from urllib.parse import urlencode
+                            query=urlencode(dict(hours=24,link=link))
+                        core_call(family,query=query)
+                    elif choice=='6':core_start()
+                    elif choice=='7':run([BIN/'NavaTunnel','core-service','status'],capture=False)
+                    elif choice=='8':core_call('metrics','token',dict(action='rotate'),secrets=True)
+                    elif choice=='9':core_call('metrics','token',dict(action='disable'))
+                    elif choice=='10':core_call('audit')
+                    elif choice=='11':core_call('errors')
+                    else:raise ValueError('Invalid option.')
+                elif topic=='8':
+                    if choice=='1':core_call('alerts')
+                    elif choice=='2':
+                        url=input('Webhook HTTPS URL [Enter: none]: ').strip();telegram=ask_bool('Use the Telegram bot configured in the watchdog?');degraded=ask_bool('Notify on degraded state too?');gap=int(input('Minimum repeat gap seconds [120]: ') or '120');core_start();core_call('alerts','config',dict(enabled=True,webhook_url=url,telegram=telegram,notify_degraded=degraded,min_gap_sec=gap))
+                    elif choice=='3':core_call('alerts','config',dict(enabled=False))
+                    elif choice=='4':
+                        if ask_bool('Send a test to the configured alert destinations now?'):core_call('alerts','config',dict(action='test'))
+                    else:raise ValueError('Invalid option.')
+                elif topic=='9':
+                    if choice=='1':core_call('peer-link')
+                    elif choice=='2':
+                        role=input('Role [master=Iran / worker=foreign]: ').strip();url=input('Opposite TLS peer API URL (https://IP:47777): ').strip();secret=input('Shared peer secret (same on both ends, at least 24 characters): ').strip();pin=input('Opposite certificate SHA256 fingerprint: ').strip().replace(':','');core_start();core_call('peer-link','config',dict(role=role,peer_url=url,peer_secret=secret,tls_fingerprint=pin,internal_port=47777))
+                    elif choice=='3':core_call('peer-link','test')
+                    elif choice=='4':core_start(input('TLS peer API bind IPv4:port [0.0.0.0:47777]: ').strip() or '0.0.0.0:47777');core_call('certificate')
+                    elif choice=='5':core_call('certificate')
+                    else:raise ValueError('Invalid option.')
+                elif topic=='10':
+                    if choice not in ('1','2','3','4'):raise ValueError('Invalid option.')
+                    run([BIN/'NavaTunnel','dial',{'1':'status','2':'gre','3':'public','4':'auto'}[choice]],capture=False)
+            except (ValueError,TypeError,KeyError,OSError,subprocess.TimeoutExpired) as error:print('Operation failed: '+str(error))
+            input('Press Enter to return...')
+
+
 def menu(family):
+    if family=='upstream':return menu_upstream()
     while True:
         print('\033[2J\033[H',end='')
         if family=='navalink':
@@ -477,6 +680,8 @@ def menu(family):
             choice=input('Select: ').strip()
             if choice=='0':return
             if choice=='1':
+                mode=input('Mode [frp / direct (TCP only), default frp]: ').strip() or 'frp'
+                pool=input('FRP pool count [20]: ').strip() or '20'
                 peers=load(STATE/'peers.json',{}).get('peers',[])
                 for p in peers:print('GRE tunnel '+str(p['id'])+': '+p.get('name','')+' | '+p.get('remote_pub',''))
                 replace=input('Existing Iran tunnel ID to convert [Enter: create separately]: ').strip()
@@ -484,6 +689,7 @@ def menu(family):
                     args=['navalink','setup','--replace-peer',replace,'--ssh-port',input('Foreign root SSH port [22]: ').strip() or '22']
                 else:
                     args=['navalink','setup','--host',input('Foreign root SSH IPv4: ').strip(),'--public-ip',input('Iran public IPv4: ').strip(),'--ssh-port',input('Foreign root SSH port [22]: ').strip() or '22','--ports',input('New service ports: ').strip(),'--name',input('Connection name: ').strip()]
+                args+=['--mode',mode,'--pool-count',pool]
             elif choice=='2':args=['navalink','status']
             elif choice=='7':args=['navalink','endpoint','--id',input('Connection ID: ').strip(),'--host',input('New peer public IPv4: ').strip()]
             elif choice=='8':args=['navalink','logs','--id',input('Connection ID: ').strip()]
@@ -506,11 +712,11 @@ def menu(family):
 def invoke(argv):
     parser=argparse.ArgumentParser(description='Optional NavaTunnel engines and network tools')
     subs=parser.add_subparsers(dest='family',required=True)
-    n=subs.add_parser('navalink');n.add_argument('action',choices=('setup','join','status','health','restore','start','stop','restart','remove','endpoint','logs'));n.add_argument('--replace-peer',type=int);n.add_argument('--host');n.add_argument('--public-ip');n.add_argument('--ssh-port',default=22,type=int);n.add_argument('--ports');n.add_argument('--control-port',type=int);n.add_argument('--name',default='');n.add_argument('--bundle');n.add_argument('--id')
+    n=subs.add_parser('navalink');n.add_argument('action',choices=('setup','join','status','health','restore','start','stop','restart','remove','endpoint','logs'));n.add_argument('--mode',choices=('frp','direct'),default='frp');n.add_argument('--pool-count',type=int,default=20);n.add_argument('--replace-peer',type=int);n.add_argument('--host');n.add_argument('--public-ip');n.add_argument('--ssh-port',default=22,type=int);n.add_argument('--ports');n.add_argument('--control-port',type=int);n.add_argument('--name',default='');n.add_argument('--bundle');n.add_argument('--id')
     m=subs.add_parser('path-mtu');m.add_argument('--interface',default='gre-tunnel');m.add_argument('--peer',required=True);m.add_argument('--apply',action='store_true')
     mux=subs.add_parser('tcp-mux');mux.add_argument('action',choices=('on','off','status'),default='status',nargs='?')
     subs.add_parser('cleanup-retired')
-    subs.add_parser('pool');ui=subs.add_parser('menu');ui.add_argument('page',choices=('navalink','network'))
+    subs.add_parser('pool');ui=subs.add_parser('menu');ui.add_argument('page',choices=('navalink','network','upstream'))
     args=parser.parse_args(argv)
     if os.geteuid()!=0:raise ValueError('Run as root.')
     STATE.mkdir(parents=True,exist_ok=True)

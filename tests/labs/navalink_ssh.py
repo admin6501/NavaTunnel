@@ -35,10 +35,10 @@ def main():
         engine.CARRIER_HOME=base/'homes';engine.CARRIER_HOME.mkdir(mode=0o755)
         engine.SSH_CONFIG=base/'sshd_config'
         number=secrets.token_hex(6);tag='nv'+number[:6]
-        children=[];logs=[];account_created=False
+        children=[];logs=[];account_created=False;running={}
         def spawn(args,name):
             log=open(base/(name+'.log'),'w+');logs.append(log)
-            process=subprocess.Popen(list(map(str,args)),stdout=log,stderr=log,start_new_session=True);children.append(process);return process
+            process=subprocess.Popen(list(map(str,args)),stdout=log,stderr=log,start_new_session=True);children.append(process);running[name]=process;return process
         original=engine.run
         def runner(args,*pos,**kwargs):
             if str(args[0])=='systemctl':return subprocess.CompletedProcess(args,0,'','')
@@ -98,6 +98,30 @@ while True:
             time.sleep(.2);logs[-1].flush()
             assert 'administratively prohibited' in (base/'denied-forward.log').read_text(),'Local forwarding was not explicitly denied.'
             print('PASS: real FRP 0.71 TCP and UDP crossed reverse SSH; shell execution, a different reverse port and local forwarding were denied.')
+            # Reuse the private account with the Direct mode policy; no host SSH daemon is changed.
+            for label in ('carrier','frpc','frps','denied-forward'):
+                process=running[label]
+                if process.poll() is None:os.killpg(process.pid,signal.SIGTERM);process.wait(timeout=3)
+            t['mode']='direct';engine.carrier_account(t)
+            os.kill(running['sshd'].pid,signal.SIGHUP);time.sleep(.4)
+            direct_command=[*ssh,'-N','-L','0.0.0.0:18080:127.0.0.1:18080','nava'+number+'@198.19.0.2']
+            spawn(direct_command,'direct-carrier')
+            success=False
+            for _ in range(30):
+                if inside(a.pid,['python3','-c',probe],check=False).returncode==0:success=True;break
+                time.sleep(.2)
+            assert success,'Direct SSH did not forward TCP.'
+            reverse=run([*ssh,'-N','-R','127.0.0.1:42000:127.0.0.1:42000','nava'+number+'@198.19.0.2'],check=False,timeout=8)
+            assert reverse.returncode!=0,'Direct mode must deny remote listeners.'
+            spawn([*ssh,'-N','-L','127.0.0.1:18082:127.0.0.1:18081','nava'+number+'@198.19.0.2'],'denied-direct-target')
+            time.sleep(.3)
+            inside(a.pid,['python3','-c',"import socket;s=socket.create_connection(('127.0.0.1',18082),2);s.sendall(b'blocked');s.recv(64)"],check=False)
+            time.sleep(.2)
+            assert 'administratively prohibited' in (base/'denied-direct-target.log').read_text(),'Direct mode accepted an unlisted destination.'
+            denied=run([*ssh,'nava'+number+'@198.19.0.2','id'],check=False,timeout=8)
+            assert denied.returncode!=0 and 'uid=' not in denied.stdout
+            print('PASS: Direct SSH forwarded TCP while denying shell access, reverse listeners and destinations outside the configured service ports.')
+
         except Exception:
             for log in logs:
                 log.flush();text=Path(log.name).read_text()

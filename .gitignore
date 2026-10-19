@@ -1,10 +1,14 @@
-# فایل‌های موقت پایتون و آزمون‌ها
+# Python and test outputs
 __pycache__/
 *.py[cod]
 .pytest_cache/
 .coverage
 htmlcov/
 
-# پشتیبان محلی تاریخچه؛ در مخزن عمومی منتشر نشود
+# Private local history backup; do not publish
 *.bundle
 NavaTunnel-history-reset-plan.json
+
+# Local Go build outputs
+/core/core
+/dist/

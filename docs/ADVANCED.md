@@ -9,6 +9,7 @@ Update with `NavaTunnel update-all`, reopen `NavaTunnel`, then choose **2)
 Advanced settings for speed and security**:
 
 - **9) NavaLink:** FRP over a reverse SSH carrier.
+- **11) Standalone upstream tools:** original Cluster, WSS carrier, Rescue, Auto Pool, diagnostics, history and alerts. See [the dedicated guide](UPSTREAM_TOOLS.md).
 - **10) Network tools:** path-MTU measurement, coordinated tcpMux settings and
   pool diagnostics.
 
@@ -154,4 +155,4 @@ The privileged CI SSH lab checks actual FRP TCP/UDP over reverse SSH plus denied
 local forwarding and a different reverse listener. These do not replace tests
 on your own provider's network.
 
-Older Cluster installations are retired automatically during update or the first run: their timer, owned firewall rules and health keys are removed. Existing tunnels and NavaLink are preserved. Old backups do not reactivate Cluster.
+The earlier custom Cluster schema (`cluster.json`) remains retired: its timer, owned rules and health keys are cleaned up. The newly ported original backend uses `cluster_v2.json` and `NavaTunnel-core.service`; legacy cleanup does not remove it. It starts disabled and requires new explicit configuration. See [the original-backend guide](UPSTREAM_TOOLS.md).

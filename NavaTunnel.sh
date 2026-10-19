@@ -764,11 +764,21 @@ carrier_apply() {
     local SPECIFIC_IF="${2:-}"
     [[ -z "$TARGET" ]] && TARGET="direct"
     if [[ "$TARGET" == wss* ]]; then
-        echo "relay carrier WSS Not available in this version; from direct or fou:PORT use." >&2
-        return 1
+        local wss_iface
+        [[ -x /usr/local/bin/NavaTunnel-core && -f "$NAVATUNNEL_STATE_DIR/wss_carrier.json" ]] && systemctl is-active --quiet NavaTunnel-core.service || { echo 'Configure and start the WSS relay from Advanced > Upstream tools first.' >&2; return 1; }
+        wss_iface=$(python3 - "$NAVATUNNEL_STATE_DIR/wss_carrier.json" <<'PYWSSIF'
+import json,sys
+v=json.load(open(sys.argv[1]))
+if not v.get('enabled') or not v.get('auth_token'):sys.exit(1)
+print(v.get('gre_interface','gre-tunnel'))
+PYWSSIF
+) || return 1
+        [[ "$wss_iface" =~ ^gre-(tunnel|t[0-9]+)$ ]] || return 1
+        [[ -z "$SPECIFIC_IF" || "$SPECIFIC_IF" == "$wss_iface" ]] || { echo "This WSS relay belongs to $wss_iface." >&2; return 1; }
+        SPECIFIC_IF=$wss_iface
     fi
-    [[ "$TARGET" == "direct" || "$TARGET" == fou:* ]] || { echo "Invalid carrier: $TARGET" >&2; return 1; }
-    if [[ "$TARGET" == fou:* ]]; then is_valid_port "${TARGET#fou:}" || return 1; fi
+    [[ "$TARGET" == "direct" || "$TARGET" == fou:* || "$TARGET" == wss || "$TARGET" == wss:* ]] || { echo 'Invalid carrier.' >&2; return 1; }
+    if [[ "$TARGET" == fou:* || "$TARGET" == wss:* ]]; then is_valid_port "${TARGET#*:}" || return 1; fi
     carrier_init_kernel
 
     local IFS_TO_APPLY=()
@@ -801,8 +811,8 @@ carrier_apply() {
                 fi
             fi
 
-            local TARGET_MTU=1380
-            [[ "$TARGET" == wss* ]] && TARGET_MTU=1360
+            local TARGET_MTU
+            TARGET_MTU=$(tunnel_mtu_get "$dev") || return 1
 
             local CHANGED=0
             if [[ "$TARGET" == "direct" ]]; then
@@ -887,8 +897,7 @@ carrier_apply() {
                     ip addr add "$DEV_IP" dev "$dev" >/dev/null 2>&1 || true
                 fi
             fi
-            iptables -t mangle -C POSTROUTING -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 1340 >/dev/null 2>&1 || \
-                iptables -t mangle -A POSTROUTING -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 1340 >/dev/null 2>&1 || true
+            tunnel_mtu_apply "$dev" "$TARGET_MTU" || return 1
         fi
     done
 
@@ -1300,6 +1309,8 @@ tunnel_mtu_apply() {
     [[ -n "$mtu" ]] || mtu=$(tunnel_mtu_get "$iface") || return 1
     [[ "$mtu" =~ ^[0-9]{3,4}$ ]] && ((10#$mtu>=576 && 10#$mtu<=1476)) || return 1
     ip link set dev "$iface" mtu "$mtu" || return 1
+    iptables -t mangle -D POSTROUTING -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 1340 >/dev/null 2>&1 || true
+    iptables -t mangle -D FORWARD -p tcp --tcp-flags SYN,RST SYN -o "$iface" -j TCPMSS --set-mss 1340 >/dev/null 2>&1 || true
     local direction
     for direction in -i -o; do
         iptables -t mangle -C FORWARD "$direction" "$iface" -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu >/dev/null 2>&1 ||
@@ -1603,9 +1614,6 @@ EOF
 
     # Enable packet forwarding & MSS clamping to avoid fragmentation
     sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1
-    iptables -t mangle -D POSTROUTING -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu >/dev/null 2>&1 || true
-    iptables -t mangle -C POSTROUTING -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 1340 >/dev/null 2>&1 || \
-        iptables -t mangle -A POSTROUTING -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 1340
 
     tunnel_mtu_apply "$IFNAME" "$GRE_MTU" || return 1
     traffic_register "$IFNAME" --interface "$IFNAME" || echo "[!] Failed to initialize traffic counter; from NavaTunnel traffic add use." >&2
@@ -2252,6 +2260,22 @@ perf_apply() {
     local EFF_ENC=$(perf_get_enc)
     local EFF_COMP=$(perf_get_comp)
     local EFF_TLS=$(perf_get_tls)
+    local EFF_POOL EFF_MAXPOOL EFF_MUX
+    EFF_MUX=$(python3 - "$PERF_FILE" <<'PYMUX'
+import json,sys
+try:
+ d=json.load(open(sys.argv[1]));print(str(d['tcp_mux']).lower() if 'tcp_mux' in d else '')
+except (OSError,ValueError):pass
+PYMUX
+)
+    if [[ "$EFF_MUX" == true || "$EFF_MUX" == false ]]; then
+        local mux_file
+        for mux_file in "${CONFIG_DIR}"/frp[sc]*.toml; do
+            [[ -f "$mux_file" ]] || continue
+            autopool_set_toml_key "$mux_file" transport.tcpMux "$EFF_MUX" || return 1
+        done
+    fi
+    read -r EFF_POOL EFF_MAXPOOL <<< "$(pool_effective_values)"
 
     local IS_FOREIGN=0
     local IS_IRAN=0
@@ -2338,7 +2362,8 @@ with open(path, "w") as f:
 '
         fi
         systemctl daemon-reload >/dev/null 2>&1 || true
-        systemctl restart frpc
+        autopool_set_toml_key "${CONFIG_DIR}/frpc.toml" transport.poolCount "$EFF_POOL" || return 1
+        systemctl restart frpc || return 1
         echo -e "${GREEN}[✔️] Client settings FRP Updated and restarted its service.${NC}"
     fi
 
@@ -2351,12 +2376,7 @@ path = "'"$TOML_FILE"'"
 tls = ("'"$EFF_TLS"'".strip() in ("1", "true", "True"))
 
 import json, os
-max_pool = "500"
-try:
-    with open("/etc/gre-panel/perf.json") as jf:
-        max_pool = str(json.load(jf).get("frp_max_pool", 500))
-except:
-    pass
+max_pool = "'"$EFF_MAXPOOL"'"
 
 with open(path, "r") as f:
     lines = f.read().splitlines()
@@ -2505,6 +2525,8 @@ cli_perf() {
                 echo -e "${RED}[!] Current settings are not synchronized; for coordination NavaTunnel perf apply run the.${NC}"
             fi
             ;;
+        autopool|auto-pool) cli_autopool "${2:-status}" ;;
+        tcpmux|mux) cli_extra tcp-mux "${2:-status}" ;;
         enc)
             local VAL="${2:-}"
             case "$VAL" in
@@ -2691,10 +2713,8 @@ setup_iran_server_noninteractive() {
     fi
     local EFF_TLS=$(perf_get_tls)
     local QUIC_PORT=$((BIND_PORT == 65535 ? BIND_PORT - 1 : BIND_PORT + 1))
-    local MAX_POOL=500
-    if [[ -f /etc/gre-panel/perf.json ]] && command -v python3 >/dev/null 2>&1; then
-        MAX_POOL=$(python3 -c "import json; print(json.load(open('/etc/gre-panel/perf.json')).get('frp_max_pool', 500))" 2>/dev/null || echo 500)
-    fi
+    local MAX_POOL
+    read -r _ MAX_POOL <<< "$(pool_effective_values)"
     local TLS_LINE=""
     [[ "$EFF_TLS" == "1" ]] && TLS_LINE="transport.tls.force = true"
     local QUIC_PORT=$((BIND_PORT + 1))
@@ -2740,6 +2760,7 @@ EOF
     systemctl reset-failed frps >/dev/null 2>&1 || true
     systemctl enable frps >/dev/null 2>&1
     systemctl restart frps
+    if [[ "$FRP_TRANSPORT" == wss ]]; then frps_wss_front_ensure "" "$BIND_PORT" || return 1; fi
 
     local _frps_ok=0
     for _i in {1..5}; do
@@ -2873,8 +2894,11 @@ _setup_foreign_full() {
         TLS_ENABLE="transport.tls.enable = true"
         TLS_CUSTOM="transport.tls.disableCustomTLSFirstByte = true"
     fi
+    dial_env_write gre frp "$PEER_GRE" "$IP_IRAN" "$SERVER_PORT"
     local EFF_SERVER_PORT="${SERVER_PORT}"
-    if [[ "$FRP_TRANSPORT" == "quic" ]]; then
+    if [[ "$FRP_TRANSPORT" == "wss" ]]; then
+        EFF_SERVER_PORT=$(wss_front_port "$SERVER_PORT")
+    elif [[ "$FRP_TRANSPORT" == "quic" ]]; then
         EFF_SERVER_PORT=$((SERVER_PORT + 1))
         if [[ "$EFF_SERVER_PORT" -gt 65535 ]]; then EFF_SERVER_PORT=$((SERVER_PORT - 1)); fi
     fi
@@ -2894,7 +2918,7 @@ transport.heartbeatInterval = 30
 transport.heartbeatTimeout = 90
 transport.dialServerTimeout = 15
 transport.dialServerKeepalive = 30
-transport.poolCount = 20
+transport.poolCount = $(pool_effective_values | cut -d' ' -f1)
 
 EOF
     local PROXY_TARGET_IP="${RELAY_IP:-127.0.0.1}"
@@ -3134,15 +3158,13 @@ peer_token() {
 
 # write one frps instance: $1=suffix("" for legacy, "-N" for peers) $2=bind_port $3=token
 peer_write_frps() {
-    local SUF=$1 BIND_PORT=$2 TOKEN=$3
+    local SUF=$1 BIND_PORT=$2 TOKEN=$3 PROTOCOL=${4:-tcp}
     local POWER_IF="gre-t${SUF#-}"
     [[ -n "$SUF" ]] || POWER_IF=$TUNNEL_NAME
     local EFF_TLS=$(perf_get_tls)
     local QUIC_PORT=$((BIND_PORT == 65535 ? BIND_PORT - 1 : BIND_PORT + 1))
-    local MAX_POOL=500
-    if [[ -f /etc/gre-panel/perf.json ]] && command -v python3 >/dev/null 2>&1; then
-        MAX_POOL=$(python3 -c "import json; print(json.load(open('/etc/gre-panel/perf.json')).get('frp_max_pool', 500))" 2>/dev/null || echo 500)
-    fi
+    local MAX_POOL
+    read -r _ MAX_POOL <<< "$(pool_effective_values)"
     local TLS_LINE=""
     [[ "$EFF_TLS" == "1" ]] && TLS_LINE="transport.tls.force = true"
     cat <<EOF > "${CONFIG_DIR}/frps${SUF}.toml"
@@ -3184,7 +3206,8 @@ EOF
     chmod 600 "${CONFIG_DIR}"/*.toml 2>/dev/null || true
     systemctl daemon-reload
     systemctl enable "$SVC" >/dev/null 2>&1
-    systemctl restart "$SVC"
+    systemctl restart "$SVC" || return 1
+    if [[ "$PROTOCOL" == wss ]]; then frps_wss_front_ensure "$SUF" "$BIND_PORT" || return 1; fi
     if command -v ufw >/dev/null 2>&1 && ufw status | grep -q "Status: active"; then
         ufw allow "${BIND_PORT}/tcp" >/dev/null 2>&1
         ufw allow "${BIND_PORT}/udp" >/dev/null 2>&1
@@ -3281,13 +3304,13 @@ cli_add_peer() {
     if [[ "$ID" -eq 1 ]] && ! tunnel_present; then
         # first tunnel keeps legacy names (gre-tunnel, frps) — old setups untouched
         setup_gre_systemd "$LOCAL_PUB" "$REMOTE_PUB" "$LOCAL_GRE" "$PEER_GRE" || return 1
-        peer_write_frps "" "$FRP_PORT" "$TOKEN"
+        peer_write_frps "" "$FRP_PORT" "$TOKEN" "${FRP_TRANSPORT:-tcp}"
         GRE_IF="$TUNNEL_NAME"; FRPS_SVC="frps"; LEGACY=true
         # Chaff is now opt-in: not activated during setup.
     else
         GRE_IF="gre-t${ID}"; FRPS_SVC="frps-${ID}"; LEGACY=false
         setup_gre_iface "$GRE_IF" "$LOCAL_PUB" "$REMOTE_PUB" "$LOCAL_GRE" "$PEER_GRE" || return 1
-        peer_write_frps "-${ID}" "$FRP_PORT" "$TOKEN"
+        peer_write_frps "-${ID}" "$FRP_PORT" "$TOKEN" "${FRP_TRANSPORT:-tcp}"
         # point the new unit at the right interface
         sed -i "s/After=network.target/After=network.target ${GRE_IF}.service/" /etc/systemd/system/${FRPS_SVC}.service
         systemctl daemon-reload; systemctl restart "$FRPS_SVC"
@@ -3697,6 +3720,13 @@ cli_peer_protocol() {
         iface=$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("gre_if",""))' <<< "$record") || return 1
         validate_kcp_mtu "$iface" kcp || return 1
     fi
+    if [[ "$protocol" == wss && ${EUID:-1} -eq 0 ]]; then
+        local wss_record suffix control
+        wss_record=$(peer_get "$id") || return 1
+        suffix=$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("frps_svc","frps")[4:])' <<< "$wss_record") || return 1
+        control=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["frp_port"])' <<< "$wss_record") || return 1
+        frps_wss_front_ensure "$suffix" "$control" || return 1
+    fi
     python3 - "$PEERS_FILE" "$id" "$protocol" <<'PYCODE'
 import json,sys,os
 from pathlib import Path
@@ -3969,6 +3999,10 @@ for path,content in ((config,root+sep+tail),(registry,json.dumps(data,ensure_asc
         if os.path.exists(tmp):os.unlink(tmp)
 PYCODE
     [[ $? == 0 ]] || failure=1
+    local saved_proto suffix
+    saved_proto=$(python3 -c 'import json,sys;print(json.load(sys.stdin).get("frp_transport","tcp"))' <<< "$rec")
+    suffix=${svc#frps}
+    if (( ! failure )) && [[ "$saved_proto" == wss ]]; then frps_wss_front_ensure "$suffix" "$port" || failure=1; fi
     local quic=$((port == 65535 ? port-1 : port+1))
     if (( ! failure )) && command -v ufw >/dev/null && ufw status 2>/dev/null | grep -q 'Status: active'; then
         ufw allow "$port/tcp" && ufw allow "$port/udp" && ufw allow "$quic/udp" || failure=1
@@ -3980,6 +4014,7 @@ PYCODE
         cp -p "$tmp/peers.json" "$PEERS_FILE" && cp -p "$tmp/frps.toml" "$config" || {
             echo "Failed to retrieve files; backup: $tmp" >&2; return 1;
         }
+        if [[ "$saved_proto" == wss ]]; then frps_wss_front_ensure "$suffix" "$old" || true; fi
         systemctl restart "$svc" || { echo "The previous settings were restored, but the service did not start; backup: $tmp" >&2; return 1; }
         rm -rf "$tmp"
         echo 'Changing the control port failed; previous settings were restored.' >&2
@@ -5207,6 +5242,8 @@ uninstall_all() {
 uninstall_all_force() {
         echo -e "${CYAN}[*] Complete deletion NavaTunnel...${NC}"
         cleanup_retired_features || return 1
+        cli_core_service stop || return 1
+        if [[ -x /usr/local/bin/NavaTunnel-core ]]; then /usr/local/bin/NavaTunnel-core maintenance purge || return 1; fi
         if [[ -d "$NAVATUNNEL_STATE_DIR/navalink" ]]; then
             local extra_id extra_ids
             extra_ids=$(python3 - "$NAVATUNNEL_STATE_DIR/navalink" <<'PYCLEAN'
@@ -5286,6 +5323,7 @@ PYCLEAN
         crontab -l 2>/dev/null | grep -v 'NavaTunnel' | crontab - 2>/dev/null || true
 
         # 9. Remove entrypoints last
+        rm -f /usr/local/bin/NavaTunnel-core /etc/systemd/system/NavaTunnel-core.service
         rm -f /usr/local/bin/NavaTunnel-extra.sh /usr/local/bin/NavaTunnel /usr/local/bin/NavaTunnel.sh /usr/local/bin/navatunnel /usr/local/bin/navatunnel.sh /usr/local/bin/gre.sh
 
         echo -e "${GREEN}[✔️] Complete deletion is done; All tunnels, services and files are removed.${NC}"
@@ -5375,7 +5413,7 @@ tune_backup_once() {
              net.ipv4.tcp_slow_start_after_idle net.ipv4.tcp_window_scaling net.ipv4.tcp_mtu_probing \
              net.ipv4.tcp_keepalive_time net.ipv4.tcp_keepalive_intvl net.ipv4.tcp_keepalive_probes \
              net.core.default_qdisc net.ipv4.tcp_congestion_control \
-             net.ipv4.tcp_fastopen net.ipv4.ip_local_port_range; do
+             net.ipv4.tcp_fastopen net.ipv4.ip_local_port_range net.ipv4.ip_local_reserved_ports; do
         v=$(sysctl -n "$k" 2>/dev/null) || v=""
         echo "$k=$v" >> "$TUNE_BACKUP"
     done
@@ -5392,6 +5430,7 @@ tune_backup_once() {
 }
 
 tune_apply() {
+    tune_scale_values "$(tune_mem_mb)"
     tune_backup_once
     echo -e "${CYAN}[*] Optimizing the network for tunnel speed and stability...${NC}"
 
@@ -5407,10 +5446,10 @@ tune_apply() {
     # 2. Bigger socket buffers (16MB) and full TCP window scaling
     sysctl -w net.core.rmem_max=16777216 >/dev/null 2>&1
     sysctl -w net.core.wmem_max=16777216 >/dev/null 2>&1
-    sysctl -w net.core.rmem_default=1048576 >/dev/null 2>&1
-    sysctl -w net.core.wmem_default=1048576 >/dev/null 2>&1
-    sysctl -w net.ipv4.tcp_rmem="4096 1048576 16777216" >/dev/null 2>&1
-    sysctl -w net.ipv4.tcp_wmem="4096 1048576 16777216" >/dev/null 2>&1
+    sysctl -w net.core.rmem_default="$TUNE_RMEM_DEFAULT" >/dev/null 2>&1
+    sysctl -w net.core.wmem_default="$TUNE_RMEM_DEFAULT" >/dev/null 2>&1
+    sysctl -w net.ipv4.tcp_rmem="$TUNE_TCP_RMEM" >/dev/null 2>&1
+    sysctl -w net.ipv4.tcp_wmem="$TUNE_TCP_WMEM" >/dev/null 2>&1
     sysctl -w net.ipv4.tcp_window_scaling=1 >/dev/null 2>&1
     echo -e "${GREEN}[✔️] Network buffers on 16 MB and window scaling enabled${NC}"
 
@@ -5428,7 +5467,7 @@ tune_apply() {
     sysctl -w net.ipv4.tcp_keepalive_probes=5 >/dev/null 2>&1
     sysctl -w net.ipv4.tcp_tw_reuse=1 >/dev/null 2>&1 || true
     sysctl -w net.ipv4.tcp_fin_timeout=15 >/dev/null 2>&1 || true
-    sysctl -w net.ipv4.tcp_max_tw_buckets=2000000 >/dev/null 2>&1 || true
+    sysctl -w net.ipv4.tcp_max_tw_buckets="$TUNE_TW_BUCKETS" >/dev/null 2>&1 || true
     sysctl -w fs.file-max=2097152 >/dev/null 2>&1 || true
     sysctl -w fs.nr_open=2097152 >/dev/null 2>&1 || true
     sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1
@@ -5440,8 +5479,8 @@ tune_apply() {
 
     # Conntrack table size & timeout optimization for high concurrent conns
     modprobe nf_conntrack >/dev/null 2>&1 || true
-    sysctl -w net.netfilter.nf_conntrack_max=1048576 >/dev/null 2>&1 || sysctl -w net.nf_conntrack_max=1048576 >/dev/null 2>&1 || true
-    sysctl -w net.netfilter.nf_conntrack_tcp_timeout_established=7200 >/dev/null 2>&1 || true
+    sysctl -w net.netfilter.nf_conntrack_max="$TUNE_CT_MAX" >/dev/null 2>&1 || sysctl -w net.nf_conntrack_max="$TUNE_CT_MAX" >/dev/null 2>&1 || true
+    sysctl -w net.netfilter.nf_conntrack_tcp_timeout_established="$TUNE_CT_EST_TIMEOUT" >/dev/null 2>&1 || true
     sysctl -w net.netfilter.nf_conntrack_tcp_timeout_close_wait=60 >/dev/null 2>&1 || true
     sysctl -w net.netfilter.nf_conntrack_tcp_timeout_fin_wait=60 >/dev/null 2>&1 || true
     sysctl -w net.netfilter.nf_conntrack_tcp_timeout_time_wait=60 >/dev/null 2>&1 || true
@@ -5469,31 +5508,26 @@ EOF
         echo -e "${YELLOW}[*] Interface ${TUNNEL_NAME} not yet available; MTU It will be applied on the next startup.${NC}"
     fi
 
-    # 6. MSS clamp: POSTROUTING (general) + per GRE interface (precise)
-    # --clamp-mss-to-pmtu is less predictable than a fixed value for tunnel links
-    iptables -t mangle -D POSTROUTING -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu >/dev/null 2>&1 || true
-    iptables -t mangle -C POSTROUTING -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 1340 >/dev/null 2>&1 || \
-        iptables -t mangle -A POSTROUTING -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 1340
-    # Per-interface MSS clamp on all GRE ifaces (covers FORWARD path too)
+    # Apply MSS clamping only to managed GRE interfaces, using their saved MTU.
     local gre_iface
-    for gre_iface in $(ip -o link show 2>/dev/null | awk -F': ' '{print $2}' | cut -d'@' -f1 | grep -E '^(gre-t|gre-tunnel)'); do
-        iptables -t mangle -C FORWARD -p tcp --tcp-flags SYN,RST SYN -o "$gre_iface" -j TCPMSS --set-mss 1340 >/dev/null 2>&1 || \
-            iptables -t mangle -A FORWARD -p tcp --tcp-flags SYN,RST SYN -o "$gre_iface" -j TCPMSS --set-mss 1340 >/dev/null 2>&1 || true
+    for gre_iface in $(ip -o link show 2>/dev/null | awk -F': ' '{print $2}' | cut -d'@' -f1 | grep -E '^gre-(tunnel|t[0-9]+)$'); do
+        tunnel_mtu_apply "$gre_iface" || return 1
     done
-    echo -e "${GREEN}[✔️] Limit MSS On general rules and interfaces GRE applied${NC}"
+
+    reserve_service_ports || echo "[!] Could not reserve service ports; existing settings were preserved." >&2
 
     # 7. Persist across reboots
     mkdir -p /etc/sysctl.d
-    cat > /etc/sysctl.d/99-gre-tune.conf <<'EOF'
+    cat > /etc/sysctl.d/99-gre-tune.conf <<EOF
 # NavaTunnel tunnel optimization (applied by Optimize button / tune command)
 net.core.default_qdisc = fq
 net.ipv4.tcp_congestion_control = bbr
 net.core.rmem_max = 16777216
 net.core.wmem_max = 16777216
-net.core.rmem_default = 1048576
-net.core.wmem_default = 1048576
-net.ipv4.tcp_rmem = 4096 1048576 16777216
-net.ipv4.tcp_wmem = 4096 1048576 16777216
+net.core.rmem_default = $TUNE_RMEM_DEFAULT
+net.core.wmem_default = $TUNE_RMEM_DEFAULT
+net.ipv4.tcp_rmem = $TUNE_TCP_RMEM
+net.ipv4.tcp_wmem = $TUNE_TCP_WMEM
 net.core.netdev_max_backlog = 65535
 net.core.somaxconn = 65535
 net.ipv4.tcp_max_syn_backlog = 65535
@@ -5505,14 +5539,14 @@ net.ipv4.tcp_keepalive_intvl = 10
 net.ipv4.tcp_keepalive_probes = 5
 net.ipv4.tcp_tw_reuse = 1
 net.ipv4.tcp_fin_timeout = 15
-net.ipv4.tcp_max_tw_buckets = 2000000
+net.ipv4.tcp_max_tw_buckets = $TUNE_TW_BUCKETS
 fs.file-max = 2097152
 fs.nr_open = 2097152
 net.ipv4.ip_forward = 1
 net.ipv4.tcp_fastopen = 3
 net.ipv4.ip_local_port_range = 1024 65535
-net.netfilter.nf_conntrack_max = 1048576
-net.netfilter.nf_conntrack_tcp_timeout_established = 7200
+net.netfilter.nf_conntrack_max = $TUNE_CT_MAX
+net.netfilter.nf_conntrack_tcp_timeout_established = $TUNE_CT_EST_TIMEOUT
 net.netfilter.nf_conntrack_tcp_timeout_close_wait = 60
 net.netfilter.nf_conntrack_tcp_timeout_fin_wait = 60
 net.netfilter.nf_conntrack_tcp_timeout_time_wait = 60
@@ -5548,7 +5582,7 @@ tune_restore() {
                 fi ;;
         esac
     done < "$TUNE_BACKUP"
-    rm -f /etc/sysctl.d/99-gre-tune.conf
+    rm -f /etc/sysctl.d/99-gre-tune.conf /etc/sysctl.d/99-navatunnel-reserved-ports.conf
     echo -e "${GREEN}[✔️] Restore done; Backup in ${TUNE_BACKUP} It remains until the next optimization.${NC}"
     rm -f "$TUNE_BACKUP"
 }
@@ -5893,6 +5927,8 @@ watchdog_tick() {
     fi
 
     init_watchdog_json
+    dial_watch_tick || log_msg installer WARN "Automatic dial route check failed"
+    autopool_tick || log_msg installer WARN "Auto Pool check failed"
 
     local TICK_ACTION
     TICK_ACTION=$(python3 -c '
@@ -6064,6 +6100,7 @@ backup_now() {
     local f
     for f in /etc/frp/*.toml /etc/gre-panel/peers.json /etc/gre-panel/watchdog.json \
              /etc/gre-panel/perf.json /etc/gre-panel/traffic.json /etc/gre-panel/mtu.json /etc/gre-panel/backup.key /etc/gre-panel/stopped /etc/gre-panel/navalink /etc/gre-panel/ssh-known-hosts \
+             /etc/gre-panel/peer-api.crt /etc/gre-panel/peer-api.key /etc/gre-panel/core.json /etc/gre-panel/cluster_v2.json /etc/gre-panel/wss_carrier.json /etc/gre-panel/rescue.json /etc/gre-panel/rescue /etc/gre-panel/peer_link.json /etc/gre-panel/alerts.json /etc/gre-panel/history.json /etc/gre-panel/fleet_history.json /etc/gre-panel/traffic_peers.json /etc/gre-panel/auto_pool.json /etc/gre-panel/gre_mtu /etc/frp/dial.env /etc/systemd/system/NavaTunnel-core.service /etc/systemd/system/navatunnel-rescue*.service \
              /etc/systemd/system/gre-*.service /etc/systemd/system/frps*.service \
              /etc/systemd/system/frpc*.service /etc/systemd/system/gre-chaff*.service /etc/systemd/system/navalink-*.service; do
         [[ -f "$f" || -d "$f" ]] && FILES+=("$f")
@@ -6344,7 +6381,7 @@ mode,archive=sys.argv[1:]
 def allowed(name):
     if name.startswith('/') or any(p in ('..','') for p in name.split('/')):return False
     if not re.fullmatch(r'[A-Za-z0-9_./-]+',name):return False
-    return name.startswith('etc/frp/') or name.startswith('etc/gre-panel/') or bool(re.fullmatch(r'etc/systemd/system/(?:gre-[A-Za-z0-9_-]+|frps(?:-[0-9]+)?|frpc(?:-[0-9]+)?|navalink-[a-f0-9]{12}-(?:server|ssh|client))\.service',name)) or name in ('etc/systemd/system/NavaTunnel-cluster.service','etc/systemd/system/NavaTunnel-cluster.timer')
+    return name.startswith('etc/frp/') or name.startswith('etc/gre-panel/') or bool(re.fullmatch(r'etc/systemd/system/(?:gre-[A-Za-z0-9_-]+|frps(?:-[0-9]+|-wss(?:-[0-9]+)?)?|frpc(?:-[0-9]+)?|navatunnel-rescue-[A-Za-z0-9_-]+|navalink-[a-f0-9]{12}-(?:server|ssh|client))\.service',name)) or name in ('etc/systemd/system/NavaTunnel-cluster.service','etc/systemd/system/NavaTunnel-cluster.timer','etc/systemd/system/NavaTunnel-core.service')
 try:
     with tarfile.open(archive,'r:gz') as tar:
         members=tar.getmembers()
@@ -6444,6 +6481,7 @@ backup_restore() {
     echo -e "${CYAN}[*] Restoring settings and services...${NC}"
     backup_configs pre_restore >/dev/null || { echo "Could not create a pre-restore safety copy." >&2; return 1; }
     backup_archive extract "$TMP_D/backup.tar.gz" || return 1
+    cli_core_service restore || return 1
     if [[ -n "$LOCAL_IP" ]]; then restore_rebind_local_ip "$LOCAL_IP" || return 1; fi
     chmod 600 /etc/gre-panel/*.json 2>/dev/null || true
     echo -e "${GREEN}[✔️] Restored files:${NC}"
@@ -6522,8 +6560,8 @@ except Exception:
 
 watchdog_off() {
     init_watchdog_json
-    systemctl stop navatunnel-watchdog.timer navatunnel-watchdog.service >/dev/null 2>&1 || true
-    systemctl disable navatunnel-watchdog.timer >/dev/null 2>&1 || true
+    install_watchdog_units
+    systemctl enable --now navatunnel-watchdog.timer || return 1
     python3 -c '
 import json
 path = "'"$WATCHDOG_FILE"'"
@@ -6539,7 +6577,7 @@ try:
 except Exception:
     pass
 ' 2>/dev/null || true
-    echo -e "${YELLOW}[*] Monitoring is disabled and the timer is stopped.${NC}"
+    echo -e "${YELLOW}[*] Alerts are disabled; the maintenance timer remains available for schedules and Auto Pool.${NC}"
 }
 
 watchdog_status_full() {
@@ -7428,9 +7466,10 @@ menu_optimization() {
         echo "  8) Restore network settings"
         echo "  9) NavaLink — FRP over reverse SSH"
         echo "  10) Path MTU, tcpMux and pool diagnostics"
+        echo "  11) Cluster, WSS, Rescue, Auto Pool and monitoring tools"
         echo "  0) Return to the main menu"
         echo ""
-        read -r -p "Select option [0-10]: " O_OPT || return 0
+        read -r -p "Select option [0-11]: " O_OPT || return 0
         case "$O_OPT" in
             1) tune_apply; pause_prompt ;;
             2) menu_carrier ;;
@@ -7442,6 +7481,7 @@ menu_optimization() {
             8) tune_restore; pause_prompt ;;
             9) cli_extra menu navalink ;;
             10) cli_extra menu network ;;
+            11) cli_extra menu upstream ;;
             0) return 0 ;;
             *) echo -e "${RED}[!] Invalid option.${NC}"; sleep 1 ;;
         esac
@@ -7874,6 +7914,10 @@ Usage:
   NavaTunnel path-mtu --interface gre-tunnel --peer IP [--apply]
   NavaTunnel tcp-mux status|on|off
   NavaTunnel pool
+  NavaTunnel advanced FAMILY ACTION [--json JSON]
+  NavaTunnel core-service start|stop|status
+  NavaTunnel autopool on|off|status
+  NavaTunnel dial status|gre|public|auto
   NavaTunnel traffic discover | list | repair
   NavaTunnel traffic add ID --interface gre-tunnel   # or --peer for a dedicated peer IP
   NavaTunnel traffic limit ID 100GB --mode download|upload|both
@@ -8081,6 +8125,680 @@ cli_setup_foreign() {
     setup_foreign_server_noninteractive "$LOCAL_PUB" "$REMOTE_PUB" "$FRP_PORT" "$TOKEN" "$LOCAL_GRE" "$PEER_GRE" "$CLEANED" "$RELAY_IP" "$PROXY_PROTOCOL" "$FRP_TRANSPORT" "$FRP_ENCRYPTION" "$FRP_COMPRESSION"
 }
 
+
+# AGPL-3.0-only: adapted operational helpers from upstream fb4d072.
+# Provenance and local changes are recorded in THIRD_PARTY_NOTICES.md.
+AUTO_POOL_STATE="${NAVATUNNEL_STATE_DIR}/auto_pool.json"
+AUTOPOOL_MIN="${AUTOPOOL_MIN:-20}"
+AUTOPOOL_MAX="${AUTOPOOL_MAX:-200}"
+AUTOPOOL_MAXPOOL_MIN="${AUTOPOOL_MAXPOOL_MIN:-60}"
+AUTOPOOL_MAXPOOL_MAX="${AUTOPOOL_MAXPOOL_MAX:-500}"
+AUTOPOOL_LOW_CONNS="${AUTOPOOL_LOW_CONNS:-30}"       # restart frpc only below this many active user conns
+AUTOPOOL_COOLDOWN="${AUTOPOOL_COOLDOWN:-60}"         # min seconds between automatic frpc restarts
+AUTOPOOL_SEVERE_ERRS="${AUTOPOOL_SEVERE_ERRS:-20}"   # pool-full lines per tick that justify a restart under load
+AUTOPOOL_DOWN_QUIET="${AUTOPOOL_DOWN_QUIET:-3}"      # consecutive quiet ticks before scaling down
+AUTOPOOL_MIN_FREE_MB="${AUTOPOOL_MIN_FREE_MB:-150}"  # below this free RAM, never scale up
+perf_get_auto_pool() {
+    if [[ -n "${PERF_AUTO_POOL:-}" ]]; then
+        [[ "$PERF_AUTO_POOL" == "0" || "$PERF_AUTO_POOL" == "false" ]] && echo 0 || echo 1
+        return 0
+    fi
+    if [[ -f "$PERF_FILE" ]] && command -v python3 >/dev/null 2>&1; then
+        python3 -c '
+import json
+try:
+    with open("'"$PERF_FILE"'") as f:
+        print(1 if json.load(f).get("auto_pool", False) else 0)
+except Exception:
+    print(0)
+' 2>/dev/null && return 0
+    fi
+    echo 0
+}
+
+# integer value from perf.json, $2 when missing/invalid
+
+perf_get_int() {
+    local key="$1" def="$2"
+    [[ -f "$PERF_FILE" ]] && command -v python3 >/dev/null 2>&1 || { echo "$def"; return 0; }
+    python3 -c '
+import json
+try:
+    with open("'"$PERF_FILE"'") as f:
+        print(int(json.load(f).get("'"$key"'", '"$def"')))
+except Exception:
+    print('"$def"')
+' 2>/dev/null || echo "$def"
+}
+
+# pool_clamp VALUE MIN MAX
+
+pool_clamp() {
+    local v="$1" lo="$2" hi="$3"
+    [[ "$v" =~ ^[0-9]+$ ]] || v="$lo"
+    (( v < lo )) && v="$lo"
+    (( v > hi )) && v="$hi"
+    echo "$v"
+}
+
+# RAM ceiling for maxPoolCount: budget 10% of RAM at ~64KB per pooled work conn
+# => cap = RAM_MB * 1024 * 0.10 / 64 = RAM_MB * 8 / 5, clamped to [AUTOPOOL_MAXPOOL_MIN, AUTOPOOL_MAXPOOL_MAX].
+
+pool_ram_cap() {
+    local ram="${AUTOPOOL_RAM_MB:-}"
+    [[ "$ram" =~ ^[0-9]+$ ]] || ram=$(awk '/^MemTotal:/ {printf "%d", $2 / 1024}' /proc/meminfo 2>/dev/null)
+    [[ "$ram" =~ ^[0-9]+$ && "$ram" -gt 0 ]] || ram=1024
+    pool_clamp $(( ram * 8 / 5 )) "$AUTOPOOL_MAXPOOL_MIN" "$AUTOPOOL_MAXPOOL_MAX"
+}
+
+# state file accessors (auto_pool.json)
+
+autopool_state_get() { # $1=key $2=default
+    local def="${2:-}"
+    [[ -f "$AUTO_POOL_STATE" ]] && command -v python3 >/dev/null 2>&1 || { echo "$def"; return 0; }
+    python3 - "$AUTO_POOL_STATE" "$1" "$def" <<'PY' 2>/dev/null || echo "$def"
+import json, sys
+path, key, default = sys.argv[1:4]
+try:
+    with open(path) as f:
+        v = json.load(f).get(key, default)
+    print(str(v).lower() if isinstance(v, bool) else v)
+except Exception:
+    print(default)
+PY
+}
+
+autopool_state_set() { # key=value ...  (ints / true / false stay typed)
+    command -v python3 >/dev/null 2>&1 || return 0
+    mkdir -p "$(dirname "$AUTO_POOL_STATE")" 2>/dev/null || true
+    python3 - "$AUTO_POOL_STATE" "$@" <<'PY' 2>/dev/null || true
+import json, os, sys
+path = sys.argv[1]
+try:
+    with open(path) as f:
+        d = json.load(f)
+except Exception:
+    d = {}
+for kv in sys.argv[2:]:
+    k, _, v = kv.partition("=")
+    if v in ("true", "false"):
+        d[k] = (v == "true")
+    else:
+        try:
+            d[k] = int(v)
+        except ValueError:
+            d[k] = v
+with open(path + ".tmp", "w") as f:
+    json.dump(d, f, indent=2)
+os.chmod(path + ".tmp", 0o600)
+os.replace(path + ".tmp", path)
+PY
+}
+
+# THE helper every frps/frpc writer uses. Prints "<poolCount> <maxPoolCount>".
+# maxPoolCount is always >= 1.5 * poolCount; auto mode keeps poolCount <= 2/3 of the RAM cap so that holds.
+
+pool_effective_values() {
+    local cap pool maxp
+    cap=$(pool_ram_cap)
+    if [[ "$(perf_get_auto_pool)" == "1" ]]; then
+        local hi=$(( cap * 2 / 3 ))
+        (( hi > AUTOPOOL_MAX )) && hi="$AUTOPOOL_MAX"
+        (( hi < AUTOPOOL_MIN )) && hi="$AUTOPOOL_MIN"
+        pool=$(pool_clamp "$(autopool_state_get pool "$AUTOPOOL_MIN")" "$AUTOPOOL_MIN" "$hi")
+        maxp="$cap"
+    else
+        pool=$(pool_clamp "$(perf_get_int frp_pool_count "$AUTOPOOL_MIN")" 2 1000)
+        maxp=$(perf_get_int frp_max_pool 0)
+        (( maxp >= 10 )) || maxp="$cap"
+    fi
+    local need=$(( (pool * 3 + 1) / 2 ))
+    (( maxp < need )) && maxp="$need"
+    echo "$pool $maxp"
+}
+
+# rewrite "<key> = N" in a toml header (before the first [[proxies]]); appends when missing
+
+autopool_set_toml_key() { # $1=file $2=key $3=value
+    local f="$1" key="$2" val="$3"
+    [[ -f "$f" ]] || return 1
+    if grep -Eq "^[[:space:]]*${key}[[:space:]]*=" "$f"; then
+        sed -i -E "s|^([[:space:]]*${key}[[:space:]]*=[[:space:]]*).*|\1${val}|" "$f"
+    else
+        local hdr_end
+        hdr_end=$(grep -n -m1 -E '^\[\[' "$f" | cut -d: -f1)
+        if [[ -n "$hdr_end" ]]; then
+            sed -i "$((hdr_end - 1))a ${key} = ${val}" "$f"
+        else
+            printf '%s = %s\n' "$key" "$val" >> "$f"
+        fi
+    fi
+}
+
+autopool_live_toml_int() { # $1=file $2=key
+    grep -E "^[[:space:]]*$2[[:space:]]*=" "$1" 2>/dev/null | head -1 | sed -E 's/.*=[[:space:]]*([0-9]+).*/\1/'
+}
+
+# "work connection pool is full" lines logged by frpc since epoch $1
+
+autopool_count_errors() {
+    local since="$1" n=0
+    if command -v journalctl >/dev/null 2>&1; then
+        n=$(journalctl -u frpc --since "$(date -d "@${since}" '+%Y-%m-%d %H:%M:%S' 2>/dev/null)" --no-pager -q 2>/dev/null \
+            | grep -c 'work connection pool is full')
+    elif [[ -f "${AUTOPOOL_LOG_FILE:-/var/log/frpc.log}" ]]; then
+        n=$(tail -n 2000 "${AUTOPOOL_LOG_FILE:-/var/log/frpc.log}" 2>/dev/null | grep -c 'work connection pool is full')
+    fi
+    [[ "$n" =~ ^[0-9]+$ ]] || n=0
+    echo "$n"
+}
+
+# Established TCP conns to the hub (control + idle pool + in-flight work conns). "tunnel total"
+
+autopool_conn_counts() { # $1=hub port
+    local total tunnel=0
+    total=$(ss -Htn state established 2>/dev/null | wc -l)
+    [[ -n "$1" ]] && tunnel=$(ss -Htn state established "( dport = :$1 )" 2>/dev/null | wc -l)
+    echo "$tunnel $total"
+}
+
+autopool_free_mb() {
+    awk '/^MemAvailable:/ {printf "%d", $2 / 1024}' /proc/meminfo 2>/dev/null || echo 1024
+}
+
+# 1 when 1-min load exceeds 2x CPU count
+
+autopool_cpu_hot() {
+    local l ncpu
+    l=$(awk '{printf "%d", $1 * 100}' /proc/loadavg 2>/dev/null)
+    ncpu=$(nproc 2>/dev/null || echo 1)
+    [[ "$l" =~ ^[0-9]+$ ]] || l=0
+    (( l > ncpu * 200 )) && echo 1 || echo 0
+}
+
+# Called once a minute from watchdog_tick. Spoke: size frpc poolCount from pool-full errors, user
+# conns and CPU/RAM; scale up x1.5 at once, scale down x0.8 only after AUTOPOOL_DOWN_QUIET quiet ticks.
+# A change reaches frpc via a restart (never frps) only when <AUTOPOOL_LOW_CONNS user conns are active
+# or errors are severe, and never within AUTOPOOL_COOLDOWN of the previous restart.
+# Hub: never restarts frps; it only raises maxPoolCount in the toml and flags frps_restart_needed.
+
+autopool_tick() {
+    [[ "$(perf_get_auto_pool)" == "1" ]] || return 0
+    local now cap
+    now=$(date +%s)
+    cap=$(pool_ram_cap)
+
+    if [[ ! -f "${CONFIG_DIR}/frpc.toml" ]]; then
+        local f live want need=0 f_ok=0
+        read -r _ want <<< "$(pool_effective_values)"
+        for f in "${CONFIG_DIR}"/frps*.toml; do
+            [[ -f "$f" ]] || continue
+            f_ok=1
+            live=$(autopool_live_toml_int "$f" transport.maxPoolCount)
+            if [[ -z "$live" ]] || (( live < want )); then
+                autopool_set_toml_key "$f" transport.maxPoolCount "$want"
+                need=1
+            fi
+        done
+        [[ "$f_ok" -eq 1 ]] || return 0
+        if [[ "$need" -eq 1 ]]; then
+            autopool_state_set max_pool="$want" frps_restart_needed=true last_tick="$now" \
+                last_decision=hub_raise_max "last_reason=maxPoolCount raised to ${want} in frps toml; restart frps when idle to apply"
+        else
+            autopool_state_set max_pool="$want" last_tick="$now"
+        fi
+        return 0
+    fi
+
+    local pool applied last_tick last_restart quiet hi
+    hi=$(( cap * 2 / 3 ))
+    (( hi > AUTOPOOL_MAX )) && hi="$AUTOPOOL_MAX"
+    (( hi < AUTOPOOL_MIN )) && hi="$AUTOPOOL_MIN"
+    applied=$(autopool_live_toml_int "${CONFIG_DIR}/frpc.toml" transport.poolCount)
+    [[ "$applied" =~ ^[0-9]+$ ]] || applied="$AUTOPOOL_MIN"
+    pool=$(pool_clamp "$(autopool_state_get pool "$applied")" "$AUTOPOOL_MIN" "$hi")
+    last_tick=$(autopool_state_get last_tick $(( now - 60 )))
+    last_restart=$(autopool_state_get last_restart 0)
+    quiet=$(autopool_state_get quiet_ticks 0)
+    [[ "$last_tick" =~ ^[0-9]+$ ]] || last_tick=$(( now - 60 ))
+    [[ "$last_restart" =~ ^[0-9]+$ ]] || last_restart=0
+    [[ "$quiet" =~ ^[0-9]+$ ]] || quiet=0
+
+    local hub_port errs counts tunnel total active free_mb hot
+    hub_port=$(autopool_live_toml_int "${CONFIG_DIR}/frpc.toml" serverPort)
+    errs=$(autopool_count_errors "$last_tick")
+    counts=$(autopool_conn_counts "$hub_port")
+    read -r tunnel total <<< "$counts"
+    active=$(( tunnel - 1 - applied ))
+    (( active < 0 )) && active=0
+    free_mb=$(autopool_free_mb)
+    hot=$(autopool_cpu_hot)
+
+    local decision="hold" reason="steady" new="$pool"
+    if (( free_mb < AUTOPOOL_MIN_FREE_MB )) && (( errs > 0 || active > pool )); then
+        reason="free RAM ${free_mb}MB below ${AUTOPOOL_MIN_FREE_MB}MB, not scaling up"
+        quiet=0
+    elif (( errs > 0 )) || { (( active > pool )) && [[ "$hot" -eq 0 ]]; }; then
+        quiet=0
+        new=$(( (pool * 3 + 1) / 2 ))
+        (( new <= pool )) && new=$(( pool + 1 ))
+        new=$(pool_clamp "$new" "$AUTOPOOL_MIN" "$hi")
+        if (( new > pool )); then
+            decision="scale_up"
+            (( errs > 0 )) && reason="${errs} pool-full errors since last tick" || reason="${active} active conns exceed pool ${pool}"
+        else
+            reason="at ceiling ${hi} (errors=${errs})"
+        fi
+    elif (( errs == 0 )) && [[ "$hot" -eq 0 ]] && (( active < pool )); then
+        quiet=$(( quiet + 1 ))
+        if (( quiet >= AUTOPOOL_DOWN_QUIET )) && (( pool > AUTOPOOL_MIN )); then
+            new=$(( pool * 4 / 5 ))
+            (( new < active )) && new="$active"
+            new=$(pool_clamp "$new" "$AUTOPOOL_MIN" "$hi")
+            if (( new < pool )); then
+                decision="scale_down"
+                reason="${quiet} quiet ticks"
+                quiet=0
+            else
+                new="$pool"
+            fi
+        else
+            reason="quiet ${quiet}/${AUTOPOOL_DOWN_QUIET}"
+        fi
+    else
+        quiet=0
+        reason="busy (active=${active} load_hot=${hot})"
+    fi
+    pool="$new"
+
+    local last_change; last_change=$(autopool_state_get last_change 0)
+    [[ "$decision" == "scale_up" || "$decision" == "scale_down" ]] && last_change="$now"
+    local max_pool="$cap" need_max=$(( (pool * 3 + 1) / 2 ))
+    (( max_pool < need_max )) && max_pool="$need_max"
+
+    # a pending change (state pool != live poolCount) reaches frpc only through the restart gate
+    if (( pool != applied )); then
+        local since=$(( now - last_restart ))
+        if (( since < AUTOPOOL_COOLDOWN )); then
+            decision="deferred"; reason="${reason}; cooldown $(( AUTOPOOL_COOLDOWN - since ))s left"
+        elif (( active < AUTOPOOL_LOW_CONNS )) || (( errs >= AUTOPOOL_SEVERE_ERRS )); then
+            autopool_set_toml_key "${CONFIG_DIR}/frpc.toml" transport.poolCount "$pool" || return 1
+            if ! systemctl restart frpc; then
+                autopool_set_toml_key "${CONFIG_DIR}/frpc.toml" transport.poolCount "$applied" || return 1
+                systemctl restart frpc || true
+                autopool_state_set last_tick="$now" last_decision=restart_failed "last_reason=Failed to apply new pool; restored previous setting"
+                return 1
+            fi
+            applied="$pool"; last_restart="$now"
+            [[ "$decision" == "deferred" || "$decision" == "hold" ]] && decision="applied"
+            reason="${reason}; frpc restarted"
+        else
+            decision="deferred"; reason="${reason}; ${active} active conns, waiting for <${AUTOPOOL_LOW_CONNS}"
+        fi
+    fi
+
+    autopool_state_set pool="$pool" max_pool="$max_pool" applied_pool="$applied" quiet_ticks="$quiet" \
+        last_tick="$now" last_restart="$last_restart" last_change="$last_change" last_decision="$decision" \
+        "last_reason=${reason}" errors_last_tick="$errs" active_conns="$active" tunnel_conns="$tunnel" \
+        total_conns="$total" free_mb="$free_mb" cpu_hot="$hot" role=foreign
+}
+
+# ---- input validation (same rules as the web panel: IPv4, port 1-65535) ----
+
+dial_env_file() { echo "${CONFIG_DIR}/dial.env"; }
+
+dial_env_write() { # $1=mode $2=kind $3=gre_ip $4=public_ip
+    mkdir -p "$CONFIG_DIR"
+    printf 'DIAL_MODE=%s\nDIAL_KIND=%s\nDIAL_GRE=%s\nDIAL_PUBLIC=%s\nDIAL_CONTROL=%s\n' "$1" "$2" "$3" "$4" "${5:-}" > "$(dial_env_file)"
+    chmod 600 "$(dial_env_file)" 2>/dev/null || true
+}
+
+dial_env_get() { # $1=KEY
+    local f; f="$(dial_env_file)"
+    [[ -f "$f" ]] || return 1
+    sed -n "s/^$1=//p" "$f" | head -n1
+}
+
+dial_current_addr() { # $1=kind -> host currently dialled
+    local f; f="$(dial_conf_file "$1")"
+    [[ -f "$f" ]] || return 1
+        sed -n 's/^serverAddr[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$f" | head -n1
+}
+
+dial_current_port() { # $1=kind
+    local f; f="$(dial_conf_file "$1")"
+    [[ -f "$f" ]] || return 1
+        sed -n 's/^serverPort[[:space:]]*=[[:space:]]*\([0-9]*\).*/\1/p' "$f" | head -n1
+}
+
+# GRE is "usable" when its inner address answers ping or accepts the control port.
+
+dial_gre_usable() { # $1=gre_ip $2=port
+    ping -c 2 -W 2 "$1" >/dev/null 2>&1 && return 0
+    timeout 3 bash -c "exec 3<>/dev/tcp/$1/$2" >/dev/null 2>&1 && return 0
+    return 1
+}
+
+dial_pick() { # $1=mode $2=gre_ip $3=public_ip $4=port -> chosen address
+    case "$1" in
+        gre)    echo "$2" ;;
+        public) echo "$3" ;;
+        *)      if dial_gre_usable "$2" "$4"; then echo "$2"; else echo "$3"; fi ;;
+    esac
+}
+
+dial_apply_addr() { # $1=kind $2=addr $3=port
+    local f; f="$(dial_conf_file "$1")"
+    [[ -f "$f" ]] || return 1
+        sed -i -E "s|^serverAddr[[:space:]]*=.*|serverAddr = \"$2\"|" "$f"
+}
+
+# Older installs have no dial.env: rebuild it from the live GRE interface + client config.
+
+dial_env_ensure() {
+    [[ -f "$(dial_env_file)" ]] && return 0
+    local kind="" cur pub inner gre a b c d
+    if [[ -f "${CONFIG_DIR}/frpc.toml" ]]; then kind=frp
+
+    else return 1; fi
+    cur=$(dial_current_addr "$kind"); [[ -n "$cur" ]] || return 1
+    pub=$(ip tunnel show "$TUNNEL_NAME" 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="remote") print $(i+1)}' | head -n1)
+    inner=$(ip -4 addr show dev "$TUNNEL_NAME" 2>/dev/null | awk '/inet /{print $2}' | cut -d/ -f1 | head -n1)
+    gre=""
+    if [[ "$cur" =~ ^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.) ]]; then
+        gre="$cur"
+    elif [[ -n "$inner" ]]; then
+        IFS=. read -r a b c d <<< "$inner"
+        if (( d % 2 == 0 )); then gre="$a.$b.$c.$((d - 1))"; else gre="$a.$b.$c.$((d + 1))"; fi
+    fi
+    [[ -z "$pub" && "$cur" != "$gre" ]] && pub="$cur"
+    [[ -n "$gre" && -n "$pub" ]] || return 1
+    dial_env_write gre "$kind" "$gre" "$pub"
+}
+
+# dial_reselect [mode]: re-evaluate the route and rewrite the client config.
+# Prints "changed:<addr>" / "same:<addr>". Does NOT restart the service.
+
+dial_reselect() {
+    dial_env_ensure || return 1
+    local mode kind gre pub port cur want
+    kind=$(dial_env_get DIAL_KIND); gre=$(dial_env_get DIAL_GRE); pub=$(dial_env_get DIAL_PUBLIC)
+    mode="${1:-$(dial_env_get DIAL_MODE)}"; mode="${mode:-auto}"
+    port=$(dial_current_port "$kind"); cur=$(dial_current_addr "$kind")
+    [[ -n "$kind" && -n "$port" && -n "$cur" ]] || return 1
+    want=$(dial_pick "$mode" "$gre" "$pub" "$port")
+    [[ -n "$want" ]] || return 1
+    if [[ "$want" == "$cur" ]]; then
+        echo "same:$cur"
+    else
+        dial_apply_addr "$kind" "$want" "$port" || return 1
+        echo "changed:$want"
+    fi
+}
+
+# True when the client already holds an established TCP session to its server.
+
+dial_connected() { # $1=addr $2=port
+    ss -Htn state established 2>/dev/null | awk -v a="$1:$2" '$4==a {f=1} END {exit !f}'
+}
+
+# Watchdog hook (auto mode only): GRE died and the client is not connected -> go public.
+
+dial_watch_tick() {
+    [[ -f "$(dial_env_file)" ]] || return 0
+    [[ "$(dial_env_get DIAL_MODE)" == "auto" ]] || return 0
+    local kind gre pub port cur svc
+    kind=$(dial_env_get DIAL_KIND); gre=$(dial_env_get DIAL_GRE); pub=$(dial_env_get DIAL_PUBLIC)
+    port=$(dial_current_port "$kind"); cur=$(dial_current_addr "$kind")
+    [[ -n "$port" && "$cur" == "$gre" ]] || return 0
+    dial_connected "$cur" "$port" && return 0
+    dial_gre_usable "$gre" "$port" && return 0
+    dial_apply_addr "$kind" "$pub" "$port" || return 0
+    svc=$(dial_service "$kind")
+    systemctl restart "$svc" >/dev/null 2>&1 || true
+    log_msg "tunnel" "WARN" "GRE path to ${gre} dead; ${svc} now dials Iran public ${pub}:${port}" 2>/dev/null || true
+}
+
+cli_dial() {
+    local sub="${1:-status}"
+    case "$sub" in
+        status)
+            if ! dial_env_ensure; then echo "available=0"; return 0; fi
+            local kind cur port mode gre pub active
+            kind=$(dial_env_get DIAL_KIND); gre=$(dial_env_get DIAL_GRE); pub=$(dial_env_get DIAL_PUBLIC)
+            mode=$(dial_env_get DIAL_MODE); cur=$(dial_current_addr "$kind"); port=$(dial_current_port "$kind")
+            active="other"; [[ "$cur" == "$gre" ]] && active=gre; [[ "$cur" == "$pub" ]] && active=public
+            echo "available=1"; echo "mode=${mode:-auto}"; echo "active=$active"; echo "addr=$cur"
+            echo "port=$port"; echo "gre=$gre"; echo "public=$pub"; echo "kind=$kind"
+            ;;
+        auto|gre|public)
+            dial_env_ensure || { echo -e "${RED}[!] No foreign client config found (frpc).${NC}"; return 1; }
+            sed -i -E "s/^DIAL_MODE=.*/DIAL_MODE=${sub}/" "$(dial_env_file)"
+            local r; r=$(dial_reselect "$sub") || { echo -e "${RED}[!] Could not apply dial route.${NC}"; return 1; }
+            if [[ "$r" == changed:* ]]; then
+                systemctl restart "$(dial_service "$(dial_env_get DIAL_KIND)")" || return 1
+            fi
+            echo -e "${GREEN}[✔️] Dial route: ${sub} (${r#*:})${NC}"
+            ;;
+        *) echo "Usage: NavaTunnel dial [status|auto|gre|public]"; return 1 ;;
+    esac
+}
+
+dial_conf_file() { echo "${CONFIG_DIR}/frpc.toml"; }
+dial_service() { echo frpc; }
+cli_autopool() {
+    case "${1:-status}" in
+        on) perf_set_val auto_pool true 1; install_watchdog_units; systemctl enable --now navatunnel-watchdog.timer || return 1; echo 'Auto Pool enabled; changes may restart frpc when the restart gate allows it.' ;;
+        off) perf_set_val auto_pool false 1; echo 'Auto Pool disabled; current pool sizes were preserved.' ;;
+        tick) ( flock -n 201 || exit 0; autopool_tick ) 201>"/var/lock/navatunnel-watchdog.lock" ;;
+        status) echo "auto_pool=$(perf_get_auto_pool) effective=$(pool_effective_values)"; [[ ! -f "$AUTO_POOL_STATE" ]] || cat "$AUTO_POOL_STATE" ;;
+        *) echo 'Usage: NavaTunnel autopool on|off|status|tick'; return 1 ;;
+    esac
+}
+
+# Verified standalone networking core; no browser panel is installed.
+NAVATUNNEL_CORE_TAG="core-v1.1.0"
+ensure_nava_core() {
+    local target=/usr/local/bin/NavaTunnel-core arch tmp asset url
+    if [[ -x "$target" ]] && [[ "$("$target" version 2>/dev/null)" == v1.1.0 ]]; then return 0; fi
+    case "$(uname -m)" in x86_64|amd64) arch=amd64;; aarch64|arm64) arch=arm64;; armv7l) arch=armv7;; i386|i686) arch=386;; *) echo 'Unsupported core architecture.' >&2; return 1;; esac
+    tmp=$(mktemp -d) || return 1
+    asset="NavaTunnel-core_linux_${arch}"
+    url="https://github.com/admin6501/NavaTunnel/releases/download/${NAVATUNNEL_CORE_TAG}"
+    if ! curl -fsSL --connect-timeout 10 --max-time 90 "$url/checksums.txt" -o "$tmp/checksums.txt" || ! curl -fsSL --connect-timeout 10 --max-time 180 "$url/$asset" -o "$tmp/$asset"; then
+        echo 'Core download failed; the installed binary was preserved.' >&2
+        rm -rf "$tmp"; return 1
+    fi
+    if ! (cd "$tmp" && awk -v asset="$asset" '$2==asset {print; found++} END {if(found!=1)exit 1}' checksums.txt > selected.sha256 && sha256sum -c selected.sha256); then
+        echo 'Core checksum verification failed; nothing was installed.' >&2
+        rm -rf "$tmp"; return 1
+    fi
+    chmod 755 "$tmp/$asset"
+    [[ "$("$tmp/$asset" version)" == v1.1.0 ]] || { rm -rf "$tmp"; return 1; }
+    install -m 755 "$tmp/$asset" "$target.new" && mv -f "$target.new" "$target" || { rm -rf "$tmp"; return 1; }
+    rm -rf "$tmp"
+}
+
+cli_core() {
+    ensure_nava_core || return 1
+    /usr/local/bin/NavaTunnel-core "$@"
+}
+
+cli_core_service() {
+    local action=${1:-status} listen='' unit=/etc/systemd/system/NavaTunnel-core.service
+    shift || true
+    if [[ ${1:-} == --listen && $# == 2 ]]; then listen=$2
+    elif (($#)); then echo 'Usage: NavaTunnel core-service start|stop|status [--listen IPv4:PORT]' >&2; return 1; fi
+    case "$action" in
+        start)
+            ensure_nava_core || return 1
+            if [[ -n "$listen" ]]; then
+                python3 - "$listen" <<'PYCORELISTEN' || return 1
+import ipaddress,sys
+ip,port=sys.argv[1].rsplit(':',1);ipaddress.IPv4Address(ip)
+assert port.isdecimal() and 1<=int(port)<=65535
+PYCORELISTEN
+            fi
+            if [[ ! -f "$unit" || -n "$listen" ]]; then
+                cat > "$unit" <<EOFCOREUNIT
+[Unit]
+Description=NavaTunnel standalone networking core
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/local/bin/NavaTunnel-core serve${listen:+ --listen $listen --tls}
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=1048576
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
+EOFCOREUNIT
+                systemctl daemon-reload || return 1
+            fi
+            systemctl enable --now NavaTunnel-core.service || return 1
+            if [[ -n "$listen" ]]; then systemctl restart NavaTunnel-core.service || return 1; fi
+            systemctl is-active --quiet NavaTunnel-core.service || return 1
+            local ready=0 attempt
+            for attempt in {1..15}; do
+                if /usr/local/bin/NavaTunnel-core daemon ping >/dev/null 2>&1; then ready=1; break; fi
+                sleep 1
+            done
+            [[ "$ready" == 1 ]] || { echo 'The core started but its private control socket is not ready; inspect journalctl -u NavaTunnel-core.' >&2; return 1; }
+            ;;
+        stop)
+            if [[ -x /usr/local/bin/NavaTunnel-core && -f "$NAVATUNNEL_STATE_DIR/cluster_v2.json" ]]; then
+                cli_core cluster config --json '{"enabled":false}' || return 1
+            fi
+            if [[ -f "$unit" ]]; then systemctl disable --now NavaTunnel-core.service || return 1; fi
+            ;;
+        restore)
+            if [[ -f "$unit" ]]; then ensure_nava_core && systemctl daemon-reload && systemctl enable --now NavaTunnel-core.service || return 1; fi
+            ;;
+        status) systemctl status NavaTunnel-core.service --no-pager -l ;;
+        *) echo 'Usage: NavaTunnel core-service start|stop|status' >&2; return 1;;
+    esac
+}
+
+wss_front_port() {
+    local p=$(( $1 + 2 ))
+    (( p > 65535 )) && p=$(( $1 - 2 ))
+    echo "$p"
+}
+
+frps_wss_front_ensure() {
+    local suffix=$1 control=$2 front unit root
+    front=$(wss_front_port "$control")
+    unit="frps-wss${suffix}.service"
+    root=${NAVATUNNEL_SYSTEMD_DIR:-/etc/systemd/system}
+    ensure_nava_core || return 1
+    if ! { [[ -f "$root/$unit" ]] && grep -Fq -- "-listen 0.0.0.0:${front} " "$root/$unit"; } && is_port_in_use "$front"; then echo "WSS TLS front port $front is already in use." >&2; return 1; fi
+    mkdir -p "$root"
+    cat > "$root/$unit" <<EOFFRPWSS
+[Unit]
+Description=NavaTunnel FRP WSS TLS front
+After=network-online.target frps${suffix}.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/NavaTunnel-core tls-proxy -listen 0.0.0.0:${front} -target 127.0.0.1:${control}
+Restart=on-failure
+RestartSec=3
+LimitNOFILE=1048576
+
+[Install]
+WantedBy=multi-user.target
+EOFFRPWSS
+    systemctl daemon-reload && systemctl enable --now "$unit" && systemctl restart "$unit" && systemctl is-active --quiet "$unit" || return 1
+    if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q 'Status: active'; then ufw allow "$front/tcp" || return 1; fi
+    echo "FRP WSS TLS front configured on port $front."
+}
+
+cli_frp_wss_front() {
+    local f suffix port found=0
+    for f in "${CONFIG_DIR}"/frps*.toml; do
+        [[ -f "$f" ]] || continue
+        suffix=${f##*/}; suffix=${suffix#frps}; suffix=${suffix%.toml}
+        [[ -z "$suffix" || "$suffix" =~ ^-[0-9]+$ ]] || return 1
+        port=$(sed -n 's/^bindPort[[:space:]]*=[[:space:]]*\([0-9]*\).*/\1/p' "$f" | head -n1)
+        [[ "$port" =~ ^[0-9]+$ && "$port" -ge 1 && "$port" -le 65535 ]] || return 1
+        frps_wss_front_ensure "$suffix" "$port" || return 1
+        found=1
+    done
+    (( found ))
+}
+
+frps_wss_front_remove() {
+    local unit="frps-wss${1}.service" root=${NAVATUNNEL_SYSTEMD_DIR:-/etc/systemd/system}
+    if [[ -f "$root/$unit" ]]; then systemctl disable --now "$unit" || return 1; rm -f "$root/$unit"; systemctl daemon-reload; fi
+}
+
+tune_scale_values() {
+    local mem_mb="${1:-0}"
+    [[ "$mem_mb" =~ ^[0-9]+$ ]] && (( mem_mb > 0 )) || mem_mb=1024
+    TUNE_MEM_MB="$mem_mb"
+    TUNE_RMEM_DEFAULT=262144
+    TUNE_TCP_RMEM="4096 131072 16777216"
+    TUNE_TCP_WMEM="4096 131072 16777216"
+    TUNE_CT_MAX=$(( mem_mb * 128 ))
+    (( TUNE_CT_MAX < 65536 )) && TUNE_CT_MAX=65536
+    (( TUNE_CT_MAX > 1048576 )) && TUNE_CT_MAX=1048576
+    TUNE_CT_BUCKETS=$(( TUNE_CT_MAX / 4 ))
+    TUNE_CT_EST_TIMEOUT=3600
+    TUNE_TW_BUCKETS=$(( mem_mb * 256 ))
+    (( TUNE_TW_BUCKETS < 65536 )) && TUNE_TW_BUCKETS=65536
+    (( TUNE_TW_BUCKETS > 2000000 )) && TUNE_TW_BUCKETS=2000000
+    TUNE_MAX_ORPHANS=$(( mem_mb * 32 ))
+    (( TUNE_MAX_ORPHANS < 8192 )) && TUNE_MAX_ORPHANS=8192
+    (( TUNE_MAX_ORPHANS > 262144 )) && TUNE_MAX_ORPHANS=262144
+}
+
+tune_mem_mb() {
+    local kb
+    kb=$(awk '/^MemTotal:/{print $2; exit}' /proc/meminfo 2>/dev/null)
+    [[ "$kb" =~ ^[0-9]+$ ]] && echo $(( kb / 1024 )) || echo 1024
+}
+
+reserve_service_ports() {
+    python3 - "$NAVATUNNEL_STATE_DIR" "$CONFIG_DIR" <<'PYRESERVE'
+import json,os,re,subprocess,sys
+from pathlib import Path
+state,frp=map(Path,sys.argv[1:]);values=set()
+def add(value):
+    if isinstance(value,int) and 1024<=value<=65535:values.add(value)
+raw=subprocess.run(['sysctl','-n','net.ipv4.ip_local_reserved_ports'],capture_output=True,text=True,check=True).stdout.strip()
+for entry in raw.split(','):
+    if not entry:continue
+    a,_,b=entry.partition('-');values.update(range(int(a),int(b or a)+1))
+for path in frp.glob('frps*.toml'):
+    for match in re.finditer(r'^\s*(?:bindPort|kcpBindPort|quicBindPort)\s*=\s*(\d+)',path.read_text(),re.M):add(int(match[1]))
+try:
+    for peer in json.loads((state/'peers.json').read_text()).get('peers',[]):
+        add(peer.get('frp_port'))
+        for port in peer.get('ports',[]):add(port)
+except FileNotFoundError:pass
+for path in (state/'navalink').glob('*/config.json'):
+    link=json.loads(path.read_text());add(link.get('control_port'))
+    for port in link.get('ports',[]):add(port)
+for name,key in (('core.json','port'),('wss_carrier.json','listen_port')):
+    path=state/name
+    if path.exists():add(json.loads(path.read_text()).get(key))
+ordered=sorted(values);ranges=[]
+for n in ordered:
+    if ranges and n==ranges[-1][1]+1:ranges[-1][1]=n
+    else:ranges.append([n,n])
+result=','.join(str(a) if a==b else f'{a}-{b}' for a,b in ranges)
+subprocess.run(['sysctl','-w','net.ipv4.ip_local_reserved_ports='+result],check=True,stdout=subprocess.DEVNULL)
+p=Path('/etc/sysctl.d/99-navatunnel-reserved-ports.conf');tmp=p.with_suffix('.tmp')
+tmp.write_text('# NavaTunnel service ports; existing reservations preserved.\nnet.ipv4.ip_local_reserved_ports = '+result+'\n');os.chmod(tmp,0o600);os.replace(tmp,p)
+PYRESERVE
+}
+
 cleanup_retired_features() {
     if [[ -f "$NAVATUNNEL_STATE_DIR/cluster.json" || -f "$NAVATUNNEL_STATE_DIR/cluster-key" || -f "$NAVATUNNEL_STATE_DIR/cluster-runtime.json" || -f "$NAVATUNNEL_STATE_DIR/cluster-key.pub" || -f "$NAVATUNNEL_STATE_DIR/cluster-tick.lock" || -f /etc/systemd/system/NavaTunnel-cluster.service || -f /etc/systemd/system/NavaTunnel-cluster.timer ]] || grep -qE ' nava-cluster-[a-f0-9]{12}$' /root/.ssh/authorized_keys 2>/dev/null; then
         cli_extra cleanup-retired || return 1
@@ -8125,6 +8843,12 @@ if [[ $# -gt 0 ]]; then
         restart) restart_all ;;
         traffic) shift; cli_traffic "${@:-list}" ;;
         perf) shift; cli_perf "$@" ;;
+        frp-wss-front) cli_frp_wss_front ;;
+        autopool) shift; cli_autopool "$@" ;;
+        advanced) shift; cli_core "$@" ;;
+        cluster|wss|rescue|revpath|benchmark|history|usage|alerts|advisor|netstack|suggest|peer-link) cli_core "$@" ;;
+        core-service) shift; cli_core_service "$@" ;;
+        dial) shift; cli_dial "$@" ;;
         chaff) shift; cli_chaff "$@" ;;
         dpi-shield|dpi_shield|dpishield) shift; cli_dpi_shield "$@" ;;
         watchdog) shift; cli_watchdog "$@" ;;

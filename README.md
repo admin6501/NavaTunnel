@@ -4,11 +4,17 @@
 
 FRP reverse tunnel management over GRE, developed and maintained by **admin6501**.
 This NavaTunnel version includes English menus, per-tunnel traffic controls, protocol selection, persistent MTU settings, Iran IP migration, documentation, and bug fixes.
-Management runs through SSH and an English terminal menu. The web panel, web server, panel installer, and Go build steps have been removed.
+Management runs through SSH and an English terminal menu. No web administration panel or Backhaul engine is included. Optional networking tools use a standalone Go core, distributed as verified binaries; servers do not need Go installed.
 
-GRE can run directly or use FOU over UDP. FRP transport, encryption, and compression are applied on the foreign client; the Iran menu stores each tunnel's selection and passes it through a connection bundle. A web relay carrier for GRE is not available in this version.
+GRE can run directly or use FOU over UDP. FRP transport, encryption, and compression are applied on the foreign client; the Iran menu stores each tunnel's selection and passes it through a connection bundle. An optional WSS relay carrier for GRE is now available in the standalone tools menu.
 
 There is no fixed limit on the number of foreign servers. Each tunnel needs a separate foreign IP and internal addresses, plus available control and service ports. Currently, each foreign server manages one FRPC connection.
+
+## New standalone tools
+
+**Advanced settings → 11** includes the original upstream Cluster backend (foreign exit pool and Iran mesh), WSS GRE relay, connectivity Rescue, adaptive FRP Auto Pool, reverse-path repairs, benchmark/Auto Pilot, history, alerts and authenticated peer linking. NavaLink also offers an explicit TCP-only direct SSH mode. New routing and automatic switching are opt-in; updating preserves current tunnels.
+
+Read the [operation guide](docs/UPSTREAM_TOOLS.md) before enabling these features and the [upstream feature map](docs/UPSTREAM_PARITY.md) for scope and differences. Cluster forwards connections; it does not copy application users/inbounds or provision missing opposite tunnels. [Source attribution and license](THIRD_PARTY_NOTICES.md) remain included.
 
 ## Installation and updates
 

@@ -1,0 +1,14 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Adapted from pdnczone/hashem-panel fb4d072d5a06f83c42d8ba62df2d7a53f25f6ce7.
+// See THIRD_PARTY_NOTICES.md for attribution and adaptation details.
+package main
+
+import (
+	"net/http"
+	"strings"
+)
+
+func isWebSocketUpgrade(r *http.Request) bool {
+	return strings.EqualFold(r.Header.Get("Upgrade"), "websocket") ||
+		strings.Contains(strings.ToLower(r.Header.Get("Connection")), "upgrade")
+}
