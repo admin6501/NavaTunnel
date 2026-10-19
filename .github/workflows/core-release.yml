@@ -1,0 +1,41 @@
+name: Publish standalone core
+on:
+  push:
+    tags:
+      - 'core-v*'
+permissions:
+  contents: read
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 1.23.12
+          cache-dependency-path: core/go.sum
+      - name: Verify version and networking tests
+        run: |
+          test "$(sed -n 's/^const coreVersion = "\([^"]*\)"/\1/p' core/main.go)" = "${GITHUB_REF_NAME#core-}"
+          cd core
+          go test -race ./...
+      - name: Build static Linux assets
+        run: |
+          mkdir -p dist
+          for arch in amd64 arm64 arm 386; do
+            suffix="$arch"
+            if [ "$arch" = arm ]; then suffix=armv7; export GOARM=7; else unset GOARM; fi
+            (cd core && CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags='-s -w' -o "../dist/NavaTunnel-core_linux_${suffix}" .)
+          done
+          chmod 755 dist/NavaTunnel-core_linux_*
+          test "$(dist/NavaTunnel-core_linux_amd64 version)" = "${GITHUB_REF_NAME#core-}"
+          (cd dist && sha256sum NavaTunnel-core_linux_* > checksums.txt)
+      - name: Publish binaries with matching source and checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/NavaTunnel-core_linux_* dist/checksums.txt --verify-tag --title "NavaTunnel ${GITHUB_REF_NAME#core-v} — Standalone networking tools" --notes-file "docs/releases/${GITHUB_REF_NAME#core-v}.md"
