@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Real GRE/FOU + FRP with two Iran namespaces and shared TCP/UDP service ports.
-Run in unshare -n. Files are confined to a temporary directory; the test adapter
+Run in unshare -mn with a namespace-local sysfs mount. Files are confined to a temporary directory; the test adapter
 executes generated GRE units and starts real FRPC binaries without host systemd.
 """
 import json, os, shutil, subprocess, sys, tempfile, threading, time

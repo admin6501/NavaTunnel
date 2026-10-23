@@ -46,7 +46,7 @@ The code contains a secret token. Keep it private. Creating a tunnel forwards ex
 | 5 | Uninstall |
 | 6 | Traffic usage, accounting mode, limits and reset |
 
-On Iran, **1 → 3** opens the selected tunnel's controls: start, stop, restart, service ports, name, foreign IP, GRE carrier, connection code, traffic, loss recovery, FRP protocol, MTU, control port and token. More than one foreign server can be registered on Iran; their public service ports on Iran must not overlap. The standard foreign setup manages one GRE/FRPC connection per foreign server.
+On Iran, **1 → 3** opens the selected tunnel's controls: start, stop, restart, service ports, name, foreign IP, GRE carrier, connection code, traffic, loss recovery, FRP protocol, MTU, control port and token. More than one foreign server can be registered on Iran; their public service ports on Iran must not overlap. A foreign server can also connect to several Iran servers independently, including when their service ports are identical. See [multiple Iran connections](docs/USAGE.md#connect-several-iran-servers-to-one-foreign-server).
 
 ## Traffic
 

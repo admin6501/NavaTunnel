@@ -132,3 +132,70 @@ class MultiForeignTests(ScriptHarness):
         b=self.run_shell('menu_gre_pair 192.0.2.20').stdout.strip()
         self.assertNotEqual(a,b);self.assertEqual(a,self.run_shell('menu_gre_pair 192.0.2.10').stdout.strip())
         self.assertEqual(self.run_shell('menu_gre_pair').stdout.strip(),'10.200.0.2 10.200.0.1')
+
+class GreAddressChangesTests(ScriptHarness):
+    def setUp(self):
+        super().setUp()
+        self.peers[0].update(local_pub='192.0.2.10',local_gre='10.200.0.2',peer_gre='10.200.0.1',token='sampleToken12345',frp_port=7000)
+        self.write_peers();self.unit=self.units/'gre-tunnel.service'
+        self.unit.write_text('[Unit]\n[Service]\nExecStart=ip tunnel add gre-tunnel local 192.0.2.10 remote 192.0.2.1; ip addr replace 10.200.0.2/30 dev gre-tunnel; ip route replace 10.200.0.1/32 dev gre-tunnel\n[Install]\n')
+        self.events=self.root/'events';self.backups=self.root/'backups'
+        tool=self.root/'bin/systemctl';tool.write_text('#!/bin/bash\necho "$*" >> "$EVENTS"\n[[ "$1" != restart || "${FAIL_RESTART:-0}" != 1 ]]\n');tool.chmod(0o755)
+        self.env='export PATH="'+str(self.root/'bin')+':$PATH" EVENTS="'+str(self.events)+'"\nBACKUP_DIR="'+str(self.backups)+'"\n'
+        self.traffic=self.state/'traffic.json';self.traffic.write_text('{"keep":{"download":12345,"limit":999999}}')
+
+    def test_address_change_preserves_other_tunnel_token_ports_and_usage(self):
+        other=self.peers[1].copy();config=(self.config/'frps.toml').read_bytes();usage=self.traffic.read_bytes()
+        result=self.run_shell('cli_peer_addresses --id 1 --local-gre 10.203.0.2 --peer-gre 10.203.0.1',self.env)
+        self.assertEqual(result.returncode,0,result.stderr)
+        data=json.loads((self.state/'peers.json').read_text())['peers']
+        self.assertEqual(data[1],other);self.assertEqual(data[0]['token'],'sampleToken12345');self.assertEqual(data[0]['ports'],[443])
+        self.assertIn('10.203.0.2/30',self.unit.read_text());self.assertIn('10.203.0.1/32',self.unit.read_text())
+        self.assertEqual(self.traffic.read_bytes(),usage);self.assertEqual((self.config/'frps.toml').read_bytes(),config)
+        self.assertIn('hsh1_192.0.2.10_7000_10.203.0.2_10.203.0.1_',result.stdout)
+        self.assertNotIn('restart frps',self.events.read_text())
+
+    def test_auto_addresses_do_not_change_stopped_service_state(self):
+        (self.state/'stopped').mkdir();(self.state/'stopped/gre-tunnel').touch()
+        result=self.run_shell('cli_peer_addresses --id 1 --auto',self.env)
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertNotIn('restart',self.events.read_text())
+        self.assertTrue((self.state/'stopped/gre-tunnel').exists())
+        self.assertNotEqual(json.loads((self.state/'peers.json').read_text())['peers'][0]['local_gre'],'10.200.0.2')
+
+    def test_restart_failure_restores_registry_and_unit(self):
+        old_registry=(self.state/'peers.json').read_bytes();old_unit=self.unit.read_bytes()
+        result=self.run_shell('cli_peer_addresses --id 1 --local-gre 10.203.0.2 --peer-gre 10.203.0.1',self.env+'export FAIL_RESTART=1\n')
+        self.assertNotEqual(result.returncode,0)
+        self.assertEqual((self.state/'peers.json').read_bytes(),old_registry);self.assertEqual(self.unit.read_bytes(),old_unit)
+
+    def test_conflicting_and_invalid_pairs_never_mutate_files(self):
+        self.peers[1].update(local_gre='10.203.0.2',peer_gre='10.203.0.1');self.write_peers();old=self.unit.read_bytes()
+        for a,b in [('10.203.0.2','10.203.0.1'),('10.204.0.2','10.205.0.1'),('10.204.0.0','10.204.0.1')]:
+            result=self.run_shell('cli_peer_addresses --id 1 --local-gre '+a+' --peer-gre '+b,self.env)
+            self.assertNotEqual(result.returncode,0)
+        self.assertEqual(self.unit.read_bytes(),old);self.assertFalse(self.events.exists())
+
+
+class ForeignWatchdogTests(ScriptHarness):
+    def setUp(self):
+        super().setUp()
+        self.record=dict(id=2,name='Iran-B',gre_if='gre-t2',frpc_svc='frpc-2',remote_pub='192.0.2.20')
+        (self.state/'foreign.json').write_text(json.dumps({'connections':[self.record]}))
+        (self.state/'watchdog.json').write_text(json.dumps(dict(enabled=True,auto_restart=True,consec_fails=99,last_alert='down',backup_every_hours=1)))
+        self.context="foreign_context '"+json.dumps(self.record)+"' "
+
+    def test_failure_counts_are_not_inherited_from_the_global_first_tunnel(self):
+        result=self.run_shell(self.context+'foreign_watchdog_tick','_watchdog_tick_one() { cat "$WATCHDOG_FILE"; }')
+        self.assertEqual(result.returncode,0,result.stderr)
+        row=json.loads(result.stdout);self.assertEqual(row['consec_fails'],0);self.assertEqual(row['last_alert'],'')
+        self.assertTrue(row['auto_restart']);self.assertEqual(row['backup_every_hours'],0)
+
+    def test_stopped_connection_is_skipped_and_recovery_is_scoped(self):
+        (self.state/'stopped').mkdir();(self.state/'stopped/gre-t2').touch()
+        result=self.run_shell(self.context+'foreign_watchdog_tick','_watchdog_tick_one() { echo FORBIDDEN; }')
+        self.assertEqual(result.returncode,0,result.stderr);self.assertNotIn('FORBIDDEN',result.stdout)
+        (self.state/'stopped/gre-t2').unlink()
+        result=self.run_shell(self.context+'restart_all_lite','systemctl() { echo "$*"; }')
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertIn('restart frpc-2.service',result.stdout);self.assertNotIn('gre-tunnel',result.stdout)

@@ -127,3 +127,9 @@ On startup, maintenance stops the removed owned services, removes only their fir
 A NavaLink connection converted from GRE is reverted to its saved GRE/FRP files, with counters/limits preserved and retargeted. Update **both endpoints** to complete that reversion; previously stopped services remain stopped. A standalone NavaLink connection has no saved GRE counterpart: it is stopped, its settings/usage are archived, and a new standard tunnel must be created if needed. Conflicting or incomplete rollback data produces an explicit error instead of overwriting an existing tunnel. Old backups are retired through the same process when restored.
 
 The only remaining optional Go executable is the small TLS front used by FRP WSS. It has no Cluster daemon, SSH engine, web panel or management API. It is downloaded with checksum verification only when a WSS front is configured. An ordinary TCP installation does not need it.
+
+## Backups and monitoring with several foreign connections
+
+Backups include `foreign.json`, every FRPC/GRE configuration, per-connection carrier settings, counters and manual stops. Restore maps each client back to its own interface. After moving foreign to a new public IP, update the foreign address of the matching tunnel on **each Iran**.
+
+The watchdog checks registered foreign connections separately. When automatic restart is enabled, recovery targets only the failed connection and respects manual stops. This is a coarse connectivity check, not a precise packet-loss measurement.

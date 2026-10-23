@@ -1612,7 +1612,7 @@ EOF
         iptables -t mangle -A POSTROUTING -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 1340
 
     tunnel_mtu_apply "$IFNAME" "$GRE_MTU" || return 1
-    traffic_register "$IFNAME" --interface "$IFNAME" || echo "[!] Failed to initialize traffic counter; from NavaTunnel traffic add use." >&2
+    traffic_register "$IFNAME" --interface "$IFNAME" || { echo "Failed to initialize the traffic counter." >&2;return 1; }
     echo -e "${GREEN}[✔️] Tunnel service GRE Activated with IP ${CLEAN_GRE_IP} (MTU ${GRE_MTU}).${NC}"
 }
 
@@ -3083,6 +3083,12 @@ import json,os
 from pathlib import Path
 with open(os.environ["PEERS_F"]) as f:
     used={int(p["id"]) for p in json.load(f).get("peers",[])}
+foreign=Path(os.environ["PEERS_F"]).parent/"foreign.json"
+if foreign.exists():
+    for r in json.loads(foreign.read_text()).get("connections",[]):
+        iface=r.get("gre_if","")
+        if iface=="gre-tunnel":used.add(1)
+        elif iface.startswith("gre-t") and iface[5:].isdigit():used.add(int(iface[5:]))
 candidate=1
 while candidate in used:
     candidate+=1
@@ -3858,6 +3864,9 @@ import json,sys,ipaddress,hashlib
 from pathlib import Path
 p=Path(sys.argv[1]); peers=json.loads(p.read_text()).get('peers',[]) if p.exists() else []
 used={t[k] for t in peers for k in ('local_gre','peer_gre') if t.get(k)}
+foreign=p.parent/'foreign.json'
+if foreign.exists():
+    for r in json.loads(foreign.read_text()).get('connections',[]):used.update(r[k] for k in ('local_gre','peer_gre') if r.get(k))
 used.update(('10.10.10.1','10.10.10.2'))
 seed=sys.argv[2]
 base=int(ipaddress.IPv4Address('10.64.0.0' if seed else '10.200.0.0'))
@@ -4585,7 +4594,10 @@ menu_edit_peer() {
             11) value=$(menu_protocol_prompt "$protocol") || continue; cli_peer_protocol --id "$id" --protocol "$value" ;;
             10) menu_loss_recovery "$id" ;;
             15) menu_connection_token iran "$id" ;;
-            16) cli_peer_addresses --id "$id" --auto ;;
+            16)
+                echo 'Changing internal GRE addresses interrupts this connection until the new code is applied on foreign.'
+                read -r -p 'Assign a new GRE address pair? [y/N]: ' value || return 0
+                [[ "$value" != y && "$value" != Y ]] || cli_peer_addresses --id "$id" --auto ;;
             14) cli_remove_peer --id "$id"; [[ -n "$(peer_get "$id")" ]] || return 0 ;;
             0) return 0 ;;
             *) echo 'Invalid option.' ;;
@@ -5727,7 +5739,7 @@ watchdog_check() {
     if [[ -n "$PEER_GRE" ]]; then
         if ping -c 1 -W 2 "$PEER_GRE" >/dev/null 2>&1; then
             GRE_OK=1
-        elif ss -tn state established 2>/dev/null | grep -q "$PEER_GRE"; then
+        elif ss -tn state established 2>/dev/null | grep -Fq -- "$PEER_GRE:"; then
             GRE_OK=1
         elif nc -z -w 2 "$PEER_GRE" 22 >/dev/null 2>&1 || nc -z -w 2 "$PEER_GRE" 7777 >/dev/null 2>&1 || nc -z -w 2 "$PEER_GRE" 5201 >/dev/null 2>&1; then
             GRE_OK=1
@@ -5754,7 +5766,7 @@ watchdog_check() {
     # Foreign spoke resilience: if GRE ICMP ping fails (datacenter firewall/filtering or relay),
     # but frpc is active AND holds established TCP sockets to the FRP control/reverse port,
     # the transport is alive and passing traffic — do NOT trigger false-down restart loops.
-    if [[ $GRE_OK -eq 0 && "$FRP_NAME" == frpc* && $FRP_OK -eq 1 ]]; then
+    if [[ $GRE_OK -eq 0 && "$FRP_NAME" == frpc* && $FRP_OK -eq 1 && -z "${FOREIGN_CONNECTION_ID:-}" ]]; then
         if ss -tn state established 2>/dev/null | grep -qE ':(4773[0-9]|7000)'; then
             GRE_OK=1
         fi
@@ -5939,8 +5951,8 @@ foreign_watchdog_tick() {
 import json,os,sys
 from pathlib import Path
 base=json.loads(Path(sys.argv[1]).read_text());path=Path(sys.argv[2]);old=json.loads(path.read_text()) if path.exists() else {}
-for key in ('consec_fails','last_alert','down_since','last_check'):
-    if key in old:base[key]=old[key]
+for key,default in (('consec_fails',0),('last_alert',''),('down_since',0),('last_check','')):
+    base[key]=old.get(key,default)
 base['backup_every_hours']=0;base['backup_daily_at']=''
 out=path.with_suffix('.tmp');out.write_text(json.dumps(base,indent=2));out.chmod(0o600);os.replace(out,path)
 PYWATCH

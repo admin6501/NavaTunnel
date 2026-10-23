@@ -29,7 +29,7 @@ jobs:
         run: |
           sudo modprobe ip_gre
           sudo modprobe fou
-          sudo unshare -n python3 tests/labs/multi_foreign.py "$RUNNER_TEMP/nava-frp"
+          sudo unshare -mn bash -c 'mount --make-rprivate /; mount -t sysfs sysfs /sys; exec python3 tests/labs/multi_foreign.py "$1"' lab "$RUNNER_TEMP/nava-frp"
       - name: Verify owned SSH account retirement and real sshd configuration
         run: sudo python3 tests/labs/ssh_retirement.py
 

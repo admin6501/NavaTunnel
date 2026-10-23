@@ -47,6 +47,7 @@ Open **1 → 3** and choose the tunnel:
 | 13 | Change FRP control port |
 | 14 | Delete this tunnel |
 | 15 | View/change token |
+| 16 | Assign a new internal GRE /30 and print its updated connection code |
 | 0 | Back |
 
 Port, token, carrier, address and protocol changes can require the new connection command on the matching foreign server. A selection saved on Iran does not prove that the foreign side has applied it. Keep both ends coordinated. Renaming is a local label change.
@@ -59,7 +60,7 @@ For MTU, use the same value at both ends of the matching tunnel. A larger number
 
 Open **1 → 3** on the foreign server. Its menu offers start/stop/restart, status, traffic, replacement connection code, MTU, token and Iran public IP changes.
 
-The ordinary foreign setup manages one GRE/FRPC connection. Do not apply a different Iran's code to a working foreign connection unless you intend to replace it.
+The foreign menu selects the Iran connection first. Each connection has its own start/stop/restart, traffic, MTU, token, Iran IP, removal, GRE carrier and log controls. With several connections, use the selector so changes apply only to the intended one. The original `frpc.toml` and `gre-tunnel` names remain valid for an existing first connection.
 
 ## Add more foreign servers
 
@@ -72,3 +73,36 @@ Repeat **1 → 1** on Iran for each foreign server. Each gets its own GRE interf
 **Foreign moved:** select that Iran tunnel and use **6**, then apply its updated connection code on the replacement foreign server.
 
 Moving configuration to a new machine also requires installing/restoring its files. See [backup and migration](OPERATIONS.md).
+
+## Connect several Iran servers to one foreign server
+
+For two Iran servers and one shared foreign application:
+
+```text
+Iran A service port 443 ── GRE/FRP A ──┐
+                                     ├── Same foreign application on 443
+Iran B service port 443 ── GRE/FRP B ──┘
+```
+
+1. Update NavaTunnel on all three servers and reopen the menu.
+2. On **Iran A**, create a tunnel through **1 → 1**, entering the shared foreign public IP and the application's ports. Get its code through **1 → 3 → select tunnel → 8**.
+3. Run that connection command on **foreign**.
+4. On **Iran B**, create its own tunnel to the **same foreign IP**, using the **same service ports** if needed. Get B's code and run it on **the same foreign server**.
+5. On foreign, open **1 → 3**. A list identifies each Iran by name, public IP and control port. Select the connection you want to manage. **1 → 4** shows all connections.
+
+Adding a different Iran creates another FRPC configuration/service and GRE interface. It does not replace A. The control ports can also be equal because they listen on different Iran servers. `--force` updates only the matching connection; `--foreign-id N` explicitly targets an existing connection. Independent connections are not an automatic failover or load balancer.
+
+**Internal GRE addresses must be different across connections on foreign.** New Iran tunnels created through the menu use a public-IP-derived allocation and check locally used addresses. A collision is rejected before any existing connection is replaced. Existing Iran tunnels may both use `10.200.0.2 / 10.200.0.1`. In that case, on **Iran B**, select its tunnel and use **16** to assign a fresh pair; then run the newly printed command on foreign. A briefly interrupted B does not require changing A.
+
+CLI equivalents on foreign:
+
+```bash
+NavaTunnel foreign-list
+NavaTunnel foreign --foreign-id 2 status
+NavaTunnel foreign --foreign-id 2 stop
+NavaTunnel foreign --foreign-id 2 start
+NavaTunnel foreign --foreign-id 2 restart
+NavaTunnel foreign --foreign-id 2 logs
+```
+
+Use the actual ID from `foreign-list`. Creation accepts `--name LABEL`; updates to the same Iran require `--force`. If Iran's public IP changes, the original token and GRE pair identify its existing connection; use `--foreign-id N --force` if the intended identity is ambiguous. On a host with multiple connections, prefer these selected commands over legacy `--foreign` shortcuts, which refer to the original client.
