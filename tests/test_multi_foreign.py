@@ -127,6 +127,16 @@ class MultiForeignTests(ScriptHarness):
         for r in json.loads(self.record_path.read_text())['connections']:self.assertEqual(r['local_pub'],'198.51.100.99')
         self.assertIn('local 198.51.100.99 remote 192.0.2.20',(self.units/'gre-t2.service').read_text())
 
+    def test_restore_honors_a_foreign_manual_stop_when_first_client_uses_another_interface(self):
+        row=dict(self.one,gre_if='gre-t3')
+        self.save([row]);self.files(row)
+        (self.state/'stopped').mkdir();(self.state/'stopped/gre-t3').touch()
+        result=self.run_shell('restore_start_tunnels','systemctl() { echo "$*"; }')
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertIn('Preserving manual stop: frpc.service',result.stdout)
+        self.assertNotIn('restart frpc.service',result.stdout)
+
+
     def test_different_iran_seeds_allocate_distinct_pairs_and_keep_legacy_helper(self):
         a=self.run_shell('menu_gre_pair 192.0.2.10').stdout.strip()
         b=self.run_shell('menu_gre_pair 192.0.2.20').stdout.strip()

@@ -6178,7 +6178,7 @@ restore_start_tunnels() {
         name=$(basename "$unit")
         case "$name" in
             gre-t*.service) iface=${name%.service} ;;
-            frpc-*.service) iface=$(foreign_registry list | python3 -c 'import json,sys;rows=json.load(sys.stdin);print(next((r["gre_if"] for r in rows if r["frpc_svc"]==sys.argv[1]),"gre-tunnel"))' "${name%.service}") ;;
+            frpc*.service) iface=$(foreign_interface_for_service "${name%.service}") || return 1 ;;
             frps-*.service) iface="gre-t${name#frps-}"; iface=${iface%.service} ;;
             *) iface=$TUNNEL_NAME ;;
         esac
@@ -8276,7 +8276,7 @@ foreign_interface_for_service() {
 
 foreign_registry() {
     python3 - "${NAVATUNNEL_STATE_DIR}/foreign.json" "$CONFIG_DIR" /etc/systemd/system "$PEERS_FILE" "$@" <<'PYFOREIGN'
-import ipaddress,json,os,re,sys,tempfile
+import fcntl,ipaddress,json,os,re,subprocess,sys,tempfile
 from pathlib import Path
 registry,config,units,peersfile=map(Path,sys.argv[1:5]); action=sys.argv[5]; args=sys.argv[6:]
 def read(p,default):return json.loads(p.read_text()) if p.exists() else default
@@ -8291,12 +8291,18 @@ def write(data):
         if os.path.exists(tmp):os.unlink(tmp)
 def field(key,text,default=''):
     m=re.search(r'^\s*'+re.escape(key)+r'\s*=\s*("[^"\n]*"|\d+)\s*(?:#.*)?$',text,re.M)
+    if not m and '.' in key:
+        section,leaf=key.split('.',1)
+        body=re.search(r'(?ms)^\['+re.escape(section)+r'\][ \t]*\n(.*?)(?=^\[|\Z)',text)
+        if body:m=re.search(r'^\s*'+re.escape(leaf)+r'\s*=\s*("[^"\n]*"|\d+)\s*(?:#.*)?$',body[1],re.M)
     return m[1].strip('"') if m else default
 def validate(r):
     if not isinstance(r.get('id'),int) or r['id']<1:raise ValueError('Invalid foreign connection ID.')
     if not re.fullmatch(r'gre-(tunnel|t[0-9]+)',r.get('gre_if','')) or not re.fullmatch(r'frpc(?:-[0-9]+)?',r.get('frpc_svc','')):raise ValueError('Invalid foreign connection service.')
     return r
 try:
+    registry.parent.mkdir(parents=True,exist_ok=True)
+    lock=open(registry.parent/'.foreign-registry.lock','a');os.chmod(lock.name,0o600);fcntl.flock(lock,fcntl.LOCK_EX)
     data=read(registry,{'connections':[]}); rows=data['connections']
     for r in rows:validate(r)
     if action=='import':
@@ -8311,6 +8317,10 @@ try:
                 m=re.search(pattern,u);return m[1] if m else ''
             local=match(r'\blocal\s+([0-9.]+)');remote=match(r'\bremote\s+([0-9.]+)')
             inner=match(r'addr (?:replace|add) ([0-9.]+)/30');other=field('serverAddr',text)
+            if not local and remote:
+                route=subprocess.run(['ip','-j','-4','route','get',remote],text=True,capture_output=True,timeout=5)
+                routes=json.loads(route.stdout or '[]')
+                if routes:local=routes[0].get('prefsrc') or routes[0].get('src') or ''
             if not all((local,remote,inner,other)):raise ValueError('Cannot safely import '+path.name+'; inspect its GRE service before adding clients.')
             for address in (local,remote,inner,other):ipaddress.IPv4Address(address)
             number=1
@@ -8374,7 +8384,7 @@ try:
         if not m:raise ValueError('The Iran endpoint was not found.')
         r['remote_pub']=m[1];write(data)
     else:raise ValueError('Unknown foreign registry operation.')
-except (ValueError,KeyError,OSError,StopIteration) as error:
+except (ValueError,KeyError,OSError,StopIteration,subprocess.TimeoutExpired) as error:
     print('Foreign connection: '+str(error),file=sys.stderr);sys.exit(1)
 PYFOREIGN
 }
@@ -8398,6 +8408,7 @@ _setup_foreign_full() (
     record=$(FOREIGN_ADDRS="$(ip -j -4 addr show 2>/dev/null)" FOREIGN_TOKEN="$4" foreign_registry plan "$1" "$2" "$3" "$5" "$6" "$7" "${FORCE:-0}" "${REQUESTED_FOREIGN_ID:-}" "${FOREIGN_NAME:-}") || return 1
     local TUNNEL_NAME FRPC_SERVICE FOREIGN_CONNECTION_ID CARRIER_FILE
     IFS=$'\t' read -r TUNNEL_NAME FRPC_SERVICE FOREIGN_CONNECTION_ID < <(python3 -c 'import json,sys;r=json.loads(sys.argv[1]);print(r["gre_if"],r["frpc_svc"],r["id"],sep="\t")' "$record")
+    [[ ! -f "$NAVATUNNEL_STATE_DIR/stopped/$TUNNEL_NAME" ]] || { echo 'This connection is manually stopped; start it before replacing its setup.' >&2;return 1; }
     CARRIER_FILE="${NAVATUNNEL_STATE_DIR}/foreign-carrier-${FOREIGN_CONNECTION_ID}.json"
     if [[ ! -f "$CARRIER_FILE" ]]; then
         [[ ! -f "${NAVATUNNEL_STATE_DIR}/carrier.json" ]] || cp -p "${NAVATUNNEL_STATE_DIR}/carrier.json" "$CARRIER_FILE" || return 1
