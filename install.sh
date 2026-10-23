@@ -50,19 +50,18 @@ curl -fsSL --connect-timeout 8 --max-time 40 \
     -o "$TMP/NavaTunnel-traffic.sh"
 bash -n "$TMP/NavaTunnel-traffic.sh"
 curl -fsSL --connect-timeout 8 --max-time 40 \
-    "https://raw.githubusercontent.com/admin6501/NavaTunnel/main/NavaTunnel-extra.sh" \
-    -o "$TMP/NavaTunnel-extra.sh"
-bash -n "$TMP/NavaTunnel-extra.sh"
+    "https://raw.githubusercontent.com/admin6501/NavaTunnel/main/NavaTunnel-maintenance.sh" \
+    -o "$TMP/NavaTunnel-maintenance.sh"
+bash -n "$TMP/NavaTunnel-maintenance.sh"
 chmod +x "$TMP/NavaTunnel.sh"
 mkdir -p /usr/local/bin
 install -m 755 "$TMP/NavaTunnel-traffic.sh" /usr/local/bin/NavaTunnel-traffic.sh
-install -m 755 "$TMP/NavaTunnel-extra.sh" /usr/local/bin/NavaTunnel-extra.sh
+install -m 755 "$TMP/NavaTunnel-maintenance.sh" /usr/local/bin/NavaTunnel-maintenance.sh
 cp "$TMP/NavaTunnel.sh" /usr/local/bin/NavaTunnel.sh
 cp "$TMP/NavaTunnel.sh" /usr/local/bin/NavaTunnel
 chmod +x /usr/local/bin/NavaTunnel.sh /usr/local/bin/NavaTunnel
 ln -sf /usr/local/bin/NavaTunnel.sh /usr/local/bin/gre.sh 2>/dev/null || true
 
-bash /usr/local/bin/NavaTunnel-extra.sh cleanup-retired
 bash /usr/local/bin/NavaTunnel "$@"
 
 echo -e "\033[1;32mNavaTunnel installation completed\033[0m"

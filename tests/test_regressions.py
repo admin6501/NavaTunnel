@@ -17,10 +17,10 @@ class ScriptHarness(unittest.TestCase):
         for a,b in [('/etc/gre-panel',str(self.state)),('/etc/frp',str(self.config)),('/etc/systemd/system',str(self.units)),('/usr/local/bin',str(self.root/'bin'))]:source=source.replace(a,b)
         self.library=self.root/'library.sh';self.library.write_text(source)
         # Keep the actual current helper local; tests must never fetch a published old helper.
-        helper=(ROOT/'NavaTunnel-extra.sh').read_text()
+        helper=(ROOT/'NavaTunnel-maintenance.sh').read_text()
         for before,after in [('/etc/gre-panel',str(self.state)),('/etc/frp',str(self.config)),('/etc/systemd/system',str(self.units)),('/usr/local/bin',str(self.root/'bin')),('/root/.ssh',str(self.root/'keys')),('/var/backups/navatunnel',str(self.root/'backups')),('/etc/sysctl.d',str(self.root/'sysctl'))]:helper=helper.replace(before,after)
         helper=helper.replace('if os.geteuid()!=0:', 'if False:')
-        (self.root/'bin/NavaTunnel-extra.sh').write_text(helper)
+        (self.root/'bin/NavaTunnel-maintenance.sh').write_text(helper)
 
         self.peers=[dict(id=1,name='same-name',remote_pub='192.0.2.1',gre_if='gre-tunnel',frps_svc='frps',legacy=True,ports=[443]),dict(id=2,name='same-name',remote_pub='192.0.2.2',gre_if='gre-t2',frps_svc='frps-2',legacy=False,ports=[8443])]
         self.write_peers()

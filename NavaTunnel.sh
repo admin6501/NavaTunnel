@@ -3026,9 +3026,6 @@ import json,os
 from pathlib import Path
 with open(os.environ["PEERS_F"]) as f:
     used={int(p["id"]) for p in json.load(f).get("peers",[])}
-for path in (Path(os.environ["PEERS_F"]).parent/"navalink").glob("*/config.json"):
-    old=json.loads(path.read_text()).get("legacy",{}).get("peer",{})
-    if old.get("id"):used.add(int(old["id"]))
 candidate=1
 while candidate in used:
     candidate+=1
@@ -3042,10 +3039,7 @@ peer_ports_used() {
 'import json,os
 from pathlib import Path
 d=json.load(open(os.environ["PEERS_F"])); peers=d.get("peers",[])
-for path in (Path(os.environ["PEERS_F"]).parent/"navalink").glob("*/config.json"):
-    t=json.loads(path.read_text())
-    if t.get("role")=="iran":peers.append(t)
-print(" ".join(str(p)+":"+str(r.get("name","NavaLink")) for r in peers for p in r.get("ports",[])))'
+print(" ".join(str(p)+":"+str(r.get("name","Tunnel")) for r in peers for p in r.get("ports",[])))'
 }
 
 # $1=id -> compact JSON record or empty
@@ -3807,9 +3801,6 @@ import json,sys,ipaddress
 from pathlib import Path
 p=Path(sys.argv[1]); peers=json.loads(p.read_text()).get('peers',[]) if p.exists() else []
 used={t[k] for t in peers for k in ('local_gre','peer_gre') if t.get(k)}
-for path in (p.parent/'navalink').glob('*/config.json'):
-    old=json.loads(path.read_text()).get('legacy',{}).get('peer',{})
-    used.update(old[k] for k in ('local_gre','peer_gre') if old.get(k))
 used.update(('10.10.10.1','10.10.10.2'))
 base=int(ipaddress.IPv4Address('10.200.0.0'))
 for n in range(16384):
@@ -3836,9 +3827,6 @@ quic=lambda p:p-1 if p==65535 else p+1
 needed_tcp={port}; needed_udp={port,quic(port)}
 peers=json.load(open(sys.argv[1])).get('peers',[])
 from pathlib import Path
-for path in (Path(sys.argv[1]).parent/'navalink').glob('*/config.json'):
-    t=json.loads(path.read_text())
-    if t.get('role')=='iran':peers.append(dict(id='navalink-'+t['id'],name=t.get('name','NavaLink'),frp_port=t['control_port'],ports=t['ports']))
 ignore_tcp=set(); ignore_udp=set()
 for peer in peers:
     control=int(peer.get('frp_port') or 0)
@@ -5184,22 +5172,7 @@ uninstall_all() {
 uninstall_all_force() {
         echo -e "${CYAN}[*] Complete deletion NavaTunnel...${NC}"
         cleanup_retired_features || return 1
-        cli_core_service stop || return 1
-        if [[ -x /usr/local/bin/NavaTunnel-core ]]; then /usr/local/bin/NavaTunnel-core maintenance purge || return 1; fi
-        rm -f /etc/systemd/system/NavaTunnel-core.service /usr/local/bin/NavaTunnel-core
-        if [[ -d "$NAVATUNNEL_STATE_DIR/navalink" ]]; then
-            local extra_id extra_ids
-            extra_ids=$(python3 - "$NAVATUNNEL_STATE_DIR/navalink" <<'PYCLEAN'
-import json,re,sys
-from pathlib import Path
-for path in Path(sys.argv[1]).glob('*/config.json'):
-    value=json.loads(path.read_text()).get('id','')
-    if re.fullmatch(r'[a-f0-9]{12}',value):print(value)
-PYCLEAN
-) || return 1
-            while read -r extra_id; do [[ -z "$extra_id" ]] || cli_extra navalink remove --id "$extra_id" || return 1; done <<< "$extra_ids"
-        fi
-
+        rm -f /usr/local/bin/NavaTunnel-core
         if [[ -f /etc/gre-panel/traffic.json ]]; then cli_traffic clear || return 1; fi
         # 1. Stop & disable all services & timers
         systemctl stop frps frpc "${TUNNEL_NAME}.service" gre-panel gre-chaff navatunnel-chaff navatunnel-watchdog.timer navatunnel-watchdog.service navatunnel-dpi >/dev/null 2>&1 || true
@@ -5266,7 +5239,7 @@ PYCLEAN
         crontab -l 2>/dev/null | grep -v 'NavaTunnel' | crontab - 2>/dev/null || true
 
         # 9. Remove entrypoints last
-        rm -f /usr/local/bin/NavaTunnel-extra.sh /usr/local/bin/NavaTunnel /usr/local/bin/NavaTunnel.sh /usr/local/bin/navatunnel /usr/local/bin/navatunnel.sh /usr/local/bin/gre.sh
+        rm -f /usr/local/bin/NavaTunnel-extra.sh /usr/local/bin/NavaTunnel-maintenance.sh /usr/local/bin/NavaTunnel /usr/local/bin/NavaTunnel.sh /usr/local/bin/navatunnel /usr/local/bin/navatunnel.sh /usr/local/bin/gre.sh
 
         echo -e "${GREEN}[✔️] Complete deletion is done; All tunnels, services and files are removed.${NC}"
 }
@@ -6043,10 +6016,9 @@ backup_now() {
     local FILES=()
     local f
     for f in /etc/frp/*.toml /etc/gre-panel/peers.json /etc/gre-panel/watchdog.json \
-             /etc/gre-panel/perf.json /etc/gre-panel/traffic.json /etc/gre-panel/mtu.json /etc/gre-panel/backup.key /etc/gre-panel/stopped /etc/gre-panel/navalink /etc/gre-panel/ssh-known-hosts \
-             /etc/gre-panel/core.json /etc/gre-panel/cluster_v2.json /etc/gre-panel/peer-api.crt /etc/gre-panel/peer-api.key /etc/systemd/system/NavaTunnel-core.service \
+             /etc/gre-panel/perf.json /etc/gre-panel/traffic.json /etc/gre-panel/mtu.json /etc/gre-panel/backup.key /etc/gre-panel/stopped \
              /etc/systemd/system/gre-*.service /etc/systemd/system/frps*.service \
-             /etc/systemd/system/frpc*.service /etc/systemd/system/gre-chaff*.service /etc/systemd/system/navalink-*.service; do
+             /etc/systemd/system/frpc*.service /etc/systemd/system/gre-chaff*.service; do
         [[ -f "$f" || -d "$f" ]] && FILES+=("$f")
     done
 
@@ -6126,14 +6098,6 @@ if registry.exists():
     data=json.loads(registry.read_text())
     for p in data.get('peers',[]):p['local_pub']=public
     updates[registry]=json.dumps(data,indent=2)+'\n'
-for path in (registry.parent/'navalink').glob('*/config.json'):
-    data=json.loads(path.read_text())
-    if data.get('role')=='iran':
-        data['local_pub']=public
-        if data.get('legacy',{}).get('peer'):data['legacy']['peer']['local_pub']=public
-        for oldunit in (path.parent/'previous/units').glob('gre-t*.service'):
-            updates[oldunit]=re.sub(r'\blocal\s+\d+\.\d+\.\d+\.\d+\b','local '+local,oldunit.read_text())
-        updates[path]=json.dumps(data,indent=2)+'\n'
 for path,text in updates.items():
     fd,tmp=tempfile.mkstemp(dir=path.parent,prefix='.restore-local-ip-')
     try:
@@ -6186,7 +6150,7 @@ cli_migrate() (
     esac
     echo 'Preparing encrypted backup and installation files...'
     ensure_traffic_helper || return 1
-    ensure_extra_helper || return 1
+    ensure_maintenance_helper || return 1
     if [[ -z "$backup" ]]; then
         local outdir="$BACKUP_DIR/migration-$(date +%Y%m%d-%H%M%S)-${RANDOM}"
         backup_now "$outdir" || return 1
@@ -6202,7 +6166,7 @@ cli_migrate() (
     rm -f "$tmp/verify.tar.gz"
     mkdir "$tmp/payload" || return 1
     cp "${BASH_SOURCE[0]}" "$tmp/payload/NavaTunnel.sh" && cp /usr/local/bin/NavaTunnel-traffic.sh "$tmp/payload/NavaTunnel-traffic.sh" && cp "$backup" "$tmp/payload/backup.enc" && cp "${NAVATUNNEL_STATE_DIR}/backup.key" "$tmp/payload/backup.key" || return 1
-    cp /usr/local/bin/NavaTunnel-extra.sh "$tmp/payload/NavaTunnel-extra.sh" || return 1
+    cp /usr/local/bin/NavaTunnel-maintenance.sh "$tmp/payload/NavaTunnel-maintenance.sh" || return 1
     chmod 600 "$tmp/payload/backup.key" "$tmp/payload/backup.enc"
     bash -n "$tmp/payload/NavaTunnel.sh" && bash -n "$tmp/payload/NavaTunnel-traffic.sh" || return 1
     cat > "$tmp/payload/run.sh" <<'REMOTE'
@@ -6240,7 +6204,7 @@ if ((${#previous[@]})); then tar -czf "$rollback" -C / "${previous[@]}"; chmod 6
 install -m 755 "$stage/NavaTunnel.sh" /usr/local/bin/NavaTunnel.sh
 install -m 755 "$stage/NavaTunnel.sh" /usr/local/bin/NavaTunnel
 install -m 755 "$stage/NavaTunnel-traffic.sh" /usr/local/bin/NavaTunnel-traffic.sh
-install -m 755 "$stage/NavaTunnel-extra.sh" /usr/local/bin/NavaTunnel-extra.sh
+install -m 755 "$stage/NavaTunnel-maintenance.sh" /usr/local/bin/NavaTunnel-maintenance.sh
 ln -sf /usr/local/bin/NavaTunnel.sh /usr/local/bin/gre.sh
 install -m 600 "$stage/backup.key" /etc/gre-panel/backup.key
 archive="/var/backups/navatunnel/migrated-${stamp}.enc"
@@ -6272,28 +6236,6 @@ REMOTE
     ssh "${connection[@]}" -o BatchMode=yes "$destination" "${root_prefix}bash '$remote/run.sh' '$remote' '$local_ip'" || {
         echo 'Migration failed on the destination. Review the error above; the source was not stopped.' >&2; return 1;
     }
-    # A reverse SSH listener can have only one owning carrier. Cut over these
-    # owned connections after the destination restore has otherwise succeeded.
-    local nava_ids nava_id
-    nava_ids=$(python3 - "$NAVATUNNEL_STATE_DIR/navalink" <<'PYHANDOVER'
-import json,re,sys
-from pathlib import Path
-for path in Path(sys.argv[1]).glob('*/config.json'):
-    t=json.loads(path.read_text())
-    if t.get('role')=='iran' and not t.get('stopped') and not t.get('incomplete') and re.fullmatch(r'[a-f0-9]{12}',t.get('id','')):print(t['id'])
-PYHANDOVER
-) || return 1
-    while read -r nava_id; do
-        [[ -n "$nava_id" ]] || continue
-        echo "Handing over NavaLink carrier $nava_id; a brief connection interruption is expected."
-        cli_extra navalink stop --id "$nava_id" || return 1
-        if ! ssh "${connection[@]}" -o BatchMode=yes "$destination" "${root_prefix}/usr/local/bin/NavaTunnel navalink start --id '$nava_id'"; then
-            ssh "${connection[@]}" -o BatchMode=yes "$destination" "${root_prefix}/usr/local/bin/NavaTunnel navalink stop --id '$nava_id'" >/dev/null 2>&1 || true
-            cli_extra navalink start --id "$nava_id" || true
-            echo "NavaLink handover failed; source restart was attempted. Check both ends for $nava_id." >&2
-            return 1
-        fi
-    done <<< "$nava_ids"
     echo 'SSH migration completed. Do not stop the source until opposite endpoints have been updated and tested.'
 )
 
@@ -6425,6 +6367,7 @@ backup_restore() {
     echo -e "${CYAN}[*] Restoring settings and services...${NC}"
     backup_configs pre_restore >/dev/null || { echo "Could not create a pre-restore safety copy." >&2; return 1; }
     backup_archive extract "$TMP_D/backup.tar.gz" || return 1
+    NAVATUNNEL_RESTORE=1 cleanup_retired_features || return 1
     if [[ -n "$LOCAL_IP" ]]; then restore_rebind_local_ip "$LOCAL_IP" || return 1; fi
     chmod 600 /etc/gre-panel/*.json 2>/dev/null || true
     echo -e "${GREEN}[✔️] Restored files:${NC}"
@@ -6439,12 +6382,6 @@ backup_restore() {
     restore_start_tunnels || tunnel_start_failed=1
 
     repair_traffic_monitor || { echo 'Tunnel files restored, but traffic monitoring could not be initialized.' >&2; return 1; }
-    if [[ -d "$NAVATUNNEL_STATE_DIR/navalink" ]]; then
-        if [[ -n "$LOCAL_IP" ]]; then NAVATUNNEL_DEFER_CARRIER=1 cli_extra navalink restore || return 1
-        else cli_extra navalink restore || return 1; fi
-    fi
-    cleanup_retired_features || return 1
-    cli_core_service restore || return 1
     ((tunnel_start_failed == 0)) || { echo 'Files restored, but some tunnel services failed to start. Check their journals.' >&2; return 1; }
     echo -e "${GREEN}[✔️] The restore was successful.${NC}"
     return 0
@@ -7053,11 +6990,10 @@ update_all() {
         echo "Failed to update Traffic Tool; Scripts were not replaced." >&2
         return 1
     fi
-    if ! download_with_fallback "$TMP_U/NavaTunnel-extra.sh" "$NAVATUNNEL_URL_BASE/NavaTunnel-extra.sh" 30 || ! bash -n "$TMP_U/NavaTunnel-extra.sh"; then
-        echo 'Optional engine helper update failed; scripts were not replaced.' >&2; return 1
+    if ! download_with_fallback "$TMP_U/NavaTunnel-maintenance.sh" "$NAVATUNNEL_URL_BASE/NavaTunnel-maintenance.sh" 30 || ! bash -n "$TMP_U/NavaTunnel-maintenance.sh"; then
+        echo 'Maintenance helper update failed; scripts were not replaced.' >&2; return 1
     fi
-    bash "$TMP_U/NavaTunnel-extra.sh" cleanup-retired || return 1
-    install -m 755 "$TMP_U/NavaTunnel-extra.sh" /usr/local/bin/NavaTunnel-extra.sh || return 1
+    install -m 755 "$TMP_U/NavaTunnel-maintenance.sh" /usr/local/bin/NavaTunnel-maintenance.sh || return 1
     install -m 755 "$TMP_U/NavaTunnel-traffic.sh" /usr/local/bin/NavaTunnel-traffic.sh || return 1
     # 3. replace running script only after everything succeeded
     cp "$TMP_U/NavaTunnel.sh" "$0" 2>/dev/null || cp "$TMP_U/NavaTunnel.sh" ./NavaTunnel.sh
@@ -7215,7 +7151,7 @@ show_banner() {
 EOF
     echo -e "${NC}"
     echo -e "${CYAN}==============================================================${NC}"
-    echo -e "${GREEN}${BOLD}     NavaTunnel 6501 — Iran and foreign tunnel management${NC}"
+    echo -e "${GREEN}${BOLD}     NavaTunnel${NC}"
     echo -e "${CYAN}     Layer 3 GRE tunnel and FRP reverse connection${NC}"
     echo -e "${CYAN}==============================================================${NC}"
 }
@@ -7277,7 +7213,6 @@ menu_list_tunnels() {
         foreign_tunnel_summary || return 1
         found=1
     fi
-    if [[ -d "$NAVATUNNEL_STATE_DIR/navalink" ]]; then cli_extra navalink status; found=1; fi
     ((found)) || echo 'No tunnel is registered on this server.'
 }
 
@@ -7389,11 +7324,9 @@ menu_optimization() {
         echo "  6) Performance settings, encryption, compression and TLS"
         echo "  7) Free cache memory and configure swap"
         echo "  8) Restore network settings"
-        echo "  9) NavaLink — FRP over reverse SSH"
-        echo "  10) Cluster — manage alternative exits and Iran nodes"
         echo "  0) Return to the main menu"
         echo ""
-        read -r -p "Select option [0-10]: " O_OPT || return 0
+        read -r -p "Select option [0-8]: " O_OPT || return 0
         case "$O_OPT" in
             1) tune_apply; pause_prompt ;;
             2) menu_carrier ;;
@@ -7403,8 +7336,6 @@ menu_optimization() {
             6) menu_perf ;;
             7) free_ram; pause_prompt ;;
             8) tune_restore; pause_prompt ;;
-            9) cli_extra menu navalink ;;
-            10) cli_extra menu cluster ;;
             0) return 0 ;;
             *) echo -e "${RED}[!] Invalid option.${NC}"; sleep 1 ;;
         esac
@@ -7558,29 +7489,19 @@ menu_bundle() { menu_tunnel; }
 menu_diagnostics() { menu_diagnostics_backup; }
 menu_update() { menu_maintenance; }
 
-ensure_extra_helper() {
-    local target=/usr/local/bin/NavaTunnel-extra.sh source_dir tmp
-    if [[ ! -f "$target" ]] || ! grep -Fq 'def cleanup_extra_tools():' "$target"; then
+ensure_maintenance_helper() {
+    local target=/usr/local/bin/NavaTunnel-maintenance.sh source_dir tmp
+    if [[ ! -f "$target" ]] || ! grep -Fq '# NavaTunnel maintenance v1.2.0' "$target"; then
         source_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-        if [[ -f "$source_dir/NavaTunnel-extra.sh" ]] && grep -Fq 'def cleanup_extra_tools():' "$source_dir/NavaTunnel-extra.sh"; then
-            bash -n "$source_dir/NavaTunnel-extra.sh" || return 1
-            install -m 755 "$source_dir/NavaTunnel-extra.sh" "$target" || return 1
+        if [[ -f "$source_dir/NavaTunnel-maintenance.sh" ]]; then
+            bash -n "$source_dir/NavaTunnel-maintenance.sh" || return 1
+            install -m 755 "$source_dir/NavaTunnel-maintenance.sh" "$target" || return 1
         else
             tmp=$(mktemp) || return 1
-            download_with_fallback "$tmp" "$NAVATUNNEL_URL_BASE/NavaTunnel-extra.sh" 30 && bash -n "$tmp" && install -m 755 "$tmp" "$target" || { rm -f "$tmp"; return 1; }
+            download_with_fallback "$tmp" "$NAVATUNNEL_URL_BASE/NavaTunnel-maintenance.sh" 30 && bash -n "$tmp" && install -m 755 "$tmp" "$target" || { rm -f "$tmp"; return 1; }
             rm -f "$tmp"
         fi
     fi
-}
-
-cli_extra() {
-    ensure_extra_helper || return 1
-    if [[ "${1:-}" == navalink && "${2:-}" == setup || "${1:-}" == menu && "${2:-}" == navalink ]]; then
-        ensure_navatunnel_bin
-        ensure_dependencies_smart || return 1
-        ensure_traffic_helper || return 1
-    fi
-    bash /usr/local/bin/NavaTunnel-extra.sh "$@"
 }
 
 ensure_traffic_helper() {
@@ -7833,8 +7754,6 @@ usage_cli() {
 Usage:
   NavaTunnel                                    # Interactive management menu
   NavaTunnel menu                               # Admin menu with all options
-  NavaTunnel cluster status | advanced cluster ACTION --json JSON
-  NavaTunnel navalink setup|status|start|stop|restart|remove  # Optional FRP over reverse SSH
   NavaTunnel traffic discover | list | repair
   NavaTunnel traffic add ID --interface gre-tunnel   # or --peer for a dedicated peer IP
   NavaTunnel traffic limit ID 100GB --mode download|upload|both
@@ -8042,113 +7961,41 @@ cli_setup_foreign() {
     setup_foreign_server_noninteractive "$LOCAL_PUB" "$REMOTE_PUB" "$FRP_PORT" "$TOKEN" "$LOCAL_GRE" "$PEER_GRE" "$CLEANED" "$RELAY_IP" "$PROXY_PROTOCOL" "$FRP_TRANSPORT" "$FRP_ENCRYPTION" "$FRP_COMPRESSION"
 }
 
-# Verified standalone networking core; Cluster runtime; no browser panel is installed.
-NAVATUNNEL_CORE_TAG="core-v1.1.1"
-core_wait_ready() {
-    local attempt
-    for attempt in {1..15}; do
-        if /usr/local/bin/NavaTunnel-core daemon ping 2>/dev/null | grep -Eq '"version"[[:space:]]*:[[:space:]]*"v1\.1\.1"'; then return 0; fi
-        sleep 1
-    done
-    echo 'The Cluster core is not ready; inspect journalctl -u NavaTunnel-core.' >&2
-    return 1
-}
-
+# Optional TLS terminator used only by the existing FRP WSS transport.
+NAVATUNNEL_CORE_TAG="core-v1.2.0"
 ensure_nava_core() {
     local target=/usr/local/bin/NavaTunnel-core arch tmp asset url
-    if [[ -x "$target" ]] && [[ "$("$target" version 2>/dev/null)" == v1.1.1 ]]; then
-        if [[ -f /etc/systemd/system/NavaTunnel-core.service ]] && systemctl is-active --quiet NavaTunnel-core.service; then
-            if ! "$target" daemon ping 2>/dev/null | grep -Eq '"version"[[:space:]]*:[[:space:]]*"v1\.1\.1"'; then
-                systemctl restart NavaTunnel-core.service && core_wait_ready || return 1
-            fi
-        fi
-        return 0
-    fi
-    case "$(uname -m)" in x86_64|amd64) arch=amd64;; aarch64|arm64) arch=arm64;; armv7l) arch=armv7;; i386|i686) arch=386;; *) echo 'Unsupported core architecture.' >&2; return 1;; esac
+    [[ -x "$target" && "$("$target" version 2>/dev/null)" == v1.2.0 ]] && return 0
+    case "$(uname -m)" in x86_64|amd64) arch=amd64;; aarch64|arm64) arch=arm64;; armv7l) arch=armv7;; i386|i686) arch=386;; *) echo 'Unsupported TLS helper architecture.' >&2; return 1;; esac
     tmp=$(mktemp -d) || return 1
     asset="NavaTunnel-core_linux_${arch}"
     url="https://github.com/admin6501/NavaTunnel/releases/download/${NAVATUNNEL_CORE_TAG}"
     if ! curl -fsSL --connect-timeout 10 --max-time 90 "$url/checksums.txt" -o "$tmp/checksums.txt" || ! curl -fsSL --connect-timeout 10 --max-time 180 "$url/$asset" -o "$tmp/$asset"; then
-        echo 'Core download failed; the installed binary was preserved.' >&2
+        echo 'TLS helper download failed; the installed binary was preserved.' >&2
         rm -rf "$tmp"; return 1
     fi
     if ! (cd "$tmp" && awk -v asset="$asset" '$2==asset {print; found++} END {if(found!=1)exit 1}' checksums.txt > selected.sha256 && sha256sum -c selected.sha256); then
-        echo 'Core checksum verification failed; nothing was installed.' >&2
+        echo 'TLS helper checksum verification failed; nothing was installed.' >&2
         rm -rf "$tmp"; return 1
     fi
     chmod 755 "$tmp/$asset"
-    [[ "$("$tmp/$asset" version)" == v1.1.1 ]] || { rm -rf "$tmp"; return 1; }
-    local was_active=0 had_previous=0
-    if [[ -f /etc/systemd/system/NavaTunnel-core.service ]] && systemctl is-active --quiet NavaTunnel-core.service; then was_active=1; fi
+    [[ "$("$tmp/$asset" version)" == v1.2.0 ]] || { rm -rf "$tmp"; return 1; }
+    local had_previous=0 unit
+    local -a active=()
+    for unit in /etc/systemd/system/frps-wss*.service; do
+        [[ -f "$unit" ]] || continue
+        systemctl is-active --quiet "${unit##*/}" && active+=("${unit##*/}")
+    done
     if [[ -f "$target" ]]; then cp -p "$target" "$tmp/previous" || { rm -rf "$tmp"; return 1; }; had_previous=1; fi
     install -m 755 "$tmp/$asset" "$target.new" && mv -f "$target.new" "$target" || { rm -rf "$tmp"; return 1; }
-    if (( was_active )) && ! { systemctl restart NavaTunnel-core.service && core_wait_ready; }; then
-        if (( had_previous )); then cp -p "$tmp/previous" "$target"; systemctl restart NavaTunnel-core.service || true; fi
-        echo 'Core restart failed; the previous executable was restored.' >&2
-        rm -rf "$tmp"; return 1
-    fi
+    for unit in "${active[@]}"; do
+        if ! systemctl restart "$unit" || ! systemctl is-active --quiet "$unit"; then
+            if (( had_previous )); then cp -p "$tmp/previous" "$target"; for unit in "${active[@]}"; do systemctl restart "$unit" || true; done; fi
+            echo 'TLS helper restart failed; the previous executable was restored.' >&2
+            rm -rf "$tmp"; return 1
+        fi
+    done
     rm -rf "$tmp"
-}
-
-cli_core() {
-    case "${1:-}" in cluster|certificate|daemon|maintenance) ;; *) echo 'Only Cluster is available in the standalone core.' >&2; return 1;; esac
-    ensure_nava_core || return 1
-    /usr/local/bin/NavaTunnel-core "$@"
-}
-
-cli_core_service() {
-    local action=${1:-status} listen='' unit=/etc/systemd/system/NavaTunnel-core.service
-    shift || true
-    if [[ ${1:-} == --listen && $# == 2 ]]; then listen=$2
-    elif (($#)); then echo 'Usage: NavaTunnel core-service start|stop|status [--listen IPv4:PORT]' >&2; return 1; fi
-    case "$action" in
-        start)
-            ensure_nava_core || return 1
-            if [[ -n "$listen" ]]; then
-                python3 - "$listen" <<'PYCORELISTEN' || return 1
-import ipaddress,sys
-ip,port=sys.argv[1].rsplit(':',1);ipaddress.IPv4Address(ip)
-assert port.isdecimal() and 1<=int(port)<=65535
-PYCORELISTEN
-            fi
-            if [[ ! -f "$unit" || -n "$listen" ]]; then
-                cat > "$unit" <<EOFCOREUNIT
-[Unit]
-Description=NavaTunnel standalone networking core
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=root
-ExecStart=/usr/local/bin/NavaTunnel-core serve${listen:+ --listen $listen --tls}
-Restart=on-failure
-RestartSec=5
-LimitNOFILE=1048576
-UMask=0077
-
-[Install]
-WantedBy=multi-user.target
-EOFCOREUNIT
-                systemctl daemon-reload || return 1
-            fi
-            systemctl enable --now NavaTunnel-core.service || return 1
-            if [[ -n "$listen" ]]; then systemctl restart NavaTunnel-core.service || return 1; fi
-            systemctl is-active --quiet NavaTunnel-core.service || return 1
-            core_wait_ready || return 1
-            ;;
-        stop)
-            if [[ -x /usr/local/bin/NavaTunnel-core && -f "$NAVATUNNEL_STATE_DIR/cluster_v2.json" ]]; then
-                cli_core cluster config --json '{"enabled":false}' || return 1
-            fi
-            if [[ -f "$unit" ]]; then systemctl disable --now NavaTunnel-core.service || return 1; fi
-            ;;
-        restore)
-            if [[ -f "$unit" ]]; then ensure_nava_core && systemctl daemon-reload && systemctl enable NavaTunnel-core.service && systemctl restart NavaTunnel-core.service && cli_core_service start || return 1; fi
-            ;;
-        status) systemctl status NavaTunnel-core.service --no-pager -l ;;
-        *) echo 'Usage: NavaTunnel core-service start|stop|status' >&2; return 1;;
-    esac
 }
 
 wss_front_port() {
@@ -8208,15 +8055,15 @@ frps_wss_front_remove() {
 
 cleanup_retired_features() {
     [[ "${NAVATUNNEL_RETIRING_TOOLS:-0}" != 1 ]] || return 0
-    if [[ -x /usr/local/bin/NavaTunnel-core ]]; then ensure_nava_core || return 1; fi
-    cli_extra cleanup-extra-tools || return 1
-    if [[ -f "$NAVATUNNEL_STATE_DIR/core-restart-required" ]]; then
-        cli_core_service start || return 1
-        rm -f "$NAVATUNNEL_STATE_DIR/core-restart-required"
-    fi
-    if [[ -f "$NAVATUNNEL_STATE_DIR/cluster.json" || -f "$NAVATUNNEL_STATE_DIR/cluster-key" || -f "$NAVATUNNEL_STATE_DIR/cluster-runtime.json" || -f "$NAVATUNNEL_STATE_DIR/cluster-key.pub" || -f "$NAVATUNNEL_STATE_DIR/cluster-tick.lock" || -f /etc/systemd/system/NavaTunnel-cluster.service || -f /etc/systemd/system/NavaTunnel-cluster.timer ]] || grep -qE ' nava-cluster-[a-f0-9]{12}$' /root/.ssh/authorized_keys 2>/dev/null; then
-        cli_extra cleanup-retired || return 1
-    fi
+    command -v python3 >/dev/null || ensure_dependencies_smart || return 1
+    ensure_maintenance_helper || return 1
+    bash /usr/local/bin/NavaTunnel-maintenance.sh retire || return 1
+    local front
+    local has_front=0
+    for front in /etc/systemd/system/frps-wss*.service; do [[ ! -f "$front" ]] || has_front=1; done
+    if (( has_front )); then ensure_nava_core || return 1
+    else rm -f /usr/local/bin/NavaTunnel-core; fi
+    rm -f /usr/local/bin/NavaTunnel-extra.sh
 }
 
 if [[ $# -gt 0 ]]; then
@@ -8262,10 +8109,6 @@ if [[ $# -gt 0 ]]; then
         watchdog) shift; cli_watchdog "$@" ;;
         backup) shift; cli_backup "$@" ;;
         migrate) shift; cli_migrate "$@" ;;
-        navalink) cli_extra "$@" ;;
-        cluster) cli_core "$@" ;;
-        advanced) shift; cli_core "$@" ;;
-        core-service) shift; cli_core_service "$@" ;;
         frp-wss-front) cli_frp_wss_front ;;
         retire-wss-carrier)
             [[ $# == 3 && "$2" =~ ^gre-(tunnel|t[0-9]+)$ ]] && is_valid_port "$3" || exit 1

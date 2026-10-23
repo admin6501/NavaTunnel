@@ -5,9 +5,10 @@ __pycache__/
 .coverage
 htmlcov/
 
-# Private local history backup; do not publish
+# Private backups and keys
 *.bundle
-NavaTunnel-history-reset-plan.json
+*.enc
+*.key
 
 # Local Go build outputs
 /core/core

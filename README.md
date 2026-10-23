@@ -1,297 +1,73 @@
 # NavaTunnel
 
-**English** | [فارسی](README.fa.md)
+[فارسی](README.fa.md) · [User guide](docs/USAGE.md) · [Backup and maintenance](docs/OPERATIONS.md)
 
-FRP reverse tunnel management over GRE, developed and maintained by **admin6501**.
-This NavaTunnel version includes English menus, per-tunnel traffic controls, protocol selection, persistent MTU settings, Iran IP migration, documentation, and bug fixes.
-Management runs through SSH and an English terminal menu. No web administration panel or Backhaul engine is included. Optional networking tools use a standalone Go core, distributed as verified binaries; servers do not need Go installed.
+Manage GRE tunnels and FRP reverse connections from an English terminal menu. Run the script on your Iran and foreign servers; application inbounds stay on the foreign server.
 
-GRE can run directly or use FOU over UDP. FRP transport, encryption, and compression are applied on the foreign client; the Iran menu stores each tunnel's selection and passes it through a connection bundle. The GRE carrier supports direct GRE and FOU; the independent WSS GRE relay has been removed.
+```text
+Users → Iran service ports → FRP over GRE/FOU → Foreign application
+```
 
-There is no fixed limit on the number of foreign servers. Each tunnel needs a separate foreign IP and internal addresses, plus available control and service ports. Currently, each foreign server manages one FRPC connection.
+## Install
 
-## Cluster and NavaLink
-
-The retained optional features are **NavaLink (Advanced → 9)** and **Cluster (Advanced → 10)**. Cluster provides foreign exit selection and an Iran mesh; NavaLink offers FRP over SSH or explicit TCP-only direct forwarding. Both require explicit setup.
-
-The additional 1.1.0 tools have been removed: the GRE WSS relay, Rescue, Auto Pool, reverse-path doctor, benchmark/Auto Pilot, history/reporting/metrics, standalone alerts, Peer Link, dial-route controls and the separate network-tools menu. Their owned settings and services are retired on update/startup, with a private settings archive under `/var/backups/navatunnel/removed-tools-*`. Existing Cluster/NavaLink state, FRP files, quotas and manual traffic counters are preserved. Existing FRP protocols, including FRP WSS, remain available.
-
-Read [the retained features guide](docs/UPSTREAM_TOOLS.md) and [source attribution](THIRD_PARTY_NOTICES.md). Cluster forwards connections; it does not replicate application users/inbounds or create missing endpoint tunnels.
-
-## Installation and updates
-
-Run as root on a Linux server with systemd, Python 3, and iptables:
+Run as root on each server:
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/admin6501/NavaTunnel/main/install.sh)
 ```
 
-Run `NavaTunnel` to open the menu or `NavaTunnel --help` for CLI help. For a local copy, run `sudo bash NavaTunnel.sh`. Tunnel setup installs required dependencies and binaries. Traffic and cover-traffic helpers are also Bash scripts. The script interface, messages and CLI help are entirely in English.
+Open the menu afterward:
 
-Use **Updates and maintenance → Full update**, or run:
+```bash
+NavaTunnel
+```
+
+Use a Linux server with systemd and root access. Ubuntu 22.04/24.04 and Debian with systemd are suitable. The installer needs Internet access to download dependencies and FRP binaries. The kernel/provider must allow the selected GRE or FOU carrier. Service ports and the carrier must also be allowed by your server and provider firewalls.
+
+## Create your first tunnel
+
+1. On **Iran**, select **1 → 1: Create tunnel on Iran**.
+2. Enter a name, both public IPv4 addresses and the application ports already listening on the foreign server, such as `443,8443`.
+3. Leave loss recovery off to start with TCP. Choose an unused FRP control port, or press Enter for automatic selection.
+4. After creation, select **1 → 3**, choose the tunnel, then **8: Get foreign connection code**.
+5. On the **matching foreign server**, install NavaTunnel and run only the command shown in the connection-code box.
+6. Confirm the setup reports success and test your application through the Iran address.
+
+The code contains a secret token. Keep it private. Creating a tunnel forwards existing applications; it does not create inbounds or application users.
+
+## Menu
+
+| Main option | Purpose |
+| --- | --- |
+| 1 | Create, select and manage tunnels; change Iran public IP |
+| 2 | Network tuning, GRE/FOU, DPI SYN limits, cover traffic, watchdog and FRP settings |
+| 3 | Health checks, logs, encrypted backups, restore and SSH migration |
+| 4 | Update, download FRP binaries and inspect system settings |
+| 5 | Uninstall |
+| 6 | Traffic usage, accounting mode, limits and reset |
+
+On Iran, **1 → 3** opens the selected tunnel's controls: start, stop, restart, service ports, name, foreign IP, GRE carrier, connection code, traffic, loss recovery, FRP protocol, MTU, control port and token. More than one foreign server can be registered on Iran; their public service ports on Iran must not overlap. The standard foreign setup manages one GRE/FRPC connection per foreign server.
+
+## Traffic
+
+Usage and limits use decimal **GB**: `1 GB = 1,000,000,000 bytes`. Download means received by the server where the counter runs; upload means sent by it. Choose download, upload or both for quota accounting. Normal GRE counters measure inner IPv4 traffic, so they do not equal the provider's billable wire traffic. The monitor samples every 10 seconds.
+
+## Update
+
+On Iran and each foreign endpoint:
 
 ```bash
 NavaTunnel update-all
+NavaTunnel
 ```
 
-Close and reopen the menu afterward. Update Iran and each foreign server separately. Existing tunnels do not need to be deleted or recreated to use the new menus.
+Read [upgrade notes](docs/OPERATIONS.md#upgrading-from-older-versions) if you used optional features in an older release. Ordinary GRE/FRP settings and counters are preserved during their retirement.
 
-## Menu workflow
+## Help
 
-Run `NavaTunnel` to open the main menu:
+- [Step-by-step tunnel guide](docs/USAGE.md)
+- [Traffic, security, backup, migration and troubleshooting](docs/OPERATIONS.md)
+- [راهنمای فارسی](docs/USAGE.fa.md)
+- `NavaTunnel --help` lists command-line options.
 
-1. **Create and manage tunnels → Create on Iran**: enter a name, both public IPs, and service ports. The token and internal addresses are generated automatically. Enter a control port manually, or press Enter / type `auto` to select an available port. Follow the same steps to add more foreign servers.
-2. **Select and manage a tunnel**: select a tunnel from the numbered list, then change its name, ports, or foreign IP. Enter leaves an edit unchanged; option 0 goes back.
-3. **Foreign connection code**: get the selected tunnel's bundle and run it on its foreign server, or paste it into the foreign connection menu. After changing service ports, apply the new bundle on the foreign side. The menu asks before replacing an existing connection.
-4. **Traffic usage, limits, and reset**: select a tunnel and choose download, upload, or both. In the menu, `100` means 100GB; `0` means unlimited.
-
-Menu entry, back navigation, and refresh clear the terminal screen so only the current page is visible. Action results and connection codes remain visible until Enter is pressed. Iran IP migration is available only in the shared tunnel menu.
-
-Restart and delete actions on a tunnel's management page affect only that tunnel. An older single-tunnel Iran installation is imported automatically when its IP and GRE settings can be read from the service file. On a foreign server, use a new bundle to replace connection settings and the status menu to inspect the connection.
-
-## Foreign server status and management
-
-Under **Create and manage tunnels → 4) Tunnel list and status**, Iran tunnels are read from the peer registry and the foreign connection from `frpc.toml`. A foreign connection appears even without a peer registry. Its summary shows the internal Iran endpoint, FRP protocol, service status, GRE interface, and TCP/UDP ports. Tokens are not printed in the list. An active local service alone does not prove the remote endpoint is reachable.
-
-On a foreign server, **3) Select and manage a tunnel** opens FRPC management: status, restart this connection, traffic settings, reconfiguration using a bundle, and persistent MTU. If both roles are configured on a server, choose Iran or foreign first. Recreating a tunnel is not required for it to appear in the foreign list.
-
-## Selecting an FRP protocol
-
-On **Iran**, open **Create and manage tunnels → Select and manage a tunnel → 11) Select FRP protocol**. Choose TCP, KCP, QUIC, WebSocket, or WSS. The saved selection is shown above the menu; Enter keeps it. Then get a new bundle using option 8 and apply it on the foreign server.
-
-On the **foreign server**, **Connect foreign server using a bundle** offers the same five protocols after you paste the bundle. Enter keeps the protocol encoded in the bundle. Manual foreign setup also offers protocol selection. Replacing an existing connection requires confirmation in the menu.
-
-The **foreign FRP client** uses the selected transport; the Iran FRP server accepts the connection. Saving a selection on Iran does not change an already running foreign client. Direct GRE or FOU carrier selection remains separate, under tunnel management option 7.
-
-| Protocol | Behavior |
-|---|---|
-| TCP | Default transport with TCP retransmission |
-| KCP | UDP transport with FEC and additional traffic usage |
-| QUIC | UDP transport without KCP's FEC mode |
-| WebSocket | FRP connection over WebSocket |
-| WSS | WebSocket connection with TLS |
-
-KCP and loss recovery stay consistent: selecting KCP enables recovery; selecting another protocol disables it. Enabling recovery through option 10 selects KCP. Disabling it switches KCP to TCP; an already selected non-KCP protocol is preserved.
-
-```bash
-NavaTunnel peer-protocol --id 2 --protocol quic
-NavaTunnel peer-token --id 2
-```
-
-Apply the new bundle using an updated NavaTunnel installation on the foreign server. Iran uses the control port over UDP for KCP and the next port for QUIC, or the preceding port if the control port is 65535. UFW rules allow these ports; configure any custom firewall separately. Protocol selection alone does not guarantee better speed or unrestricted connectivity.
-
-## Per-tunnel packet-loss recovery
-
-During tunnel creation, the menu asks whether to enable packet-loss recovery with a `[y/N]` prompt:
-
-- `y` selects **KCP with FEC** for that tunnel's FRP connection.
-- `n` or Enter keeps the default TCP transport without additional FEC. TCP still performs its usual retransmissions.
-
-For an existing tunnel, open **Select and manage a tunnel → 10) Packet-loss recovery**. The submenu offers **1) Enable**, **2) Disable**, and **3) Show saved selection**. Enter or 0 returns without changing the setting.
-
-The selection is stored independently in the tunnel's record, then read back and verified. Closing the menu or restarting the script does not clear it. After a change, a ready-to-run foreign setup command is printed. Apply the new bundle on the foreign server and confirm replacement when using the menu.
-
-Iran displays the **saved Iran selection**, which does not verify the foreign client's current state. Changes made directly on the foreign server are not automatically synchronized back to Iran. Select the same protocol using Iran option 11 to keep future bundles consistent. FEC status follows the protocol: KCP enables it; other protocols do not use KCP FEC. Both sides need an updated NavaTunnel version to transfer these settings through the bundle.
-
-```bash
-NavaTunnel loss-recovery --id 2 --mode on
-NavaTunnel peer-token --id 2
-# Apply the new bundle on the foreign server:
-NavaTunnel setup-foreign --bundle '<bundle>' --force
-# Explicitly disable recovery on the foreign server:
-NavaTunnel setup-foreign --bundle '<bundle>' --loss-recovery off --force
-```
-
-`add-peer` and `setup-foreign` also accept `--loss-recovery on|off`. Explicitly enabling recovery while explicitly choosing a non-KCP protocol, such as QUIC, is rejected. Older connection bundles remain supported.
-
-FEC can reconstruct some lost data using redundant packets. It does not remove loss from the underlying route or other server traffic, and recovery is not guaranteed for severe or burst loss. FRP 0.71.0 uses 10 data shards and 3 parity shards for KCP: approximately 30% redundancy at the coded payload level for large streams, plus protocol headers and retransmissions. Actual usage depends on packet sizes and path conditions. This additional traffic counts toward tunnel and datacenter usage. KCP sends UDP inside GRE on the control port; custom firewalls must allow it.
-
-## Persistent per-tunnel MTU
-
-On Iran, use **Tunnel management → 12) Persistent MTU**. On the foreign server, use **Connection management → 7) Persistent MTU**. The current value is displayed; Enter cancels. Only the selected tunnel interface is changed, and the setting is saved in its service file and `/etc/gre-panel/mtu.json`.
-
-Restarting, changing the carrier, and applying standard optimizations preserve the saved per-interface MTU. If applying a change fails, the previous setting is restored. MSS rules use the path MTU and the selected tunnel interface.
-
-Set compatible MTUs on both ends; changing Iran alone does not change the foreign interface. The default is 1380 and accepted values range from 576 to 1476. Your path may require a smaller value; reducing MTU does not always improve speed. The current KCP implementation sends 1350-byte packets, requiring at least 1378 bytes inside GRE with IPv4/UDP headers. The script rejects selecting KCP with a smaller MTU or lowering an active KCP tunnel below that minimum.
-
-Example for the second Iran tunnel and its corresponding foreign connection, using TCP:
-
-```bash
-# Iran server:
-NavaTunnel mtu --interface gre-t2 --value 1300
-# Corresponding foreign server:
-NavaTunnel mtu --interface gre-tunnel --value 1300
-```
-
-## Per-tunnel traffic usage
-
-Each tunnel's management page shows download, upload, their total, and usage charged against the configured limit. Use **option 9 on Iran** or **option 5 on the foreign server** to manage that connection's traffic without selecting it again or entering a counter ID. Refresh, limit, accounting direction, reset, and unlimited settings are available there. Reset requires confirmation.
-
-**Main menu option 6** lists all counters, discovers existing tunnels, and registers an interface or dedicated peer IP. Usage is displayed in multiline GB cards for narrow terminals. In menus, `100` means 100GB and `0` means unlimited. Menus and CLI accept only GB; a number without a suffix also means GB. One GB equals 1,000,000,000 bytes. GiB and other size units are rejected. Existing limits remain stored in bytes; only their displayed unit changes to GB.
-
-New tunnels are registered automatically using their interface names, such as `gre-tunnel` or `gre-t2`. If a counter is missing, the menu asks before registering it, and counting starts at that moment. If a refresh fails, the last saved usage is shown with a warning. Historical datacenter usage cannot be recovered by the counter.
-
-```bash
-NavaTunnel traffic discover
-NavaTunnel traffic list
-NavaTunnel traffic limit gre-tunnel 100GB --mode both
-NavaTunnel traffic status gre-tunnel
-NavaTunnel traffic reset gre-tunnel
-NavaTunnel traffic mode gre-tunnel download
-NavaTunnel traffic limit gre-tunnel 0  # Unlimited; remove quota blocking
-```
-
-Register an interface or dedicated peer IP:
-
-```bash
-NavaTunnel traffic add tunnel-a --interface tun0 --limit 100GB --mode upload
-NavaTunnel traffic add frp-a --peer 203.0.113.10 --limit 500GB --mode both
-NavaTunnel traffic remove tunnel-a  # Remove the counter and its blocking rules
-```
-
-- **download**: bytes received by this server (RX).
-- **upload**: bytes sent by this server (TX).
-- **both**: the sum of both directions.
-- Interface counters measure IPv4 traffic inside the tunnel, including IP headers and keepalive traffic. Peer-IP counters include all IPv4 traffic to/from that peer, including overhead and other connections, so use a dedicated IP. Duplicate or overlapping targets are rejected.
-- Counters are sampled every 10 seconds. Reaching the limit in the selected accounting direction blocks both directions of that tunnel using dedicated iptables rules. Other tunnels retain independent counters and limits.
-- Reset starts a new accounting period and removes quota blocking. Changing direction recalculates usage from the same period's RX/TX totals. Raising or removing the limit unblocks the tunnel when usage is below the new limit.
-- Usage and limits persist in `/etc/gre-panel/traffic.json`. `NavaTunnel-traffic.service` restores rules after boot, and its timer continues sampling. A reboot or firewall replacement can lose traffic since the previous sample; usage may exceed a limit by traffic sent during a sampling interval.
-- These local limits do not match datacenter billing. IPv6 accounting is not supported, including IPv6 traffic inside custom TUN interfaces.
-
-Inspect the counter service:
-
-```bash
-systemctl status NavaTunnel-traffic.timer NavaTunnel-traffic.service
-journalctl -u NavaTunnel-traffic.service
-```
-
-## Configuration and backups
-
-Logs are stored in `/var/log/navatunnel` and backups in `/var/backups/navatunnel`. Watchdog and DPI services use the `navatunnel-` prefix. When upgrading older installations, stop old services and transfer any required backups or logs before activating the new services. Old paths and services are not automatically migrated.
-
-State remains in `/etc/gre-panel` for compatibility with existing installations; this directory name does not indicate an installed or running web panel. Encrypted backups use `/etc/gre-panel/backup.key`. Keep the original key when moving servers and store recovery material outside the server.
-
-Traffic and MTU state are included in backups. After restoring onto a replacement server, run `NavaTunnel traffic list` to install and enable the counter service and timer. An already installed legacy web panel is not automatically removed during an upgrade; back it up and migrate before replacement. Full uninstall includes cleanup of the old panel's files and service.
-
-Script updates come from this repository. FRP binaries are downloaded from release assets and fallback sources. Script messages, menus, errors, installer text, and CLI help are English. Command names, configuration keys, protocols, and raw output from external tools such as FRP and systemd retain their technical names and original language.
-
-## Checks and tests
-
-```bash
-for script in *.sh; do bash -n "$script"; done
-python3 -m unittest discover -s tests -v
-```
-
-Tests cover ID allocation without a fixed peer cap, bundle generation, isolated tunnel deletion, TOML editing, port conflicts, missing arguments, carrier commands, and installation/backup failures. Traffic tests simulate firewall counters and check both directions, reset, independent limits, persistence, and unblocking. Management tests cover tunnel selection, protocols and recovery, foreign status, MTU persistence and rollback, traffic isolation, English help, and Iran IP migration.
-
-Live network and systemd testing requires a Linux server with network administration privileges; those capabilities were unavailable in the development environment.
-
-## Changing the Iran public IP
-
-After making the new address available on the same server, select **Create and manage tunnels → 6) Change Iran IP (all tunnels)**. This action does not change the network interface's IP address.
-
-The new public address is recorded for all tunnels and their persistent GRE services. Ports, tokens, MTU, and traffic counters are preserved. Previous settings are backed up, and a failed application triggers restoration. On servers behind NAT, GRE uses the local route address while the new public IP is encoded in connection bundles.
-
-To reconnect, run each printed connection command on its corresponding foreign server. Commands include `--force` to replace the existing connection. Tunnels remain disconnected until this step is completed. This operation changes the address of the same Iran server; moving to a new server also requires transferring configuration.
-
-Direct CLI command on Iran:
-
-```bash
-NavaTunnel iran-ip --ip NEW_IRAN_IP
-```
-
-After using the direct command, retrieve each tunnel's new bundle from **Foreign connection code** and apply it on the corresponding foreign server with `--force`.
-
-## License
-
-NavaTunnel is distributed under AGPL-3.0. See [LICENSE](LICENSE) for the license text.
-
-## Selecting and changing the FRP control port
-
-During tunnel creation on Iran, enter a control port, or press Enter / type `auto` for automatic selection; `0` cancels creation. The TCP control port, the same UDP port for KCP, and the companion UDP port for QUIC are checked against other tunnels, service ports, and active system listeners. QUIC uses the next port; with control port 65535, it uses 65534.
-
-For an existing tunnel, select **Tunnel management → 13) Change this tunnel's FRP control port**. Enter a new port or type `auto`; Enter and `0` cancel. Only that tunnel's FRPS configuration and service change. Service ports, token, GRE, MTU, and traffic counters are preserved. Failed changes restore the previous configuration.
-
-The foreign connection remains disconnected until you apply its new bundle. A ready-to-run command with `--force` is displayed; run it on that tunnel's foreign server. Active UFW rules are updated for the new ports. Configure custom and datacenter firewalls separately.
-
-```bash
-NavaTunnel peer-control-port --id 2 --port 45000
-# Or select automatically:
-NavaTunnel peer-control-port --id 2 --port auto
-```
-
-## Stopping and starting a tunnel
-
-On Iran, select **1) Start this tunnel**, **2) Stop this tunnel**, or **3) Restart this tunnel** in tunnel management. On the foreign server, use **1) Start**, **2) Stop**, or **3) Restart** in connection management. Stop shuts down the selected FRP service and optional cover-traffic service, then its GRE interface. Start brings up GRE first, followed by FRP, and resumes cover traffic only if it was active before the stop.
-
-Configuration, token, ports, MTU, counters, and quotas are preserved. The shared traffic counter service keeps running. Intentional stops are recorded in `/etc/gre-panel/stopped/` and enforced through systemd conditions; reboot and automatic service restarts do not clear them. Use Start to resume. If startup fails, partially started services are stopped again. An active local service alone does not confirm connectivity to the other server.
-
-```bash
-# Iran: use the actual peer ID.
-NavaTunnel tunnel-power stop --id 2
-NavaTunnel tunnel-power start --id 2
-# Foreign server:
-NavaTunnel tunnel-power stop --foreign
-NavaTunnel tunnel-power start --foreign
-```
-
-## Custom SYN limits and cover traffic
-
-In **Main menu → 2) Performance and security → 3) DPI protection**, option **4** configures the SYN rate and burst. This is a per-source-IP, per-service-port SYN limiter, not operator DPI evasion or an HTTP request limiter. Rates accept `/sec`, `/minute`, or `/hour`. Changes apply immediately if protection is enabled; otherwise they are saved for activation.
-
-In the same parent menu, **4) Cover traffic** offers low, mid, custom-range configuration (**6**), and custom activation (**7**). The global choice rebuilds services for all registered tunnels on that server and overrides old per-peer off selections. Stopped tunnels remain stopped. Changing the active custom range also updates existing services.
-
-Intervals use milliseconds (100–3,600,000); payload sizes use bytes (8–1352) and must fit stored tunnel MTUs with 28 bytes for IPv4/ICMP headers. Cover traffic continuously sends random pings, including during user traffic, and consumes quota. These settings are local; configure each server separately.
-
-```bash
-NavaTunnel dpi-shield configure --rate 120/sec --burst 240
-NavaTunnel perf dpi on
-NavaTunnel chaff configure --min-ms 500 --max-ms 2000 --min-bytes 64 --max-bytes 1000
-NavaTunnel perf chaff custom
-NavaTunnel dpi-shield status
-NavaTunnel chaff status
-# Disable:
-NavaTunnel perf dpi off
-NavaTunnel perf chaff off
-```
-
-## Connection tokens and the Iran endpoint on a foreign server
-
-In the selected Iran tunnel menu, **15) View or change connection token** displays that tunnel's token and optionally accepts a replacement. On the foreign server, use **8) View or change connection token**. Tokens are shown only when explicitly requested. A new tunnel on Iran also accepts a manual token; press Enter to generate one automatically. Manual tokens must contain 8–128 ASCII letters, digits or hyphens.
-
-Changing a token on one server does not update the other server. Both ends must match: after changing it on Iran, obtain the new connection code and apply it on the matching foreign server. Changing only the foreign token requires the same value on Iran. Active services restart briefly; manually stopped services remain stopped. Failed restarts restore the previous local settings.
-
-On the foreign tunnel menu, **9) Change Iran server public IP** updates the outer GRE endpoint while preserving inner GRE IPs, the FRP control port, token, proxy ports and traffic counters. The matching Iran server must already have that tunnel configured with the same settings. This is an endpoint edit, not automatic failover.
-
-```bash
-# These commands display a secret; do not paste their output publicly.
-NavaTunnel connection-token --id 1
-NavaTunnel connection-token --foreign
-NavaTunnel foreign-iran-ip --ip 203.0.113.10
-```
-
-Each foreign server continues to manage one foreign tunnel. Multi-Iran connections on one foreign server have not been added.
-
-Restore automatically checks system dependencies and installs runnable FRP cores for the destination architecture before extracting configuration and starting services. Restored GRE and FRP units are enabled for boot and checked after restart. A core-installation or startup failure returns an error instead of reporting a successful restore. `backup restore --dry-run` only validates the archive and does not install cores or start services.
-
-After restore, traffic counters and firewall hooks are reconciled and the sampling timer is automatically enabled. Updates also repair monitoring when saved counters exist. To repair a server migrated with an older script, run `NavaTunnel traffic repair` after updating. Existing totals, quotas and accounting directions are retained; usage that was never counted cannot be reconstructed by this command. Repair failures are reported rather than silently treated as a successful restore.
-
-## Migrate to a replacement server over SSH
-
-Run the source server menu: **3) Status check and backup → 8) Migrate to another server over SSH**. Enter the destination IPv4, SSH port and username. Authentication uses the SSH agent, an optional private-key file, or the normal SSH password prompt; passwords are not stored. Use root or a user with passwordless sudo. SSH host verification remains enabled.
-
-The migration can create a fresh encrypted backup or use an existing backup with its matching original `/etc/gre-panel/backup.key`. It transfers the scripts, archive and key over SSH, installs NavaTunnel on the destination, installs required FRP cores and restores services and traffic monitoring. Restored local GRE bindings and the Iran registry use the destination IP before service startup; `--local-ip` supports a tunnel public IP different from the SSH address. MTU settings and manual-stop markers are included in new backups.
-
-```bash
-NavaTunnel migrate --host 45.144.17.77
-# Optional key authentication, alternate SSH port and existing backup:
-NavaTunnel migrate --host 45.144.17.77 --port 2222 --user root --identity /root/.ssh/id_ed25519 --backup /var/backups/navatunnel/backup.enc
-```
-
-Existing destination settings and its encryption key are privately copied to `/var/backups/navatunnel/pre-migration-*.tar.gz` before replacement. The transferred archive is retained there as `migrated-*.enc`; temporary transfer files are removed afterward. Migration errors are reported and the source remains running. Check the destination output before retrying a failed migration; previous destination settings are not automatically rolled back.
-
-Moving one server does not update the opposite servers over SSH. After moving Iran, apply the new connection commands on its foreign servers. A private `migration-*-foreign-commands.txt` file is generated on the destination; it contains connection tokens. After moving a foreign server, update its public IP on Iran. Do not retire the source until the new endpoints work. End-to-end connectivity is not implied by successful service startup.
-
-## Optional feature setup
-
-Use **2) Advanced settings → 9) NavaLink** or **10) Cluster**. Read [the setup and rollback guide](docs/ADVANCED.md) and [the Cluster guide](docs/UPSTREAM_TOOLS.md) before changing a live connection.
+Released source is available in this repository. See [LICENSE](LICENSE) and [third-party notices](THIRD_PARTY_NOTICES.md).
