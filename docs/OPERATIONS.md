@@ -77,7 +77,7 @@ Restore on an Iran replacement with a different, already configured public IP:
 NavaTunnel backup restore /var/backups/navatunnel/BACKUP.enc --local-ip NEW_IRAN_IP
 ```
 
-Restore keeps a private pre-restore copy, validates archive paths, installs FRP, restores managed files and repairs traffic monitoring. Saved manual tunnel stops are respected. Inspect errors if any service does not start; successful file extraction alone does not prove connectivity. Reapply each updated connection code on its matching foreign server after an Iran address change. Client connection addresses/DNS may also need updating.
+Restore keeps a private pre-restore copy, validates archive paths, installs FRP, restores managed files and repairs traffic monitoring. Saved manual tunnel stops are respected. Inspect errors if any service does not start; successful file extraction alone does not prove connectivity. Reapply each updated connection code on its matching foreign server after an Iran address change. If that foreign host has several Iran connections, select the existing connection in its menu or pass its `--foreign-id N --force` explicitly. Client connection addresses/DNS may also need updating.
 
 ## Migrate over SSH
 

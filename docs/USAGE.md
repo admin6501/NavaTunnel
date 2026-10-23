@@ -105,4 +105,4 @@ NavaTunnel foreign --foreign-id 2 restart
 NavaTunnel foreign --foreign-id 2 logs
 ```
 
-Use the actual ID from `foreign-list`. Creation accepts `--name LABEL`; updates to the same Iran require `--force`. If Iran's public IP changes, the original token and GRE pair identify its existing connection; use `--foreign-id N --force` if the intended identity is ambiguous. On a host with multiple connections, prefer these selected commands over legacy `--foreign` shortcuts, which refer to the original client.
+Use the actual ID from `foreign-list`. Creation accepts `--name LABEL`; updates to the same Iran require `--force`. If Iran's public IP changes, select its existing connection in the foreign menu before applying its new code, or explicitly append `--foreign-id N --force`. Reused credentials/internal addresses alone never authorize replacing a different Iran IP. On a host with multiple connections, prefer these selected commands over legacy `--foreign` shortcuts, which refer to the original client.

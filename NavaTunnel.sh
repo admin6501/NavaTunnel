@@ -2478,16 +2478,21 @@ cli_perf() {
             echo -e "Current tunnel settings:"
             local MATCH=1
 
-            if [[ -f "${CONFIG_DIR}/frpc.toml" ]]; then
+            if compgen -G "${CONFIG_DIR}/frpc*.toml" >/dev/null; then
+                local client_config
+                for client_config in "${CONFIG_DIR}"/frpc*.toml; do
+                [[ -f "$client_config" ]] || continue
                 local LIVE_ENC=0 LIVE_COMP=0 LIVE_TLS=0
-                grep -E -q '^[[:space:]]*transport\.useEncryption[[:space:]]*=[[:space:]]*true' "${CONFIG_DIR}/frpc.toml" && LIVE_ENC=1
-                grep -E -q '^[[:space:]]*transport\.useCompression[[:space:]]*=[[:space:]]*true' "${CONFIG_DIR}/frpc.toml" && LIVE_COMP=1
-                grep -E -q '^[[:space:]]*transport\.tls\.disableCustomTLSFirstByte[[:space:]]*=[[:space:]]*true' "${CONFIG_DIR}/frpc.toml" && LIVE_TLS=1
+                grep -E -q '^[[:space:]]*transport\.useEncryption[[:space:]]*=[[:space:]]*true' "$client_config" && LIVE_ENC=1
+                grep -E -q '^[[:space:]]*transport\.useCompression[[:space:]]*=[[:space:]]*true' "$client_config" && LIVE_COMP=1
+                grep -E -q '^[[:space:]]*transport\.tls\.disableCustomTLSFirstByte[[:space:]]*=[[:space:]]*true' "$client_config" && LIVE_TLS=1
 
-                echo -e "  Role: Foreign client (frpc)"
+                echo -e "  Role: Foreign client (${client_config##*/})"
                 echo -e "  Proxy encryption in the current setting:  $([[ "$LIVE_ENC" == "1" ]] && echo "Enabled" || echo "Disabled") $([[ "$LIVE_ENC" == "$ENC" ]] && echo -e "${GREEN}[In sync]${NC}" || { echo -e "${RED}[Out of sync]${NC}"; MATCH=0; })"
                 echo -e "  Proxy compression in current setting: $([[ "$LIVE_COMP" == "1" ]] && echo "Enabled" || echo "Disabled") $([[ "$LIVE_COMP" == "$COMP" ]] && echo -e "${GREEN}[In sync]${NC}" || { echo -e "${RED}[Out of sync]${NC}"; MATCH=0; })"
                 echo -e "  TLS Mandatory in current setting:        $([[ "$LIVE_TLS" == "1" ]] && echo "Enabled" || echo "Disabled") $([[ "$LIVE_TLS" == "$TLS" ]] && echo -e "${GREEN}[In sync]${NC}" || { echo -e "${RED}[Out of sync]${NC}"; MATCH=0; })"
+                [[ "$LIVE_ENC" == "$ENC" && "$LIVE_COMP" == "$COMP" && "$LIVE_TLS" == "$TLS" ]] || MATCH=0
+                done
             elif [[ -f "${CONFIG_DIR}/frps.toml" ]] || ls "${CONFIG_DIR}"/frps*.toml >/dev/null 2>&1; then
                 local LIVE_TLS=0
                 local F
@@ -2993,7 +2998,7 @@ EOF
 
     if [[ "$_frpc_ok" -ne 1 ]]; then
         STATUS_FRP="FAILED"
-        FRP_ERR="Start the service frpc was unsuccessful; Check it out: journalctl -u frpc"
+        FRP_ERR="Service ${FRPC_SERVICE:-frpc} did not start; inspect journalctl -u ${FRPC_SERVICE:-frpc}"
         log_msg "tunnel" "ERROR" "Start the service frpc It was unsuccessful"
     fi
 
@@ -3022,8 +3027,8 @@ EOF
     fi
 
     if [[ "$STATUS_FRP" == "OK" ]]; then
-        echo -e "[${GREEN}OK${NC}]     FRP client service (service frpc Active and connecting to ${PEER_GRE}:${SERVER_PORT})"
-        echo -e "         Service ports: ${PORTS_CLEANED} (TCP and UDP, with TLS)"
+        echo -e "[${GREEN}OK${NC}]     FRP client service (${FRPC_SERVICE:-frpc} active; target ${PEER_GRE}:${EFF_SERVER_PORT})"
+        echo -e "         Service ports: ${PORTS_CLEANED} (TCP and UDP)"
     else
         echo -e "[${RED}Failed${NC}] FRP client service (${FRP_ERR})"
     fi
@@ -5356,7 +5361,7 @@ remove_tunnel_force() {
         pkill -9 -f "NavaTunnel-chaff.sh" >/dev/null 2>&1 || true
 
         # Remove systemd files
-        rm -f /etc/systemd/system/frps*.service /etc/systemd/system/frpc.service \
+        rm -f /etc/systemd/system/frps*.service /etc/systemd/system/frpc*.service \
               /etc/systemd/system/${TUNNEL_NAME}.service \
               /etc/systemd/system/gre-t*.service /etc/systemd/system/gre-chaff*.service \
               /etc/systemd/system/navatunnel-chaff*.service /etc/systemd/system/navatunnel-dpi.service
@@ -5389,7 +5394,7 @@ remove_tunnel_force() {
 
         # Remove configs
         rm -rf "$CONFIG_DIR"
-        rm -f "$PEERS_FILE"
+        rm -f "$PEERS_FILE" "$NAVATUNNEL_STATE_DIR/foreign.json" "$NAVATUNNEL_STATE_DIR"/foreign-carrier-*.json "$NAVATUNNEL_STATE_DIR"/foreign-watchdog-*.json
         rm -f /usr/local/bin/NavaTunnel-chaff.sh /usr/local/bin/gre-chaff.sh
 
         echo -e "${GREEN}[✔️] Tunnel, interface GRE, services FRP And their files were deleted.${NC}"
@@ -8346,10 +8351,12 @@ try:
         if ipaddress.ip_network(other+'/30',strict=False)!=network or local==other or ipaddress.ip_address(local) not in list(network.hosts()) or ipaddress.ip_address(other) not in list(network.hosts()):raise ValueError('GRE endpoints must be the two usable addresses of one /30.')
         matches=[r for r in rows if (selected and r['id']==selected) or (not selected and r['remote_pub']==remote)]
         if not matches and force and not selected:
-            # A migrated Iran keeps its control port, token and internal pair.
+            # A reused token/pair cannot distinguish migration from another Iran.
+            # Require an explicit ID rather than silently overwriting a live endpoint.
             for r in rows:
                 text=(config/(r['frpc_svc']+'.toml')).read_text()
-                if (r['frp_port'],r['local_gre'],r['peer_gre'])==(port,local,other) and field('auth.token',text)==os.environ.get('FOREIGN_TOKEN'):matches.append(r)
+                if (r['frp_port'],r['local_gre'],r['peer_gre'])==(port,local,other) and field('auth.token',text)==os.environ.get('FOREIGN_TOKEN'):
+                    raise ValueError('This different Iran IP matches connection '+str(r['id'])+' credentials and GRE addresses. For an IP move, select it explicitly with --foreign-id '+str(r['id'])+' --force. To add another Iran, assign a different GRE pair on that Iran. No connection was replaced.')
         if len(matches)>1:raise ValueError('Ambiguous connection; specify --foreign-id N.')
         old=matches[0] if matches else None
         if selected and old is None:raise ValueError('Selected foreign connection does not exist.')
@@ -8465,7 +8472,14 @@ for r in json.loads(sys.argv[1]):print(str(r["id"])+"\t"+r["name"]+" | Iran: "+r
 
 menu_foreign_select() {
     # Preserve the single legacy manager when no registry has been created yet.
-    if [[ ! -f "$NAVATUNNEL_STATE_DIR/foreign.json" && -f "$CONFIG_DIR/frpc.toml" ]]; then menu_foreign_tunnel; return; fi
+    if [[ ! -f "$NAVATUNNEL_STATE_DIR/foreign.json" && -f "$CONFIG_DIR/frpc.toml" ]]; then
+        if foreign_registry import >/dev/null 2>&1; then
+            local legacy_record
+            legacy_record=$(foreign_registry list | python3 -c 'import json,sys;print(json.dumps(next(r for r in json.load(sys.stdin) if r["frpc_svc"]=="frpc")))') || return 1
+            foreign_context "$legacy_record" menu_foreign_tunnel
+        else menu_foreign_tunnel; fi
+        return
+    fi
     local record;record=$(menu_select_foreign) || return 0
     foreign_context "$record" menu_foreign_tunnel
 }

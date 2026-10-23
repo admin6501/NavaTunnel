@@ -46,11 +46,11 @@ class MultiForeignTests(ScriptHarness):
     def test_overlapping_gre_addresses_rejected_even_with_force(self):
         self.save([self.one]);self.files(self.one)
         conflict=dict(self.two,local_gre=self.one['local_gre'],peer_gre=self.one['peer_gre'])
-        # Different token means this is not the same Iran migrating to another public IP.
         result=self.plan(conflict,force=0)
         self.assertNotEqual(result.returncode,0)
         self.assertIn('GRE address conflict',result.stderr);self.assertIn('peer-addresses',result.stderr)
         self.assertEqual(len(json.loads(self.record_path.read_text())['connections']),1)
+        self.assertNotEqual(self.plan(conflict,force=1).returncode,0)
 
     def test_same_iran_requires_force_and_updates_its_existing_identity_only(self):
         self.save([self.one,self.two]);self.files(self.one);self.files(self.two)
@@ -58,10 +58,11 @@ class MultiForeignTests(ScriptHarness):
         result=self.plan(self.two,force=1);self.assertEqual(result.returncode,0,result.stderr)
         self.assertEqual(json.loads(result.stdout)['frpc_svc'],'frpc-2')
 
-    def test_migrated_iran_matches_original_token_and_inner_pair(self):
+    def test_migrated_iran_requires_explicit_id_to_protect_a_live_connection(self):
         self.save([self.one,self.two]);self.files(self.one);self.files(self.two)
         moved=dict(self.two,remote_pub='192.0.2.99')
-        result=self.plan(moved,force=1);self.assertEqual(result.returncode,0,result.stderr)
+        ambiguous=self.plan(moved,force=1);self.assertNotEqual(ambiguous.returncode,0);self.assertIn('--foreign-id 2',ambiguous.stderr)
+        result=self.plan(moved,force=1,selected=2);self.assertEqual(result.returncode,0,result.stderr)
         self.assertEqual(json.loads(result.stdout)['id'],2)
 
     def test_explicit_unknown_id_and_invalid_network_fail_without_writes(self):
