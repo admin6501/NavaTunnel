@@ -747,6 +747,23 @@ carrier_init_kernel() {
         fi
     fi
 
+    local extra_port
+    while read -r extra_port; do
+        is_valid_port "$extra_port" || continue
+        ip fou add port "$extra_port" ipproto 47 >/dev/null 2>&1 || true
+        iptables -C INPUT -p udp --dport "$extra_port" -j ACCEPT >/dev/null 2>&1 || iptables -I INPUT 1 -p udp --dport "$extra_port" -j ACCEPT >/dev/null 2>&1 || true
+    done < <(python3 - "$NAVATUNNEL_STATE_DIR" <<'PYFOUPORTS'
+import json,sys
+from pathlib import Path
+ports=set()
+for p in Path(sys.argv[1]).glob('foreign-carrier-*.json'):
+    d=json.loads(p.read_text())
+    for key in ('fou_port1','fou_port2'):
+        if isinstance(d.get(key),int) and 1<=d[key]<=65535:ports.add(d[key])
+for port in sorted(ports):print(port)
+PYFOUPORTS
+)
+
 }
 
 carrier_apply() {
@@ -873,6 +890,19 @@ import os
 os.replace(p + ".tmp", p)
 os.chmod(p, 0o600)
 ' "$TARGET" 2>/dev/null || true
+    python3 - "$NAVATUNNEL_STATE_DIR" "$TARGET" "$SPECIFIC_IF" <<'PYFOREIGNCARRIER'
+import json,os,sys
+from pathlib import Path
+state=Path(sys.argv[1]);path=state/'foreign.json'
+if path.exists():
+    for r in json.loads(path.read_text()).get('connections',[]):
+        if sys.argv[3] and r['gre_if']!=sys.argv[3]:continue
+        p=state/('foreign-carrier-'+str(int(r['id']))+'.json')
+        d=json.loads(p.read_text()) if p.exists() else {}
+        d['active_carrier']=sys.argv[2]
+        tmp=p.with_suffix('.tmp');tmp.write_text(json.dumps(d,indent=2));tmp.chmod(0o600);os.replace(tmp,p)
+PYFOREIGNCARRIER
+
 
     if [[ $ANY_APPLIED -eq 1 ]]; then
         return 0
@@ -886,6 +916,12 @@ os.chmod(p, 0o600)
 
 carrier_apply_active() {
     local IFNAME="${1:-}"
+    local CARRIER_FILE="$CARRIER_FILE"
+    if [[ -n "$IFNAME" && -f "$NAVATUNNEL_STATE_DIR/foreign.json" ]]; then
+        local foreign_id
+        foreign_id=$(python3 -c 'import json,sys;print(next((r["id"] for r in json.load(open(sys.argv[1])).get("connections",[]) if r["gre_if"]==sys.argv[2]),""))' "$NAVATUNNEL_STATE_DIR/foreign.json" "$IFNAME")
+        [[ -z "$foreign_id" ]] || CARRIER_FILE="$NAVATUNNEL_STATE_DIR/foreign-carrier-$foreign_id.json"
+    fi
     local ACT=""
     if [[ -n "$IFNAME" && -f "$PEERS_FILE" ]]; then
         ACT=$(python3 -c '
@@ -1302,7 +1338,10 @@ p=Path(sys.argv[1]); data=json.loads(p.read_text()) if p.exists() else {}
 for t in data.get('peers',[]):
     if t.get('gre_if')==sys.argv[2] and (t.get('frp_transport')=='kcp' or (not t.get('frp_transport') and t.get('loss_recovery'))): print('kcp'); break
 else:
-    c=Path(sys.argv[3]); text=c.read_text() if c.exists() and sys.argv[2]==sys.argv[4] else ''
+    foreign=p.parent/'foreign.json';rows=json.loads(foreign.read_text()).get('connections',[]) if foreign.exists() else []
+    record=next((r for r in rows if r.get('gre_if')==sys.argv[2]),None)
+    c=Path(sys.argv[3]).parent/(record['frpc_svc']+'.toml') if record else Path(sys.argv[3])
+    text=c.read_text() if c.exists() and (record or sys.argv[2]==sys.argv[4]) else ''
     if re.search(r'^\s*transport.protocol\s*=\s*"kcp"',text,re.M): print('kcp')
 PYCODE
 ) || return 1
@@ -1708,6 +1747,15 @@ except Exception:
         fi
     fi
 
+    if [[ -f "$NAVATUNNEL_STATE_DIR/foreign.json" ]]; then
+        local row iface pgre suffix
+        while IFS=$'\t' read -r iface pgre; do
+            [[ -n "$iface" ]] || continue
+            suffix="-${iface#gre-t}";[[ "$iface" != gre-tunnel ]] || suffix=''
+            setup_chaff "$suffix" "$pgre" || return 1
+        done < <(foreign_registry list | python3 -c 'import json,sys;[print(r["gre_if"]+"\t"+r["peer_gre"]) for r in json.load(sys.stdin)]')
+        return 0
+    fi
     # 2. Foreign server (/etc/frp/frpc.toml)
     if [[ -f "${CONFIG_DIR}/frpc.toml" ]]; then
         local PEER_GRE
@@ -1921,7 +1969,7 @@ dpi_collect_reverse_ports() {
             [[ -n "$bp" ]] && EXCLUDE_PORTS+=("$bp")
         done < <(grep -E '^\s*bindPort\s*=' "$f" 2>/dev/null | awk -F= '{print $2}' | tr -d ' "' | tr -d " \t\r\n")
     done
-    for f in "${CONFIG_DIR}/frpc.toml" /etc/frp/frpc.toml; do
+    for f in "${CONFIG_DIR}"/frpc*.toml; do
         [[ -f "$f" ]] || continue
         while read -r sp; do
             [[ -n "$sp" ]] && EXCLUDE_PORTS+=("$sp")
@@ -1971,7 +2019,7 @@ except Exception:
     fi
 
     # B. frpc.toml remotePort
-    for f in "${CONFIG_DIR}/frpc.toml" /etc/frp/frpc.toml; do
+    for f in "${CONFIG_DIR}"/frpc*.toml; do
         [[ -f "$f" ]] || continue
         while read -r p; do
             [[ -n "$p" ]] && PORTS+=("$p")
@@ -2220,7 +2268,7 @@ perf_apply() {
 
     local IS_FOREIGN=0
     local IS_IRAN=0
-    [[ -f "${CONFIG_DIR}/frpc.toml" ]] && IS_FOREIGN=1
+    compgen -G "${CONFIG_DIR}/frpc*.toml" >/dev/null && IS_FOREIGN=1
     [[ -f "${CONFIG_DIR}/frps.toml" ]] && IS_IRAN=1
     for f in "${CONFIG_DIR}"/frps*.toml; do
         [[ -f "$f" ]] && IS_IRAN=1
@@ -2235,7 +2283,9 @@ perf_apply() {
     echo -e "${CYAN}[*] Applying performance settings (enc=${EFF_ENC} comp=${EFF_COMP} tls=${EFF_TLS})...${NC}"
 
     if [[ "$IS_FOREIGN" -eq 1 ]]; then
-        local TOML_FILE="${CONFIG_DIR}/frpc.toml"
+        local TOML_FILE
+        for TOML_FILE in "${CONFIG_DIR}"/frpc*.toml; do
+        [[ -f "$TOML_FILE" ]] || continue
         if command -v python3 >/dev/null 2>&1; then
             python3 -c '
 path = "'"$TOML_FILE"'"
@@ -2303,7 +2353,10 @@ with open(path, "w") as f:
 '
         fi
         systemctl daemon-reload >/dev/null 2>&1 || true
-        systemctl restart frpc
+        local client=${TOML_FILE##*/};client=${client%.toml}
+        local iface;iface=$(foreign_interface_for_service "$client")
+        [[ -f "$NAVATUNNEL_STATE_DIR/stopped/$iface" ]] || systemctl restart "$client"
+        done
         echo -e "${GREEN}[✔️] Client settings FRP Updated and restarted its service.${NC}"
     fi
 
@@ -2791,7 +2844,7 @@ setup_foreign_server_noninteractive() {
 
 # shared full foreign path: GRE + ping feedback + frpc binaries/config/service.
 # Called by the interactive menu and CLI.
-_setup_foreign_full() {
+_setup_foreign_one() {
     local IP_FOREIGN=$1 IP_IRAN=$2 SERVER_PORT=$3 TOKEN=$4
     local LOCAL_GRE=$5 PEER_GRE=$6 PORTS_CLEANED=$7
     local RELAY_IP=${8:-}
@@ -2845,7 +2898,9 @@ _setup_foreign_full() {
         if [[ "$EFF_SERVER_PORT" -gt 65535 ]]; then EFF_SERVER_PORT=$((SERVER_PORT - 1)); fi
     fi
     mkdir -p "${CONFIG_DIR}"
-    cat <<EOF > "${CONFIG_DIR}/frpc.toml"
+    cat <<EOF > "${CONFIG_DIR}/${FRPC_SERVICE:-frpc}.toml"
+# NavaTunnel GRE interface: ${TUNNEL_NAME}
+# NavaTunnel control port: ${SERVER_PORT}
 serverAddr = "${PEER_GRE}"
 serverPort = ${EFF_SERVER_PORT}
 auth.method = "token"
@@ -2878,7 +2933,7 @@ EOF
     fi
     local PORT
     for PORT in $PORTS_CLEANED; do
-        cat <<EOF >> "${CONFIG_DIR}/frpc.toml"
+        cat <<EOF >> "${CONFIG_DIR}/${FRPC_SERVICE:-frpc}.toml"
 [[proxies]]
 name = "tcp_${PORT}"
 type = "tcp"
@@ -2899,10 +2954,12 @@ remotePort = ${PORT}
 EOF
     done
 
-    cat <<EOF > /etc/systemd/system/frpc.service
+    "${INSTALL_DIR}/frpc" verify -c "${CONFIG_DIR}/${FRPC_SERVICE:-frpc}.toml" || return 1
+    cat <<EOF > /etc/systemd/system/${FRPC_SERVICE:-frpc}.service
 [Unit]
+ConditionPathExists=!${NAVATUNNEL_STATE_DIR}/stopped/${TUNNEL_NAME}
 Description=Client reverse connection service FRP
-After=network.target network-online.target
+After=network.target network-online.target ${TUNNEL_NAME}.service
 Wants=network-online.target
 
 [Service]
@@ -2914,21 +2971,21 @@ StartLimitIntervalSec=0
 LimitNOFILE=1048576
 LimitNPROC=512000
 TasksMax=infinity
-ExecStart=${INSTALL_DIR}/frpc -c ${CONFIG_DIR}/frpc.toml
+ExecStart=${INSTALL_DIR}/frpc -c ${CONFIG_DIR}/${FRPC_SERVICE:-frpc}.toml
 
 [Install]
 WantedBy=multi-user.target
 EOF
     chmod 600 "${CONFIG_DIR}"/*.toml 2>/dev/null || true
     systemctl daemon-reload
-    systemctl reset-failed frpc >/dev/null 2>&1 || true
-    systemctl enable frpc >/dev/null 2>&1
-    systemctl restart frpc
+    systemctl reset-failed "${FRPC_SERVICE:-frpc}" >/dev/null 2>&1 || true
+    systemctl enable "${FRPC_SERVICE:-frpc}" >/dev/null 2>&1
+    systemctl restart "${FRPC_SERVICE:-frpc}"
 
     local _frpc_ok=0
     for _i in {1..5}; do
         sleep 2
-        if systemctl is-active --quiet frpc 2>/dev/null; then
+        if systemctl is-active --quiet "${FRPC_SERVICE:-frpc}" 2>/dev/null; then
             _frpc_ok=1
             break
         fi
@@ -2946,7 +3003,7 @@ EOF
         dpi_shield_on >/dev/null 2>&1 || true
     fi
     tune_apply >/dev/null 2>&1 || true
-    watchdog_on >/dev/null 2>&1 || true
+    # Foreign connections are checked independently by the watchdog.
 
 
     echo -e "\n=============================================================="
@@ -3796,14 +3853,18 @@ PYCODE
 
 # Allocate an unused /30 without tying addresses to the peer ID.
 menu_gre_pair() {
-    python3 - "$PEERS_FILE" <<'PYCODE'
-import json,sys,ipaddress
+    python3 - "$PEERS_FILE" "${1:-}" <<'PYCODE'
+import json,sys,ipaddress,hashlib
 from pathlib import Path
 p=Path(sys.argv[1]); peers=json.loads(p.read_text()).get('peers',[]) if p.exists() else []
 used={t[k] for t in peers for k in ('local_gre','peer_gre') if t.get(k)}
 used.update(('10.10.10.1','10.10.10.2'))
-base=int(ipaddress.IPv4Address('10.200.0.0'))
-for n in range(16384):
+seed=sys.argv[2]
+base=int(ipaddress.IPv4Address('10.64.0.0' if seed else '10.200.0.0'))
+count=2**20 if seed else 16384
+start=int.from_bytes(hashlib.sha256(seed.encode()).digest()[:4],'big')%count if seed else 0
+for step in range(count):
+    n=(start+step)%count
     remote=str(ipaddress.IPv4Address(base+n*4+1)); local=str(ipaddress.IPv4Address(base+n*4+2))
     if local not in used and remote not in used:
         print(local,remote); break
@@ -3973,7 +4034,7 @@ menu_add_peer() {
     prompt_ip IP_FOREIGN 'Foreign server public IP' '' || return 1
     prompt_ports PPORTS 'Service ports (e.g. 443,8443)' || return 1
     LOSS=$(menu_loss_prompt) || return 0
-    pair=$(menu_gre_pair) || return 1
+    pair=$(menu_gre_pair "$LOCAL_IRAN") || return 1
     read -r LGRE PGRE <<< "$pair"
     CPORT=$(menu_control_port_prompt 0 "$PPORTS") || return 0
     prompt_token TOKEN "Connection token (Enter: auto-generate)" "$(gen_token32)" || return 0
@@ -4148,8 +4209,8 @@ cli_tunnel_power() {
         esac
     done
     if ((foreign)); then
-        [[ -z "$id" && -f "${CONFIG_DIR}/frpc.toml" ]] || return 1
-        iface=$TUNNEL_NAME; service=frpc
+        [[ -z "$id" && -f "${CONFIG_DIR}/${FRPC_SERVICE:-frpc}.toml" ]] || return 1
+        iface=$TUNNEL_NAME; service=${FRPC_SERVICE:-frpc}
     else
         [[ "$id" =~ ^[1-9][0-9]*$ ]] || return 1
         rec=$(peer_get "$id") || return 1
@@ -4257,7 +4318,7 @@ cli_connection_token() {
             svc=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["frps_svc"])' <<< "$rec") || return 1
             iface=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["gre_if"])' <<< "$rec") || return 1
             [[ "$svc" =~ ^frps(-[0-9]+)?$ && "$iface" =~ ^gre-(tunnel|t[0-9]+)$ ]] || return 1 ;;
-        foreign) svc=frpc; iface=$TUNNEL_NAME ;;
+        foreign) svc=${FRPC_SERVICE:-frpc}; iface=$TUNNEL_NAME ;;
         *) echo 'Select --id N for Iran or --foreign for the foreign server.' >&2; return 1 ;;
     esac
     config="${CONFIG_DIR}/${svc}.toml"
@@ -4362,8 +4423,8 @@ menu_connection_token() {
 cli_foreign_iran_ip() {
     [[ $# -eq 2 && "$1" == --ip ]] || { echo 'Usage: NavaTunnel foreign-iran-ip --ip IP' >&2; return 1; }
     is_valid_ip "$2" || { echo 'Invalid Iran public IP.' >&2; return 1; }
-    [[ -f "${CONFIG_DIR}/frpc.toml" ]] || { echo 'No foreign FRP client is configured on this server.' >&2; return 1; }
-    python3 - "/etc/systemd/system/${TUNNEL_NAME}.service" "$2" "${NAVATUNNEL_STATE_DIR}/stopped/${TUNNEL_NAME}" <<'PYCODE'
+    [[ -f "${CONFIG_DIR}/${FRPC_SERVICE:-frpc}.toml" ]] || { echo 'No foreign FRP client is configured on this server.' >&2; return 1; }
+    python3 - "/etc/systemd/system/${TUNNEL_NAME}.service" "$2" "${NAVATUNNEL_STATE_DIR}/stopped/${TUNNEL_NAME}" "${FRPC_SERVICE:-frpc}" <<'PYCODE'
 import ipaddress,os,re,subprocess,sys,tempfile
 from pathlib import Path
 unit=Path(sys.argv[1]);new=str(ipaddress.IPv4Address(sys.argv[2]));marker=Path(sys.argv[3])
@@ -4385,7 +4446,7 @@ try:
     if not matches or len(set(matches))!=1:raise ValueError('Cannot identify a unique Iran public IP in the GRE service.')
     if matches[0]==new:print('Iran IP is unchanged.');sys.exit(0)
     if not marker.exists():
-        active=[service for service in (unit.name,'frpc') if command('systemctl','is-active','--quiet',service).returncode==0]
+        active=[service for service in (unit.name,sys.argv[4]) if command('systemctl','is-active','--quiet',service).returncode==0]
     atomic(re.sub(pattern,'remote '+new,text).encode());touched=True
     if command('systemctl','daemon-reload').returncode:raise ValueError('Systemd reload failed.')
     for service in active:
@@ -4407,6 +4468,9 @@ except (OSError,ValueError,subprocess.TimeoutExpired) as error:
     if touched:print('Previous settings restored.' if not failures else 'Rollback needs attention: '+', '.join(failures),file=sys.stderr)
     sys.exit(1)
 PYCODE
+    local result=$?
+    ((result==0)) || return "$result"
+    [[ -z "${FOREIGN_CONNECTION_ID:-}" ]] || foreign_registry sync "$FOREIGN_CONNECTION_ID"
 }
 
 menu_foreign_iran_ip() {
@@ -4467,6 +4531,7 @@ menu_edit_peer() {
         echo '13) Change FRP control port for this tunnel'
         echo '14) Delete this tunnel'
         echo '15) View or change connection token'
+        echo '16) Assign new internal GRE addresses (for shared foreign servers)'
         echo '0) Back'
         read -r -p 'Select: ' option || return 0
         case "$option" in
@@ -4520,6 +4585,7 @@ menu_edit_peer() {
             11) value=$(menu_protocol_prompt "$protocol") || continue; cli_peer_protocol --id "$id" --protocol "$value" ;;
             10) menu_loss_recovery "$id" ;;
             15) menu_connection_token iran "$id" ;;
+            16) cli_peer_addresses --id "$id" --auto ;;
             14) cli_remove_peer --id "$id"; [[ -n "$(peer_get "$id")" ]] || return 0 ;;
             0) return 0 ;;
             *) echo 'Invalid option.' ;;
@@ -4560,8 +4626,6 @@ setup_foreign_server() {
             LOCAL_GRE_SET=$B_FOREIGN_GRE
             PEER_GRE_SET=$B_IRAN_GRE
             INPUT_PORTS=$(echo "$B_PORTS" | tr ' ' ',')
-            carrier_set_fou_ports "$B_FOU_P1" "$B_FOU_P2" 2>/dev/null || true
-            carrier_init_kernel 2>/dev/null || true
             if [[ -z "$INPUT_PORTS" ]]; then
                 prompt_ports INPUT_PORTS "Service ports"
             fi
@@ -4583,11 +4647,17 @@ setup_foreign_server() {
     TRANSPORT=$(menu_protocol_prompt "$TRANSPORT") || return 0
     PORTS_CLEANED=$(echo "$INPUT_PORTS" | tr ',' ' ')
 
-    # single source of truth: GRE + ping + frpc all happen inside
-    _setup_foreign_full "$IP_FOREIGN" "$IP_IRAN" "$SERVER_PORT" "$TOKEN" "$LOCAL_GRE_SET" "$PEER_GRE_SET" "$PORTS_CLEANED" "" off "$TRANSPORT"
+    local -a args=(--local-pub "$IP_FOREIGN" --remote-pub "$IP_IRAN" --frp-port "$SERVER_PORT" --token "$TOKEN" --local-gre "$LOCAL_GRE_SET" --peer-gre "$PEER_GRE_SET" --ports "$INPUT_PORTS" --frp-transport "$TRANSPORT" --loss-recovery "$LOSS")
+    [[ "$BUNDLE_USED" != 1 ]] || args+=(--bundle "$BUNDLE_IN")
+    cli_setup_foreign "${args[@]}"
 }
 
 check_status() {
+    if [[ -f "$NAVATUNNEL_STATE_DIR/foreign.json" ]]; then
+        local row
+        while read -r row;do foreign_context "$row" foreign_tunnel_summary || return 1;done < <(foreign_registry list | python3 -c 'import json,sys;[print(json.dumps(r)) for r in json.load(sys.stdin)]')
+        compgen -G "${CONFIG_DIR}/frps*.toml" >/dev/null || return 0
+    fi
     echo -e "\n${YELLOW}=== GRE and FRP status ===${NC}"
 
     # 1. GRE Status
@@ -4626,20 +4696,20 @@ check_status() {
 }
 
 show_logs() {
-    echo -e "\n${YELLOW}=== Live log of services (Ctrl+C: Exit) ===${NC}"
-    if systemctl list-unit-files | grep -q "frps.service"; then
-        journalctl -u frps -n 50 -f
-    elif systemctl list-unit-files | grep -q "frpc.service"; then
-        journalctl -u frpc -n 50 -f
-    else
-        echo -e "${RED}[!] Tunnel service not found.${NC}"
-    fi
+    local file
+    local -a args=()
+    for file in /etc/systemd/system/frps*.service /etc/systemd/system/frpc*.service;do
+        [[ -f "$file" ]] || continue
+        args+=(-u "${file##*/}")
+    done
+    ((${#args[@]})) || { echo 'Tunnel service not found.' >&2;return 1; }
+    journalctl "${args[@]}" -n 50 -f
 }
 
 restart_all() {
     echo -e "\n${CYAN}[*] Restarting services GRE and FRP All tunnels...${NC}"
     local u
-    for u in /etc/systemd/system/gre-t*.service /etc/systemd/system/frps*.service /etc/systemd/system/frpc.service /etc/systemd/system/gre-chaff*.service; do
+    for u in /etc/systemd/system/gre-t*.service /etc/systemd/system/frps*.service /etc/systemd/system/frpc*.service /etc/systemd/system/gre-chaff*.service; do
         [[ -f "$u" ]] || continue
         systemctl restart "$(basename "$u")" >/dev/null 2>&1 && echo -e "${GREEN}[✔️] service $(basename "$u") Restarted.${NC}"
     done
@@ -4899,12 +4969,15 @@ try:
     for p in json.loads(registry.read_text()).get('peers',[]):
         emit(p.get('gre_if',''),p.get('peer_gre'),p.get('frps_svc','frps'))
 except (OSError,ValueError,TypeError):pass
-# A foreign client explicitly records its Iran GRE address.
-try:
-    text=(config/'frpc.toml').read_text()
-    match=re.search(r'^\s*serverAddr\s*=\s*[\"\x27]([0-9.]+)[\"\x27]',text,re.M)
-    if match:emit(default,match[1],'frpc')
-except OSError:pass
+# Each foreign client has its own interface and Iran control address.
+for path in config.glob('frpc*.toml'):
+    try:
+        text=path.read_text()
+        match=re.search(r'^\s*serverAddr\s*=\s*[\"\x27]([0-9.]+)[\"\x27]',text,re.M)
+        mark=re.search(r'^# NavaTunnel GRE interface: (gre-(?:tunnel|t[0-9]+))$',text,re.M)
+        iface=mark[1] if mark else default if path.stem=='frpc' else ''
+        if match:emit(iface,match[1],path.stem)
+    except OSError:pass
 # Existing single-tunnel installs may have no peer registry yet.
 if default not in seen:
     try:
@@ -5640,6 +5713,12 @@ except Exception:
 }
 
 watchdog_check() {
+    if [[ -z "${FOREIGN_CONNECTION_ID:-}" && -f "$NAVATUNNEL_STATE_DIR/foreign.json" ]]; then
+        local record
+        while read -r record; do foreign_context "$record" watchdog_check "$@"; done < <(foreign_registry list | python3 -c 'import json,sys;[print(json.dumps(r)) for r in json.load(sys.stdin)]')
+        return 0
+    fi
+    if [[ -f "$NAVATUNNEL_STATE_DIR/stopped/$TUNNEL_NAME" ]]; then echo 'WATCHDOG status=stopped detail=Manually stopped';return 0;fi
     init_watchdog_json
     autotune_tick
     local PEER_GRE
@@ -5659,9 +5738,9 @@ watchdog_check() {
 
     local FRP_NAME=""
     local FRP_OK=0
-    if [[ -f /etc/frp/frpc.toml ]] || systemctl list-unit-files 2>/dev/null | grep -q "^frpc\.service"; then
-        FRP_NAME="frpc"
-        systemctl is-active --quiet frpc 2>/dev/null && FRP_OK=1
+    if [[ -f "${CONFIG_DIR}/${FRPC_SERVICE:-frpc}.toml" ]] || systemctl list-unit-files 2>/dev/null | grep -q "^frpc\.service"; then
+        FRP_NAME="${FRPC_SERVICE:-frpc}"
+        systemctl is-active --quiet "${FRPC_SERVICE:-frpc}" 2>/dev/null && FRP_OK=1
     elif [[ -f /etc/frp/frps.toml ]] || systemctl list-unit-files 2>/dev/null | grep -q "^frps\.service"; then
         FRP_NAME="frps"
         systemctl is-active --quiet frps 2>/dev/null && FRP_OK=1
@@ -5675,7 +5754,7 @@ watchdog_check() {
     # Foreign spoke resilience: if GRE ICMP ping fails (datacenter firewall/filtering or relay),
     # but frpc is active AND holds established TCP sockets to the FRP control/reverse port,
     # the transport is alive and passing traffic — do NOT trigger false-down restart loops.
-    if [[ $GRE_OK -eq 0 && "$FRP_NAME" == "frpc" && $FRP_OK -eq 1 ]]; then
+    if [[ $GRE_OK -eq 0 && "$FRP_NAME" == frpc* && $FRP_OK -eq 1 ]]; then
         if ss -tn state established 2>/dev/null | grep -qE ':(4773[0-9]|7000)'; then
             GRE_OK=1
         fi
@@ -5791,6 +5870,7 @@ watchdog_test() {
 }
 
 restart_all_lite() {
+    if [[ -n "${FOREIGN_CONNECTION_ID:-}" ]]; then foreign_restart;return $?;fi
     local u
     # On Iran Hub (frps services exist and frpc does not):
     # NEVER blindly restart listening frps server daemons! Listening frps instances
@@ -5807,7 +5887,7 @@ restart_all_lite() {
 
     # On foreign node (frpc client):
     local list=()
-    for u in /etc/systemd/system/gre-tunnel.service /etc/systemd/system/frpc.service; do
+    for u in /etc/systemd/system/gre-tunnel.service /etc/systemd/system/frpc*.service; do
         [[ -f "$u" ]] || continue
         list+=("$(basename "$u")")
     done
@@ -5837,14 +5917,38 @@ autotune_tick() {
 }
 
 watchdog_tick() {
-    local LOCKFILE="/var/lock/navatunnel-watchdog.lock"
     mkdir -p /var/lock 2>/dev/null || true
-    exec 200>"$LOCKFILE" 2>/dev/null || exec 200>/tmp/navatunnel-watchdog.lock
-    if ! flock -n 200; then
-        echo "Another monitor is running; This performance is over"
-        return 0
+    exec 200>/var/lock/navatunnel-watchdog.lock 2>/dev/null || exec 200>/tmp/navatunnel-watchdog.lock
+    flock -n 200 || return 0
+    if [[ -f "$NAVATUNNEL_STATE_DIR/foreign.json" ]] && [[ "$(foreign_registry list)" != '[]' ]]; then
+        local record failed=0
+        while read -r record; do foreign_context "$record" foreign_watchdog_tick || failed=1; done < <(foreign_registry list | python3 -c 'import json,sys;[print(json.dumps(r)) for r in json.load(sys.stdin)]')
+        _watchdog_tick_one --backup-only || failed=1
+        exec 200>&-
+        return "$failed"
     fi
+    _watchdog_tick_one "$@"
+    local result=$?;exec 200>&-;return "$result"
+}
 
+foreign_watchdog_tick() {
+    [[ ! -f "$NAVATUNNEL_STATE_DIR/stopped/$TUNNEL_NAME" ]] || return 0
+    init_watchdog_json
+    local original=$WATCHDOG_FILE WATCHDOG_FILE="$NAVATUNNEL_STATE_DIR/foreign-watchdog-$FOREIGN_CONNECTION_ID.json"
+    python3 - "$original" "$WATCHDOG_FILE" <<'PYWATCH'
+import json,os,sys
+from pathlib import Path
+base=json.loads(Path(sys.argv[1]).read_text());path=Path(sys.argv[2]);old=json.loads(path.read_text()) if path.exists() else {}
+for key in ('consec_fails','last_alert','down_since','last_check'):
+    if key in old:base[key]=old[key]
+base['backup_every_hours']=0;base['backup_daily_at']=''
+out=path.with_suffix('.tmp');out.write_text(json.dumps(base,indent=2));out.chmod(0o600);os.replace(out,path)
+PYWATCH
+    [[ $? == 0 ]] || return 1
+    _watchdog_tick_one
+}
+
+_watchdog_tick_one() {
     init_watchdog_json
 
     local TICK_ACTION
@@ -5877,13 +5981,14 @@ except Exception as e:
     local DO_BACKUP="False"
     read -r IS_ENABLED DO_BACKUP <<< "$TICK_ACTION"
 
-    if [[ "$IS_ENABLED" == "True" || "$IS_ENABLED" == "true" ]]; then
+    if [[ "$IS_ENABLED" == "True" || "$IS_ENABLED" == "true" ]] && [[ "${1:-}" != --backup-only ]]; then
         local CHECK_OUT
         CHECK_OUT=$(watchdog_check --machine)
         local STATUS DETAIL
         STATUS=$(echo "$CHECK_OUT" | sed -n 's/.*status=\([^ ]*\).*/\1/p')
         DETAIL=$(echo "$CHECK_OUT" | sed -n 's/.*detail=\(.*\)/\1/p')
 
+        [[ -z "${FOREIGN_CONNECTION_ID:-}" ]] || DETAIL="Iran connection $FOREIGN_CONNECTION_ID: $DETAIL"
         local DECISION
         DECISION=$(CHECK_STATUS="$STATUS" CHECK_DETAIL="$DETAIL" python3 -c '
 import json, os, time
@@ -6015,7 +6120,7 @@ backup_now() {
 
     local FILES=()
     local f
-    for f in /etc/frp/*.toml /etc/gre-panel/peers.json /etc/gre-panel/watchdog.json \
+    for f in /etc/frp/*.toml /etc/gre-panel/peers.json /etc/gre-panel/foreign.json /etc/gre-panel/foreign-carrier-*.json /etc/gre-panel/watchdog.json \
              /etc/gre-panel/perf.json /etc/gre-panel/traffic.json /etc/gre-panel/mtu.json /etc/gre-panel/backup.key /etc/gre-panel/stopped \
              /etc/systemd/system/gre-*.service /etc/systemd/system/frps*.service \
              /etc/systemd/system/frpc*.service /etc/systemd/system/gre-chaff*.service; do
@@ -6056,11 +6161,12 @@ backup_now() {
 # Re-enable restored units on a new server and propagate startup failures.
 restore_start_tunnels() {
     local unit name iface failed=0
-    for unit in /etc/systemd/system/gre-t*.service /etc/systemd/system/frps*.service /etc/systemd/system/frpc.service; do
+    for unit in /etc/systemd/system/gre-t*.service /etc/systemd/system/frps*.service /etc/systemd/system/frpc*.service; do
         [[ -f "$unit" ]] || continue
         name=$(basename "$unit")
         case "$name" in
             gre-t*.service) iface=${name%.service} ;;
+            frpc-*.service) iface=$(foreign_registry list | python3 -c 'import json,sys;rows=json.load(sys.stdin);print(next((r["gre_if"] for r in rows if r["frpc_svc"]==sys.argv[1]),"gre-tunnel"))' "${name%.service}") ;;
             frps-*.service) iface="gre-t${name#frps-}"; iface=${iface%.service} ;;
             *) iface=$TUNNEL_NAME ;;
         esac
@@ -6098,6 +6204,11 @@ if registry.exists():
     data=json.loads(registry.read_text())
     for p in data.get('peers',[]):p['local_pub']=public
     updates[registry]=json.dumps(data,indent=2)+'\n'
+foreign=registry.parent/'foreign.json'
+if foreign.exists():
+    data=json.loads(foreign.read_text())
+    for row in data.get('connections',[]):row['local_pub']=public
+    updates[foreign]=json.dumps(data,indent=2)+'\n'
 for path,text in updates.items():
     fd,tmp=tempfile.mkstemp(dir=path.parent,prefix='.restore-local-ip-')
     try:
@@ -7157,12 +7268,15 @@ EOF
 }
 
 foreign_tunnel_summary() {
-    [[ -f "${CONFIG_DIR}/frpc.toml" ]] || return 1
+    [[ -f "${CONFIG_DIR}/${FRPC_SERVICE:-frpc}.toml" ]] || return 1
+    if [[ -n "${FOREIGN_CONNECTION_ID:-}" ]]; then
+        foreign_registry get "$FOREIGN_CONNECTION_ID" | python3 -c 'import json,sys;r=json.load(sys.stdin);print("Connection:",r["id"],"|",r["name"],"| Iran:",r["remote_pub"],"| Service:",r["frpc_svc"])' || return 1
+    fi
     local state gre
-    state=$(systemctl is-active frpc 2>/dev/null) || true
+    state=$(systemctl is-active "${FRPC_SERVICE:-frpc}" 2>/dev/null) || true
     [[ -n "$state" ]] || state=unknown
     gre=$(ip -o -4 addr show dev "$TUNNEL_NAME" 2>/dev/null) || true
-    FRPC_STATE="$state" GRE_ADDR="$gre" python3 - "${CONFIG_DIR}/frpc.toml" "$TUNNEL_NAME" <<'PYCODE'
+    FRPC_STATE="$state" GRE_ADDR="$gre" python3 - "${CONFIG_DIR}/${FRPC_SERVICE:-frpc}.toml" "$TUNNEL_NAME" <<'PYCODE'
 import os,sys,re
 from pathlib import Path
 try:
@@ -7185,7 +7299,7 @@ try:
         address=field('serverAddr',header); port=field('serverPort',header)
         protocol=field('transport.protocol',header,'tcp')
         proxies=[dict(type=field('type',part),localIP=field('localIP',part),localPort=field('localPort',part),remotePort=field('remotePort',part)) for part in sections]
-    print('Out server tunnel | FRPC')
+    print('Foreign connection | FRPC')
     print('Destination Iran (IP Internal GRE): %s:%s'%(address,port))
     print('FRP protocol: %s | service frpc: %s'%(protocol,dict(active='Enabled',inactive='Disabled',failed='Failed',unknown='Unknown',activating='Launching').get(os.environ['FRPC_STATE'],os.environ['FRPC_STATE'])))
     print('GRE: %s | %s'%(sys.argv[2],os.environ['GRE_ADDR'].strip() or 'Interface IPv4 Active not found'))
@@ -7209,8 +7323,11 @@ menu_list_tunnels() {
         peer_list_pretty || return 1
         found=1
     fi
-    if [[ -f "${CONFIG_DIR}/frpc.toml" ]]; then
-        foreign_tunnel_summary || return 1
+    if compgen -G "${CONFIG_DIR}/frpc*.toml" >/dev/null; then
+        local record
+        if [[ -f "$NAVATUNNEL_STATE_DIR/foreign.json" ]]; then
+            while read -r record; do foreign_context "$record" foreign_tunnel_summary || return 1; done < <(foreign_registry list | python3 -c 'import json,sys;[print(json.dumps(r)) for r in json.load(sys.stdin)]')
+        else foreign_tunnel_summary || return 1; fi
         found=1
     fi
     ((found)) || echo 'No tunnel is registered on this server.'
@@ -7224,8 +7341,8 @@ menu_connect_foreign() {
     bundle_parse "$bundle" || { echo 'The connection code is invalid.'; return 1; }
     protocol=$(menu_protocol_prompt "$B_FRP_TRANSPORT") || return 0
     recovery=off; [[ "$protocol" == kcp ]] && recovery=on
-    if tunnel_present; then
-        read -r -p 'Replace the existing foreign tunnel with this configuration? [y/N]: ' confirm || return 0
+    if [[ -n "${FOREIGN_CONNECTION_ID:-}" ]]; then
+        read -r -p 'Update only the selected Iran connection? [y/N]: ' confirm || return 0
         [[ "$confirm" == y || "$confirm" == Y ]] || return 0
         cli_setup_foreign --bundle "$bundle" --frp-transport "$protocol" --loss-recovery "$recovery" --force
     else
@@ -7247,12 +7364,15 @@ menu_foreign_tunnel() {
         echo '7) Set persistent MTU for this tunnel'
         echo '8) View or change connection token'
         echo '9) Change Iran server public IP'
+        echo '10) Delete this foreign connection'
+        echo '11) Change GRE carrier for this connection'
+        echo '12) Show logs for this connection'
         echo '0) Back'
         read -r -p 'Select: ' option || return 0
         case "$option" in
-            4) systemctl --no-pager status frpc "${TUNNEL_NAME}.service"; pause_prompt ;;
+            4) systemctl --no-pager status "${FRPC_SERVICE:-frpc}" "${TUNNEL_NAME}.service"; pause_prompt ;;
             3)
-                if systemctl restart "${TUNNEL_NAME}.service" && systemctl restart frpc; then
+                if systemctl restart "${TUNNEL_NAME}.service" && systemctl restart "${FRPC_SERVICE:-frpc}"; then
                     echo 'Foreign tunnel restarted.'
                 else echo 'Restart failed; Check the service status.'; fi ;;
             5) menu_tunnel_traffic "$TUNNEL_NAME" ;;
@@ -7262,6 +7382,9 @@ menu_foreign_tunnel() {
             9) menu_foreign_iran_ip ;;
             2) cli_tunnel_power stop --foreign ;;
             1) cli_tunnel_power start --foreign ;;
+            10) foreign_remove; [[ -f "${CONFIG_DIR}/${FRPC_SERVICE:-frpc}.toml" ]] || return 0 ;;
+            11) menu_foreign_carrier ;;
+            12) foreign_logs;pause_prompt ;;
             0) return 0 ;;
             *) echo 'Invalid option.' ;;
         esac
@@ -7274,15 +7397,15 @@ menu_manage_tunnel() {
     menu_import_existing || return 1
     local count option
     count=$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1])).get("peers",[])))' "$PEERS_FILE") || return 1
-    if [[ -f "${CONFIG_DIR}/frpc.toml" ]]; then
+    if compgen -G "${CONFIG_DIR}/frpc*.toml" >/dev/null; then
         if ((count)); then
             echo 'This server has both Iran tunnel and external connection.'
             echo '1) Manage Iran tunnels'
             echo '2) Manage foreign connection'
             echo '0) Back'
             read -r -p 'Select: ' option || return 0
-            case "$option" in 1) menu_edit_peer;; 2) menu_foreign_tunnel;; 0) return 0;; *) echo 'Invalid option.';; esac
-        else menu_foreign_tunnel; fi
+            case "$option" in 1) menu_edit_peer;; 2) menu_foreign_select;; 0) return 0;; *) echo 'Invalid option.';; esac
+        else menu_foreign_select; fi
     else menu_edit_peer; fi
 }
 
@@ -7762,6 +7885,10 @@ Usage:
   NavaTunnel setup-iran    --local-pub IP --remote-pub IP [--frp-port N] [--local-gre IP] [--peer-gre IP] [--token T] [--chaff low|mid|off] [--force]
   NavaTunnel setup-foreign --local-pub IP --remote-pub IP [--frp-port N] --token T --ports "443, 2083" [--local-gre IP] [--peer-gre IP] [--chaff low|mid|off] [--force]
                        # or: NavaTunnel setup-foreign --bundle hsh1_...
+  NavaTunnel peer-addresses --id N --auto
+  NavaTunnel setup-foreign --bundle CODE [--foreign-id N] [--name LABEL] [--force]
+  NavaTunnel foreign-list
+  NavaTunnel foreign --foreign-id N start|stop|restart|status|token|iran-ip|remove
   NavaTunnel status | remove-tunnel [--force]
   NavaTunnel uninstall [--force]                   # Complete removal of the tunnel and itself NavaTunnel
   NavaTunnel add-peer --local-pub IP --remote-pub IP [--frp-port N] --token T --local-gre IP --peer-gre IP --ports "443, 2083" [--name LABEL] [--bundle hsh1_...] [--chaff low|mid|off]
@@ -7840,16 +7967,13 @@ cli_setup_iran() {
         TOKEN=$(gen_token32)
         echo -e "${CYAN}[*] Token created: ${TOKEN}${NC}"
     fi
-    if tunnel_present && [[ "$FORCE" -ne 1 ]]; then
-        echo -e "${RED}[!] Tunnel already exists; use --force to replace it.${NC}"
-        return 1
-    fi
     setup_iran_server_noninteractive "$LOCAL_PUB" "$REMOTE_PUB" "$FRP_PORT" "$TOKEN" "$LOCAL_GRE" "$PEER_GRE" "$PORTS"
 }
 
 cli_setup_foreign() {
     local LOCAL_PUB="" REMOTE_PUB="" FRP_PORT="" LOCAL_GRE="" PEER_GRE="" TOKEN="" PORTS="" FORCE=0 BUNDLE=""
     local FOREIGN_GRE_DEF="$FOREIGN_GRE_IP" IRAN_GRE_DEF="$IRAN_GRE_IP"
+    local REQUESTED_FOREIGN_ID="${FOREIGN_CONNECTION_ID:-}" FOREIGN_NAME=""
     local RELAY_IP="" PROXY_PROTOCOL="off"
     local LOSS_RECOVERY="" TRANSPORT_EXPLICIT=0 LOSS_EXPLICIT=0
     local FRP_TRANSPORT="tcp" FRP_ENCRYPTION="off" FRP_COMPRESSION="off"
@@ -7861,6 +7985,8 @@ cli_setup_foreign() {
             esac
         fi
         case "$1" in
+            --foreign-id) REQUESTED_FOREIGN_ID="$2"; shift 2 ;;
+            --name) FOREIGN_NAME="$2"; shift 2 ;;
             --local-pub) LOCAL_PUB="$2"; shift 2 ;;
             --remote-pub) REMOTE_PUB="$2"; shift 2 ;;
             --frp-port) FRP_PORT="$2"; shift 2 ;;
@@ -7905,8 +8031,6 @@ cli_setup_foreign() {
         # B_PORTS may be empty if bundle had no ports segment (e.g. hsh1_...token__fouXXX)
         # Only override PORTS from bundle if not already provided via --ports and bundle has ports
         [[ -z "$PORTS" && -n "$B_PORTS" ]] && PORTS=$B_PORTS
-        carrier_set_fou_ports "$B_FOU_P1" "$B_FOU_P2" 2>/dev/null || true
-        carrier_init_kernel 2>/dev/null || true
         echo -e "${CYAN}[*] Connection code applied; Destination Iran ${REMOTE_PUB} and port FRP ${FRP_PORT} is.${NC}"
     fi
     # --bundle replaces --token as the required secret
@@ -7954,10 +8078,6 @@ cli_setup_foreign() {
         *) echo -e "${YELLOW}[!] FRP protocol ${FRP_TRANSPORT} is unknown; TCP was selected.${NC}"; FRP_TRANSPORT="tcp" ;;
     esac
 
-    if tunnel_present && [[ "$FORCE" -ne 1 ]]; then
-        echo -e "${RED}[!] Tunnel already exists; use --force to replace it.${NC}"
-        return 1
-    fi
     setup_foreign_server_noninteractive "$LOCAL_PUB" "$REMOTE_PUB" "$FRP_PORT" "$TOKEN" "$LOCAL_GRE" "$PEER_GRE" "$CLEANED" "$RELAY_IP" "$PROXY_PROTOCOL" "$FRP_TRANSPORT" "$FRP_ENCRYPTION" "$FRP_COMPRESSION"
 }
 
@@ -8066,6 +8186,333 @@ cleanup_retired_features() {
     rm -f /usr/local/bin/NavaTunnel-extra.sh
 }
 
+# Independent foreign clients. Keep the first client's existing names and files.
+cli_peer_addresses() {
+    local id='' auto=0 local_ip='' peer_ip='' record pair
+    while (($#)); do
+        case "$1" in
+            --id) [[ $# -ge 2 ]] || return 1;id=$2;shift 2;;
+            --auto) auto=1;shift;;
+            --local-gre) [[ $# -ge 2 ]] || return 1;local_ip=$2;shift 2;;
+            --peer-gre) [[ $# -ge 2 ]] || return 1;peer_ip=$2;shift 2;;
+            *) echo 'Usage: NavaTunnel peer-addresses --id N --auto | --local-gre IP --peer-gre IP' >&2;return 1;;
+        esac
+    done
+    [[ "$id" =~ ^[1-9][0-9]*$ ]] || return 1
+    record=$(peer_get "$id") || return 1
+    [[ -n "$record" ]] || return 1
+    if ((auto)); then
+        pair=$(menu_gre_pair "$(python3 -c 'import json,sys;print(json.loads(sys.argv[1])["local_pub"])' "$record")") || return 1
+        read -r local_ip peer_ip <<< "$pair"
+    fi
+    python3 - "$PEERS_FILE" /etc/systemd/system "$BACKUP_DIR" "$id" "$local_ip" "$peer_ip" "$NAVATUNNEL_STATE_DIR/stopped" <<'PYADDR'
+import ipaddress,json,os,re,shutil,subprocess,sys,tempfile
+from pathlib import Path
+registry,units,backups=map(Path,sys.argv[1:4]);number=int(sys.argv[4]);local,peer=sys.argv[5:7];stopped=Path(sys.argv[7])
+def command(*args):return subprocess.run(args,capture_output=True,text=True,timeout=30)
+def atomic(path,text):
+    fd,tmp=tempfile.mkstemp(dir=path.parent,prefix='.gre-address-')
+    try:
+        os.fchmod(fd,0o600)
+        with os.fdopen(fd,'w') as f:f.write(text)
+        os.replace(tmp,path)
+    finally:
+        if os.path.exists(tmp):os.unlink(tmp)
+unit=None;old_data=None;old_unit=None;touched=False;active=False
+try:
+    network=ipaddress.ip_network(local+'/30',strict=False)
+    if not network.is_private or ipaddress.ip_network(peer+'/30',strict=False)!=network or {ipaddress.ip_address(local),ipaddress.ip_address(peer)}!=set(network.hosts()):raise ValueError('Use the two usable private IPv4 addresses of one /30.')
+    old_data=registry.read_text();data=json.loads(old_data);row=next(p for p in data['peers'] if p['id']==number)
+    if not re.fullmatch(r'gre-(tunnel|t[0-9]+)',row['gre_if']):raise ValueError('Invalid GRE interface.')
+    for p in data['peers']:
+        if p['id']!=number and any(ipaddress.ip_address(p[k]) in network for k in ('local_gre','peer_gre') if p.get(k)):raise ValueError('This GRE network is already in use.')
+    foreign=registry.parent/'foreign.json'
+    if foreign.exists():
+        for p in json.loads(foreign.read_text()).get('connections',[]):
+            if any(ipaddress.ip_address(p[k]) in network for k in ('local_gre','peer_gre') if p.get(k)):raise ValueError('This GRE network is used by a foreign connection.')
+    unit=units/(row['gre_if']+'.service');old_unit=unit.read_text()
+    text=old_unit
+    for before,after in ((row['local_gre'],local),(row['peer_gre'],peer)):
+        text=re.sub(r'(?<![0-9.])'+re.escape(before)+r'(?![0-9.])',after,text)
+    backups.mkdir(parents=True,exist_ok=True);backup=Path(tempfile.mkdtemp(prefix='gre-addresses-',dir=backups));backup.chmod(0o700)
+    for p in (unit,registry):shutil.copy2(p,backup/p.name);(backup/p.name).chmod(0o600)
+    row['local_gre']=local;row['peer_gre']=peer
+    active=not (stopped/row['gre_if']).exists() and command('systemctl','is-active','--quiet',unit.name).returncode==0
+    touched=True;atomic(unit,text);atomic(registry,json.dumps(data,indent=2)+'\n')
+    if command('systemctl','daemon-reload').returncode:raise ValueError('Systemd reload failed.')
+    if active and (command('systemctl','restart',unit.name).returncode or command('systemctl','is-active','--quiet',unit.name).returncode):raise ValueError('GRE restart failed.')
+    print('GRE addresses saved: '+local+' / '+peer+'; previous settings: '+str(backup))
+    print('Apply the new connection code on the matching foreign server. A stopped tunnel remains stopped.')
+except (OSError,ValueError,KeyError,StopIteration,subprocess.TimeoutExpired) as error:
+    if touched:
+        atomic(unit,old_unit);atomic(registry,old_data);command('systemctl','daemon-reload')
+        if active:command('systemctl','restart',unit.name)
+    print('GRE address change failed: '+str(error),file=sys.stderr);sys.exit(1)
+PYADDR
+    [[ $? == 0 ]] || return 1
+    local bundle;bundle=$(peer_token "$id" | sed -n 's/^BUNDLE://p') || return 1
+    [[ -n "$bundle" ]] || return 1
+    printf 'NavaTunnel setup-foreign --bundle %q --force\n' "$bundle"
+}
+
+foreign_interface_for_service() {
+    local client=$1
+    if [[ -f "$NAVATUNNEL_STATE_DIR/foreign.json" ]]; then
+        foreign_registry list | python3 -c 'import json,sys;print(next((r["gre_if"] for r in json.load(sys.stdin) if r["frpc_svc"]==sys.argv[1]),"gre-tunnel"))' "$client"
+    else echo gre-tunnel;fi
+}
+
+foreign_registry() {
+    python3 - "${NAVATUNNEL_STATE_DIR}/foreign.json" "$CONFIG_DIR" /etc/systemd/system "$PEERS_FILE" "$@" <<'PYFOREIGN'
+import ipaddress,json,os,re,sys,tempfile
+from pathlib import Path
+registry,config,units,peersfile=map(Path,sys.argv[1:5]); action=sys.argv[5]; args=sys.argv[6:]
+def read(p,default):return json.loads(p.read_text()) if p.exists() else default
+def write(data):
+    registry.parent.mkdir(parents=True,exist_ok=True)
+    fd,tmp=tempfile.mkstemp(dir=registry.parent,prefix='.foreign-')
+    try:
+        os.fchmod(fd,0o600)
+        with os.fdopen(fd,'w') as f:json.dump(data,f,indent=2);f.flush();os.fsync(f.fileno())
+        os.replace(tmp,registry)
+    finally:
+        if os.path.exists(tmp):os.unlink(tmp)
+def field(key,text,default=''):
+    m=re.search(r'^\s*'+re.escape(key)+r'\s*=\s*("[^"\n]*"|\d+)\s*(?:#.*)?$',text,re.M)
+    return m[1].strip('"') if m else default
+def validate(r):
+    if not isinstance(r.get('id'),int) or r['id']<1:raise ValueError('Invalid foreign connection ID.')
+    if not re.fullmatch(r'gre-(tunnel|t[0-9]+)',r.get('gre_if','')) or not re.fullmatch(r'frpc(?:-[0-9]+)?',r.get('frpc_svc','')):raise ValueError('Invalid foreign connection service.')
+    return r
+try:
+    data=read(registry,{'connections':[]}); rows=data['connections']
+    for r in rows:validate(r)
+    if action=='import':
+        changed=False
+        for path in config.glob('frpc*.toml'):
+            if not re.fullmatch(r'frpc(?:-[0-9]+)?\.toml',path.name):continue
+            if any(r['frpc_svc']==path.stem for r in rows):continue
+            text=path.read_text();mark=re.search(r'^# NavaTunnel GRE interface: (gre-(?:tunnel|t[0-9]+))$',text,re.M)
+            iface=mark[1] if mark else 'gre-tunnel' if path.stem=='frpc' else ''
+            unit=units/(iface+'.service');u=unit.read_text() if iface and unit.exists() else ''
+            def match(pattern):
+                m=re.search(pattern,u);return m[1] if m else ''
+            local=match(r'\blocal\s+([0-9.]+)');remote=match(r'\bremote\s+([0-9.]+)')
+            inner=match(r'addr (?:replace|add) ([0-9.]+)/30');other=field('serverAddr',text)
+            if not all((local,remote,inner,other)):raise ValueError('Cannot safely import '+path.name+'; inspect its GRE service before adding clients.')
+            for address in (local,remote,inner,other):ipaddress.IPv4Address(address)
+            number=1
+            while any(r['id']==number for r in rows):number+=1
+            protocol=field('transport.protocol',text,'tcp');port=int(field('serverPort',text,'0'))
+            original=re.search(r'^# NavaTunnel control port: (\d+)$',text,re.M)
+            if original:port=int(original[1])
+            elif protocol=='quic':port=port-1 if port>1 else 2
+            elif protocol=='wss':port=port-2 if port>2 else port+2
+            rows.append(dict(id=number,name='Iran-'+remote,local_pub=local,remote_pub=remote,local_gre=inner,peer_gre=other,frp_port=port,gre_if=iface,frpc_svc=path.stem,ports=sorted(set(map(int,re.findall(r'^\s*remotePort\s*=\s*(\d+)',text,re.M))))))
+            changed=True
+        if changed:write(data)
+    elif action=='list':print(json.dumps(sorted(rows,key=lambda r:r['id'])))
+    elif action=='get':
+        r=next((r for r in rows if r['id']==int(args[0])),None)
+        if r is None:raise ValueError('Foreign connection not found.')
+        print(json.dumps(r))
+    elif action=='plan':
+        public,remote,port,local,other,ports,force,selected,name=args
+        port=int(port);force=force=='1';selected=int(selected or 0)
+        for value in (public,remote,local,other):ipaddress.IPv4Address(value)
+        network=ipaddress.ip_network(local+'/30',strict=False)
+        if ipaddress.ip_network(other+'/30',strict=False)!=network or local==other or ipaddress.ip_address(local) not in list(network.hosts()) or ipaddress.ip_address(other) not in list(network.hosts()):raise ValueError('GRE endpoints must be the two usable addresses of one /30.')
+        matches=[r for r in rows if (selected and r['id']==selected) or (not selected and r['remote_pub']==remote)]
+        if not matches and force and not selected:
+            # A migrated Iran keeps its control port, token and internal pair.
+            for r in rows:
+                text=(config/(r['frpc_svc']+'.toml')).read_text()
+                if (r['frp_port'],r['local_gre'],r['peer_gre'])==(port,local,other) and field('auth.token',text)==os.environ.get('FOREIGN_TOKEN'):matches.append(r)
+        if len(matches)>1:raise ValueError('Ambiguous connection; specify --foreign-id N.')
+        old=matches[0] if matches else None
+        if selected and old is None:raise ValueError('Selected foreign connection does not exist.')
+        if old and not force:raise ValueError('This Iran connection already exists; use --force to update only it.')
+        others=[r for r in rows if old is None or r['id']!=old['id']]
+        hubs=read(peersfile,{'peers':[]}).get('peers',[])
+        for r in others+hubs:
+            if any(ipaddress.ip_address(r[k]) in network for k in ('local_gre','peer_gre') if r.get(k)):
+                raise ValueError('GRE address conflict with '+str(r.get('name',r.get('id')))+'. No active connection was replaced. On the matching Iran run: NavaTunnel peer-addresses --id IRAN_TUNNEL_ID --auto ; then get its new connection code.')
+        live=json.loads(os.environ.get('FOREIGN_ADDRS') or '[]')
+        for link in live:
+            if old and link.get('ifname')==old['gre_if']:continue
+            for address in link.get('addr_info',[]):
+                if address.get('family')=='inet' and ipaddress.ip_network(str(address['local'])+'/'+str(address['prefixlen']),strict=False).overlaps(network):raise ValueError('GRE network overlaps local interface '+str(link.get('ifname'))+'. Assign new GRE addresses on Iran first.')
+        number=old['id'] if old else next(n for n in range(1,1000000) if all(r['id']!=n for r in rows))
+        if old:iface=old['gre_if'];service=old['frpc_svc']
+        else:
+            iface='gre-tunnel';index=2
+            used={r['gre_if'] for r in rows+hubs if r.get('gre_if')}
+            while iface in used or (units/(iface+'.service')).exists():iface='gre-t'+str(index);index+=1
+            service='frpc' if not (config/'frpc.toml').exists() and not (units/'frpc.service').exists() else 'frpc-'+str(number)
+            if (config/(service+'.toml')).exists() or (units/(service+'.service')).exists():raise ValueError('Client files already exist; import/repair their registry before proceeding.')
+        print(json.dumps(dict(id=number,name=name or (old or {}).get('name') or 'Iran-'+remote,local_pub=public,remote_pub=remote,frp_port=port,local_gre=local,peer_gre=other,ports=list(map(int,ports.split())),gre_if=iface,frpc_svc=service,existing=bool(old))))
+    elif action=='commit':
+        r=validate(json.loads(os.environ['FOREIGN_RECORD']));r.pop('existing',None)
+        data['connections']=[p for p in rows if p['id']!=r['id']]+[r];write(data)
+    elif action=='delete':
+        data['connections']=[r for r in rows if r['id']!=int(args[0])];write(data)
+    elif action=='sync':
+        r=next(r for r in rows if r['id']==int(args[0]));text=(units/(r['gre_if']+'.service')).read_text()
+        m=re.search(r'\bremote\s+([0-9.]+)',text)
+        if not m:raise ValueError('The Iran endpoint was not found.')
+        r['remote_pub']=m[1];write(data)
+    else:raise ValueError('Unknown foreign registry operation.')
+except (ValueError,KeyError,OSError,StopIteration) as error:
+    print('Foreign connection: '+str(error),file=sys.stderr);sys.exit(1)
+PYFOREIGN
+}
+
+foreign_context() {
+    local record=$1
+    local TUNNEL_NAME FRPC_SERVICE FOREIGN_CONNECTION_ID CARRIER_FILE
+    IFS=$'\t' read -r TUNNEL_NAME FRPC_SERVICE FOREIGN_CONNECTION_ID < <(python3 -c 'import json,sys;r=json.loads(sys.argv[1]);print(r["gre_if"],r["frpc_svc"],r["id"],sep="\t")' "$record")
+    [[ "$TUNNEL_NAME" =~ ^gre-(tunnel|t[0-9]+)$ && "$FRPC_SERVICE" =~ ^frpc(-[0-9]+)?$ && "$FOREIGN_CONNECTION_ID" =~ ^[1-9][0-9]*$ ]] || return 1
+    CARRIER_FILE="${NAVATUNNEL_STATE_DIR}/foreign-carrier-${FOREIGN_CONNECTION_ID}.json"
+    shift
+    "$@"
+}
+
+_setup_foreign_full() (
+    mkdir -p "$NAVATUNNEL_STATE_DIR" || return 1
+    exec {foreign_lock}>"$NAVATUNNEL_STATE_DIR/.foreign-setup.lock" || return 1
+    flock -x "$foreign_lock" || return 1
+    foreign_registry import || return 1
+    local record
+    record=$(FOREIGN_ADDRS="$(ip -j -4 addr show 2>/dev/null)" FOREIGN_TOKEN="$4" foreign_registry plan "$1" "$2" "$3" "$5" "$6" "$7" "${FORCE:-0}" "${REQUESTED_FOREIGN_ID:-}" "${FOREIGN_NAME:-}") || return 1
+    local TUNNEL_NAME FRPC_SERVICE FOREIGN_CONNECTION_ID CARRIER_FILE
+    IFS=$'\t' read -r TUNNEL_NAME FRPC_SERVICE FOREIGN_CONNECTION_ID < <(python3 -c 'import json,sys;r=json.loads(sys.argv[1]);print(r["gre_if"],r["frpc_svc"],r["id"],sep="\t")' "$record")
+    CARRIER_FILE="${NAVATUNNEL_STATE_DIR}/foreign-carrier-${FOREIGN_CONNECTION_ID}.json"
+    if [[ ! -f "$CARRIER_FILE" ]]; then
+        [[ ! -f "${NAVATUNNEL_STATE_DIR}/carrier.json" ]] || cp -p "${NAVATUNNEL_STATE_DIR}/carrier.json" "$CARRIER_FILE" || return 1
+    fi
+    local tmp unit config old=0
+    tmp=$(mktemp -d) || return 1
+    unit="/etc/systemd/system/${TUNNEL_NAME}.service";config="${CONFIG_DIR}/${FRPC_SERVICE}.toml"
+    if [[ -f "$config" ]]; then
+        cp -p "$config" "$tmp/config" && cp -p "$unit" "$tmp/gre" && cp -p "/etc/systemd/system/${FRPC_SERVICE}.service" "$tmp/client" || return 1
+        [[ ! -f "$CARRIER_FILE" ]] || cp -p "$CARRIER_FILE" "$tmp/carrier" || return 1
+        old=1
+    fi
+    if [[ -n "${BUNDLE:-}" ]]; then carrier_set_fou_ports "${B_FOU_P1:-443}" "${B_FOU_P2:-55555}" || return 1; fi
+    if _setup_foreign_one "$@" && FOREIGN_RECORD="$record" foreign_registry commit; then
+        rm -rf "$tmp"
+        echo "Foreign connection $FOREIGN_CONNECTION_ID saved; manage it using the tunnel selection menu."
+        return 0
+    fi
+    systemctl stop "${FRPC_SERVICE}.service" "${TUNNEL_NAME}.service" >/dev/null 2>&1 || true
+    if ((old)); then
+        [[ ! -f "$tmp/carrier" ]] || cp -p "$tmp/carrier" "$CARRIER_FILE"
+        cp -p "$tmp/config" "$config";cp -p "$tmp/gre" "$unit";cp -p "$tmp/client" "/etc/systemd/system/${FRPC_SERVICE}.service"
+        systemctl daemon-reload
+        if [[ ! -f "$NAVATUNNEL_STATE_DIR/stopped/$TUNNEL_NAME" ]]; then systemctl restart "${TUNNEL_NAME}.service" "${FRPC_SERVICE}.service" || true; fi
+    else
+        systemctl disable "${FRPC_SERVICE}.service" "${TUNNEL_NAME}.service" >/dev/null 2>&1 || true
+        rm -f "$config" "$unit" "/etc/systemd/system/${FRPC_SERVICE}.service" "$CARRIER_FILE"
+        ip link del "$TUNNEL_NAME" >/dev/null 2>&1 || true
+        local counter;counter=$(traffic_id_for_interface "$TUNNEL_NAME") || true
+        [[ -z "$counter" ]] || cli_traffic remove "$counter" || true
+        systemctl daemon-reload
+    fi
+    rm -rf "$tmp"
+    echo 'Foreign setup failed; only the selected connection was rolled back.' >&2
+    return 1
+)
+
+menu_select_foreign() {
+    foreign_registry import || return 1
+    local rows id label choice i=0
+    rows=$(foreign_registry list) || return 1
+    local -a ids=()
+    while IFS=$'\t' read -r id label; do
+        [[ -n "$id" ]] || continue
+        ids+=("$id");((i+=1));printf '%s) %s\n' "$i" "$label" >&2
+    done < <(python3 -c 'import json,sys
+for r in json.loads(sys.argv[1]):print(str(r["id"])+"\t"+r["name"]+" | Iran: "+r["remote_pub"]+" | Control: "+str(r["frp_port"]))' "$rows")
+    ((i)) || return 1
+    echo '0) Back' >&2
+    read -r -p 'Connection number: ' choice || return 1
+    [[ "$choice" =~ ^[1-9][0-9]{0,5}$ ]] && ((10#$choice<=i)) || return 1
+    foreign_registry get "${ids[10#$choice-1]}"
+}
+
+menu_foreign_select() {
+    # Preserve the single legacy manager when no registry has been created yet.
+    if [[ ! -f "$NAVATUNNEL_STATE_DIR/foreign.json" && -f "$CONFIG_DIR/frpc.toml" ]]; then menu_foreign_tunnel; return; fi
+    local record;record=$(menu_select_foreign) || return 0
+    foreign_context "$record" menu_foreign_tunnel
+}
+
+cli_foreign_manage() {
+    local id=${1:-} action=${2:-} record
+    [[ "$id" =~ ^[1-9][0-9]*$ ]] || { echo 'Select a foreign connection with --foreign-id N.' >&2;return 1; }
+    foreign_registry import || return 1
+    record=$(foreign_registry get "$id") || return 1
+    shift 2
+    case "$action" in
+        start|stop) foreign_context "$record" cli_tunnel_power "$action" --foreign ;;
+        restart) foreign_context "$record" foreign_restart ;;
+        status) foreign_context "$record" foreign_tunnel_summary ;;
+        token) foreign_context "$record" cli_connection_token --foreign "$@" ;;
+        iran-ip) foreign_context "$record" cli_foreign_iran_ip "$@" ;;
+        remove) foreign_context "$record" foreign_remove "$@" ;;
+        carrier) foreign_context "$record" foreign_carrier "$@" ;;
+        logs) foreign_context "$record" foreign_logs ;;
+        *) echo 'Usage: NavaTunnel foreign --foreign-id N start|stop|restart|status|token|iran-ip|remove' >&2;return 1 ;;
+    esac
+}
+
+foreign_carrier() {
+    carrier_apply "${1:-direct}" "$TUNNEL_NAME" || return 1
+    echo 'Carrier saved for this connection. Set the same carrier on its matching Iran tunnel.'
+}
+
+foreign_logs() { journalctl -u "${FRPC_SERVICE:-frpc}" -n 50 --no-pager; }
+
+menu_foreign_carrier() {
+    local option port
+    ui_clear
+    echo '1) Direct GRE'
+    echo '2) FOU (UDP)'
+    echo '0) Back'
+    read -r -p 'Select: ' option || return 0
+    case "$option" in
+        1) foreign_carrier direct ;;
+        2) read -r -p 'FOU port [443]: ' port || return 0;foreign_carrier "fou:${port:-443}" ;;
+        0) return 0 ;;
+        *) echo 'Invalid option.' ;;
+    esac
+}
+
+foreign_restart() {
+    [[ ! -f "$NAVATUNNEL_STATE_DIR/stopped/$TUNNEL_NAME" ]] || { echo 'This tunnel is stopped; start it first.' >&2;return 1; }
+    systemctl restart "${TUNNEL_NAME}.service" && systemctl restart "${FRPC_SERVICE:-frpc}.service"
+}
+
+foreign_remove() {
+    if [[ -z "${FOREIGN_CONNECTION_ID:-}" ]]; then
+        foreign_registry import || return 1
+        local record
+        record=$(foreign_registry list | python3 -c 'import json,sys;print(json.dumps(next(r for r in json.load(sys.stdin) if r["frpc_svc"]=="frpc")))') || return 1
+        foreign_context "$record" foreign_remove "$@";return $?
+    fi
+    local confirm=${1:-}
+    if [[ "$confirm" != --force ]]; then read -r -p 'Delete only this foreign connection? [y/N]: ' confirm || return 0;[[ "$confirm" == y || "$confirm" == Y ]] || return 0; fi
+    systemctl disable --now "${FRPC_SERVICE}.service" "${TUNNEL_NAME}.service" || return 1
+    local chaff=gre-chaff
+    [[ "$TUNNEL_NAME" == gre-tunnel ]] || chaff="gre-chaff-${TUNNEL_NAME#gre-t}"
+    if [[ -f "/etc/systemd/system/$chaff.service" ]]; then systemctl disable --now "$chaff.service" || return 1;rm -f "/etc/systemd/system/$chaff.service";fi
+    local counter;counter=$(traffic_id_for_interface "$TUNNEL_NAME") || return 1
+    [[ -z "$counter" ]] || cli_traffic remove "$counter" || return 1
+    rm -f "${CONFIG_DIR}/${FRPC_SERVICE}.toml" "/etc/systemd/system/${FRPC_SERVICE}.service" "/etc/systemd/system/${TUNNEL_NAME}.service" "$NAVATUNNEL_STATE_DIR/stopped/$TUNNEL_NAME" "$CARRIER_FILE" "$NAVATUNNEL_STATE_DIR/foreign-watchdog-$FOREIGN_CONNECTION_ID.json"
+    ip link del "$TUNNEL_NAME" >/dev/null 2>&1 || true
+    foreign_registry delete "$FOREIGN_CONNECTION_ID" && systemctl daemon-reload
+}
+
 if [[ $# -gt 0 ]]; then
     case "$1" in
         -h|--help|help) usage_cli; exit 0 ;;
@@ -8088,6 +8535,9 @@ if [[ $# -gt 0 ]]; then
         connection-token) shift; cli_connection_token "$@" ;;
         foreign-iran-ip) shift; cli_foreign_iran_ip "$@" ;;
         setup-foreign) shift; cli_setup_foreign "$@" ;;
+        peer-addresses) shift; cli_peer_addresses "$@" ;;
+        foreign-list) foreign_registry import && foreign_registry list ;;
+        foreign) shift; [[ ${1:-} == --foreign-id && $# -ge 3 ]] || exit 1; shift; cli_foreign_manage "$@" ;;
         mtu) shift; cli_mtu "$@" ;;
         mtu-apply) shift; tunnel_mtu_apply "$@" ;;
         tunnel-power) shift; cli_tunnel_power "$@" ;;

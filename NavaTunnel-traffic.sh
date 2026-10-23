@@ -202,6 +202,8 @@ def show(data):
     try:
         registry=json.loads(Path('/etc/gre-panel/peers.json').read_text())
         labels={t.get('gre_if'):t.get('name','') for t in registry.get('peers',[])}
+        foreign=Path('/etc/gre-panel/foreign.json')
+        if foreign.exists():labels.update({r.get('gre_if'):r.get('name','') for r in json.loads(foreign.read_text()).get('connections',[])})
     except (OSError,ValueError):
         pass
     units=lambda value:'%.3f GB'%(value/10**9)

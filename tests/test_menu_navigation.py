@@ -96,13 +96,13 @@ class MenuNavigationTests(ScriptHarness):
         self.peers=[];self.write_peers()
         (self.config/'frpc.toml').write_text('serverAddr="10.200.0.2"\nserverPort=7000\ntransport.protocol="tcp"\n')
         out=self.terminal('menu_tunnel','3\n0\n0\n')
-        self.assertIn('Out server tunnel | FRPC',out)
-        foreign_screen=next(s for s in out.split('\x1b[2J\x1b[H') if 'Out server tunnel | FRPC' in s)
+        self.assertIn('Foreign connection | FRPC',out)
+        foreign_screen=next(s for s in out.split('\x1b[2J\x1b[H') if 'Foreign connection | FRPC' in s)
         entries=[line for line in foreign_screen.splitlines() if line.startswith(('1)','2)','3)'))]
         self.assertEqual(entries[:3],['1) Start this tunnel','2) Stop this tunnel','3) Restart this tunnel'])
         last=out.split('\x1b[2J\x1b[H')[-1]
         self.assertIn('1) Create tunnel on Iran',last)
-        self.assertNotIn('Out server tunnel | FRPC',last)
+        self.assertNotIn('Foreign connection | FRPC',last)
 
     def test_refresh_clears_previous_traffic_snapshot(self):
         out=self.terminal('menu_tunnel_traffic gre-t2','1\n0\n')
