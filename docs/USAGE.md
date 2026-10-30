@@ -1,6 +1,6 @@
 # NavaTunnel user guide
 
-[فارسی](USAGE.fa.md) · [Home](../README.md) · [Operations](OPERATIONS.md)
+[فارسی](USAGE.fa.md) · [Home](../README.md) · [Operations](OPERATIONS.md) · [Commands](CLI.md) · [FAQ](FAQ.md)
 
 ## Before you start
 
@@ -24,7 +24,7 @@ After successful creation, open **1 → 3**, select the tunnel, then **8**. Keep
 
 Run only the generated line beginning with `NavaTunnel setup-foreign --bundle`. Do not paste the menu, descriptive text or terminal prompt. The script installs the matching GRE route and FRPC client; FRPC forwards requests to the application's local service ports.
 
-If a connection already exists, replacement is explicit. Use the new command printed by Iran; where replacement is intended it includes `--force`. Check that the command belongs to this foreign server before running it.
+For a **new Iran**, run its code without adding `--force`. For an **existing Iran**, use the selected foreign connection's option **6** and confirm the update, or append `--foreign-id N --force` using its actual ID from `NavaTunnel foreign-list`. If the Iran public IP changed, select that existing connection explicitly; matching tokens or internal addresses do not identify a safe replacement by themselves. Check that the code belongs to this foreign server before running it. Start a manually stopped connection before replacing its setup.
 
 A successful setup report is followed by an application test: connect through the Iran IP and a forwarded service port. Application authentication and TLS settings must still match your inbound.
 
@@ -58,9 +58,23 @@ For MTU, use the same value at both ends of the matching tunnel. A larger number
 
 ## Manage the foreign connection
 
-Open **1 → 3** on the foreign server. Its menu offers start/stop/restart, status, traffic, replacement connection code, MTU, token and Iran public IP changes.
+Open **1 → 3** on the foreign server and select the Iran connection first:
 
-The foreign menu selects the Iran connection first. Each connection has its own start/stop/restart, traffic, MTU, token, Iran IP, removal, GRE carrier and log controls. With several connections, use the selector so changes apply only to the intended one. The original `frpc.toml` and `gre-tunnel` names remain valid for an existing first connection.
+| Option | Action |
+| --- | --- |
+| 1 / 2 / 3 | Start / stop / restart this connection |
+| 4 | Show service status |
+| 5 | Traffic usage, accounting mode, limit and reset |
+| 6 | Apply a replacement code or select the FRP protocol |
+| 7 | Set persistent MTU |
+| 8 | View/change the connection token |
+| 9 | Change the remote Iran public IP |
+| 10 | Delete only this connection |
+| 11 | Change this connection's GRE/FOU carrier |
+| 12 | Show this connection's FRPC logs |
+| 0 | Back |
+
+With several connections, use the selector so changes apply only to the intended one. The original `frpc.toml` and `gre-tunnel` names remain valid for an existing first connection. Additional connections have their own service, configuration and interface; obtain their actual names from the status display rather than guessing suffixes. A manual stop survives reboot and restore; use **Start**, not **Restart**, to resume it. These controls operate on this server; they do not remotely start or stop the other endpoint.
 
 ## Add more foreign servers
 
@@ -68,9 +82,9 @@ Repeat **1 → 1** on Iran for each foreign server. Each gets its own GRE interf
 
 ## Change an IP
 
-**Iran moved:** the new public IP must already belong to the new/current server. Open **1 → 6** on Iran to update all registered tunnels, then apply each newly printed command to its matching foreign server. The script does not assign IP addresses to your network card.
+**Iran moved:** the new public IP must already belong to the new/current server. Open **1 → 6** on Iran to update all registered tunnels. On each foreign server select the existing connection through **1 → 3**, then change its remote Iran IP with **9**, or apply the new code using **6**. For CLI replacement, explicitly include `--foreign-id N --force`. The script does not assign IP addresses to your network card.
 
-**Foreign moved:** select that Iran tunnel and use **6**, then apply its updated connection code on the replacement foreign server.
+**Foreign moved:** on each affected Iran, select that tunnel and use **6** to save the new foreign public IP. Restore the foreign configuration on the replacement, or apply the updated code there for a fresh setup. If that connection was already restored, update it through its selected menu rather than creating another copy. Move the foreign application separately too.
 
 Moving configuration to a new machine also requires installing/restoring its files. See [backup and migration](OPERATIONS.md).
 
@@ -87,7 +101,7 @@ Iran B service port 443 ── GRE/FRP B ──┘
 1. Update NavaTunnel on all three servers and reopen the menu.
 2. On **Iran A**, create a tunnel through **1 → 1**, entering the shared foreign public IP and the application's ports. Get its code through **1 → 3 → select tunnel → 8**.
 3. Run that connection command on **foreign**.
-4. On **Iran B**, create its own tunnel to the **same foreign IP**, using the **same service ports** if needed. Get B's code and run it on **the same foreign server**.
+4. On **Iran B**, create its own tunnel to the **same foreign IP**, using the **same service ports** if needed. Get B's code and run it on **the same foreign server** without adding `--force` or an existing connection ID.
 5. On foreign, open **1 → 3**. A list identifies each Iran by name, public IP and control port. Select the connection you want to manage. **1 → 4** shows all connections.
 
 Adding a different Iran creates another FRPC configuration/service and GRE interface. It does not replace A. The control ports can also be equal because they listen on different Iran servers. `--force` updates only the matching connection; `--foreign-id N` explicitly targets an existing connection. Independent connections are not an automatic failover or load balancer.
@@ -106,3 +120,9 @@ NavaTunnel foreign --foreign-id 2 logs
 ```
 
 Use the actual ID from `foreign-list`. Creation accepts `--name LABEL`; updates to the same Iran require `--force`. If Iran's public IP changes, select its existing connection in the foreign menu before applying its new code, or explicitly append `--foreign-id N --force`. Reused credentials/internal addresses alone never authorize replacing a different Iran IP. On a host with multiple connections, prefer these selected commands over legacy `--foreign` shortcuts, which refer to the original client.
+
+## Add an application protocol or inbound
+
+Create the additional inbound in your application panel on foreign first. Add its listening port to the **full** existing service-port list on Iran through the selected tunnel's **4**; this option replaces the list, so keep the old ports too. Get the new code with **8**, then apply it through **6** of the matching selected foreign connection. Repeat for each Iran that should expose that inbound. Share the new application's client settings separately; NavaTunnel does not create users or modify subscriptions.
+
+Changing **FRP protocol** changes the transport between FRPC and FRPS. It does not turn a VLESS/VMess/Trojan inbound into another application protocol. See [common questions](FAQ.md) and the [command reference](CLI.md).

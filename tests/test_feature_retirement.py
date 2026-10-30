@@ -163,4 +163,7 @@ class RemovedMenusTests(unittest.TestCase):
     def test_main_help_has_no_removed_features(self):
         result=subprocess.run(['bash',str(ROOT/'NavaTunnel.sh'),'--help'],capture_output=True,text=True,timeout=5)
         self.assertEqual(result.returncode,0,result.stderr)
-        for text in ('NavaLink','cluster','core-service','6501'):self.assertNotIn(text,result.stdout)
+        for text in ('NavaLink','cluster','core-service'):self.assertNotIn(text,result.stdout)
+        # The repository owner's handle is valid in documentation URLs, not the product name.
+        branding=result.stdout.replace('https://github.com/admin6501/NavaTunnel/','')
+        self.assertNotIn('6501',branding)

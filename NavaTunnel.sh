@@ -1819,7 +1819,7 @@ cli_chaff() {
         configure) shift; cli_cover_configure chaff "$@" ;;
         status)
             echo -e "${CYAN}=== Cover traffic status GRE ===${NC}"
-            echo -e "${YELLOW}Cover traffic fills idle gaps; it does not hide traffic volume under load.${NC}"
+            echo -e "${YELLOW}Cover traffic sends extra pings during both idle periods and user traffic; it does not hide total usage.${NC}"
             python3 - "$PERF_FILE" <<'PYCODE'
 import json,sys
 from pathlib import Path
@@ -6371,14 +6371,17 @@ menu_migrate() {
     local host port user identity backup public
     ui_clear
     echo 'Migrate this server: install NavaTunnel and restore its backup on an SSH destination.'
+    echo 'Works for Iran or foreign; all local NavaTunnel connections are included.'
     echo 'Destination settings will be replaced; a private copy of its previous settings is kept there.'
     echo 'The source stays running. Opposite tunnel endpoints need the new destination IP afterward.'
+    echo 'Application panels, inbounds, users, databases and certificates must be moved separately.'
     read -r -p 'Destination IPv4 [Enter: Cancel]: ' host || return 0
     [[ -n "$host" ]] || return 0
     read -r -p 'SSH port [22]: ' port || return 0; port=${port:-22}
     read -r -p 'SSH user [root; otherwise passwordless sudo required]: ' user || return 0; user=${user:-root}
     read -r -p 'SSH private key path [Enter: SSH agent or password prompt]: ' identity || return 0
     read -r -p 'Existing encrypted backup path [Enter: make a fresh backup]: ' backup || return 0
+    echo 'Public IP below means the new destination itself: new Iran IP or new foreign IP, depending on what you are moving.'
     read -r -p "Destination tunnel public IPv4 [${host}]: " public || return 0; public=${public:-$host}
     local -a args=(--host "$host" --port "$port" --user "$user" --local-ip "$public")
     [[ -z "$identity" ]] || args+=(--identity "$identity")
@@ -6586,7 +6589,7 @@ try:
 except Exception:
     pass
 ' 2>/dev/null || true
-    echo -e "${YELLOW}[*] Alerts are disabled; the maintenance timer remains available for schedules and Auto Pool.${NC}"
+    echo -e "${YELLOW}[*] Monitoring alerts are disabled; the maintenance timer remains active for saved backup schedules.${NC}"
 }
 
 watchdog_status_full() {
@@ -7460,7 +7463,7 @@ menu_optimization() {
         echo "  2) Select direct GRE or FOU carrier"
         echo "  3) DPI shield / SYN rate limits for service ports"
         echo "  4) Configure random ICMP cover traffic"
-        echo "  5) Tunnel watchdog, automatic carrier switching and Telegram alerts"
+        echo "  5) Tunnel watchdog, backup schedules and Telegram alerts"
         echo "  6) Performance settings, encryption, compression and TLS"
         echo "  7) Free cache memory and configure swap"
         echo "  8) Restore network settings"
@@ -7899,38 +7902,48 @@ Usage:
   NavaTunnel traffic limit ID 100GB --mode download|upload|both
   NavaTunnel traffic status ID | reset ID | remove ID
   NavaTunnel traffic mode ID download|upload|both
-  NavaTunnel setup-iran    --local-pub IP --remote-pub IP [--frp-port N] [--local-gre IP] [--peer-gre IP] [--token T] [--chaff low|mid|off] [--force]
+  NavaTunnel setup-iran    --local-pub IP --remote-pub IP [--frp-port N] [--local-gre IP] [--peer-gre IP] [--token T] [--ports "443,8443"] [--chaff low|mid|off] [--force]
   NavaTunnel setup-foreign --local-pub IP --remote-pub IP [--frp-port N] --token T --ports "443, 2083" [--local-gre IP] [--peer-gre IP] [--chaff low|mid|off] [--force]
                        # or: NavaTunnel setup-foreign --bundle hsh1_...
   NavaTunnel peer-addresses --id N --auto
+  NavaTunnel peer-addresses --id N --local-gre IRAN_GRE_IP --peer-gre FOREIGN_GRE_IP
   NavaTunnel setup-foreign --bundle CODE [--foreign-id N] [--name LABEL] [--force]
   NavaTunnel foreign-list
-  NavaTunnel foreign --foreign-id N start|stop|restart|status|token|iran-ip|remove
+  NavaTunnel foreign --foreign-id N start|stop|restart|status|logs
+  NavaTunnel foreign --foreign-id N token [--token TOKEN]
+  NavaTunnel foreign --foreign-id N iran-ip --ip NEW_IRAN_IP
+  NavaTunnel foreign --foreign-id N carrier direct|fou:PORT
+  NavaTunnel foreign --foreign-id N remove [--force]
   NavaTunnel status | remove-tunnel [--force]
-  NavaTunnel uninstall [--force]                   # Complete removal of the tunnel and itself NavaTunnel
+  NavaTunnel uninstall [--force]                   # Remove all local tunnels, NavaTunnel and its state/key
   NavaTunnel add-peer --local-pub IP --remote-pub IP [--frp-port N] --token T --local-gre IP --peer-gre IP --ports "443, 2083" [--name LABEL] [--bundle hsh1_...] [--chaff low|mid|off]
   NavaTunnel remove-peer --id N [--force] | edit-peer --id N [--name L] [--remote-pub IP] [--carrier C] [--ports "..."] | edit-peer-ports --id N --ports "443, 2083" | peer-list | peer-token --id N
   NavaTunnel iran-ip --ip IP                       # Changing the public address of Iran for all tunnels
   NavaTunnel mtu --interface gre-tunnel --value 1300
   NavaTunnel tunnel-power start|stop --id N | --foreign
   NavaTunnel connection-token --id N|--foreign [--token TOKEN]  # Displays a secret when --token is omitted
-  NavaTunnel foreign-iran-ip --ip IP
+  NavaTunnel foreign-iran-ip --ip IP               # Legacy first client; prefer a selected foreign ID
   NavaTunnel peer-control-port --id N --port N|auto
   NavaTunnel peer-protocol --id N --protocol tcp|kcp|quic|websocket|wss
   NavaTunnel loss-recovery --id N --mode on|off  # Save loss recovery selection; apply the new code on the foreign server
   NavaTunnel logs | restart   # Also available via bash NavaTunnel.sh
   NavaTunnel optimize | restore | tune-status
-  NavaTunnel carrier [status|mode auto|direct|fou:P|set direct|fou:P|next] # Automatic carrier change
+  NavaTunnel carrier [status|mode direct|fou:P|set direct|fou:P|next|set-ports P1 P2] # Global carrier controls
   NavaTunnel perf status|enc on|off|comp on|off|tls on|off|chaff off|low|mid|custom|dpi on|off|apply
   NavaTunnel chaff configure --min-ms 400 --max-ms 2800 --min-bytes 64 --max-bytes 1200
   NavaTunnel dpi-shield configure --rate 60/sec --burst 120
   NavaTunnel chaff on|off|status                   # Random ICMP cover traffic
   NavaTunnel dpi-shield on|off|status              # SYN rate limits against excessive scanning
-  NavaTunnel watchdog on|off|status|test|tick      # Tunnel monitoring and warning
-  NavaTunnel backup now [--keep N] | restore <f> [--local-ip IP] | schedule ... | status
+  NavaTunnel watchdog on|off|status|check|test|tick # Monitoring; test sends a Telegram notification
+  NavaTunnel backup now [OUTDIR] [--keep N]
+  NavaTunnel backup restore FILE [--dry-run] [--local-ip DESTINATION_PUBLIC_IP]
+  NavaTunnel backup schedule --every HOURS | --daily HH:MM | --off
+  NavaTunnel backup status
   NavaTunnel migrate --host IP [--port 22] [--user root] [--identity FILE] [--backup FILE] [--local-ip IP]
   NavaTunnel tgsend "msg"                          # Sending Telegram alerts manually
-  NavaTunnel doctor [server|stop-server|fix]       # Check latency, jitter, MTU and speed
+  NavaTunnel doctor check                         # Health check using registered peer addresses
+  NavaTunnel doctor diag|speed                     # Legacy first-interface ping/MTU/speed diagnostics
+  NavaTunnel doctor server|stop-server|fix          # iperf3 server or host network tuning
   NavaTunnel stress-test [host] [port] [conns]     # Concurrent connection stress test
   NavaTunnel update | update-all                   # Script update
   NavaTunnel download-cores                        # Download FRP binaries
@@ -7943,6 +7956,22 @@ Loss recovery:
 Connection codes:
   FRP:              hsh1_<IRAN_PUB>_<FRP_PORT>_<IRAN_GRE>_<FOREIGN_GRE>_<TOKEN>[_<PORTS>]
   The connection code is printed with BUNDLE; pass it to --bundle.
+  NavaTunnel bundle inspect CODE [--show-token]    # Token is masked unless explicitly requested
+  New Iran: apply its code without adding --force. Existing Iran: select its foreign ID.
+  For an Iran public-IP move, explicitly use --foreign-id N --force for the old connection.
+
+Migration and scope:
+  Run migrate on the source Iran or foreign; it copies all managed NavaTunnel connections.
+  --local-ip is the destination's own public IP, not the opposite endpoint's IP.
+  Update opposite endpoints afterward; application data and DNS are not migrated.
+  Counter IDs, Iran peer IDs and foreign connection IDs are separate; list them first.
+  Global restart, carrier and perf commands can affect several local tunnels.
+  restore restores network tuning; backup restore restores an encrypted archive.
+
+Guides:
+  https://github.com/admin6501/NavaTunnel/blob/main/docs/USAGE.md
+  https://github.com/admin6501/NavaTunnel/blob/main/docs/OPERATIONS.md
+  https://github.com/admin6501/NavaTunnel/blob/main/docs/CLI.md
 EOF
 }
 
@@ -8499,7 +8528,7 @@ cli_foreign_manage() {
         remove) foreign_context "$record" foreign_remove "$@" ;;
         carrier) foreign_context "$record" foreign_carrier "$@" ;;
         logs) foreign_context "$record" foreign_logs ;;
-        *) echo 'Usage: NavaTunnel foreign --foreign-id N start|stop|restart|status|token|iran-ip|remove' >&2;return 1 ;;
+        *) echo 'Usage: NavaTunnel foreign --foreign-id N start|stop|restart|status|logs|token [--token TOKEN]|iran-ip --ip IP|carrier direct|fou:PORT|remove [--force]' >&2;return 1 ;;
     esac
 }
 

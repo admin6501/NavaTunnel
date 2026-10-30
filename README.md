@@ -1,6 +1,6 @@
 # NavaTunnel
 
-[فارسی](README.fa.md) · [User guide](docs/USAGE.md) · [Backup and maintenance](docs/OPERATIONS.md)
+[فارسی](README.fa.md) · [User guide](docs/USAGE.md) · [Backup and maintenance](docs/OPERATIONS.md) · [FAQ](docs/FAQ.md)
 
 Manage GRE tunnels and FRP reverse connections from an English terminal menu. Run the script on your Iran and foreign servers; application inbounds stay on the foreign server.
 
@@ -22,7 +22,7 @@ Open the menu afterward:
 NavaTunnel
 ```
 
-Use a Linux server with systemd and root access. Ubuntu 22.04/24.04 and Debian with systemd are suitable. The installer needs Internet access to download dependencies and FRP binaries. The kernel/provider must allow the selected GRE or FOU carrier. Service ports and the carrier must also be allowed by your server and provider firewalls.
+Use a Linux server with systemd and root access. Ubuntu 22.04/24.04 and Debian with systemd are suitable. Bash, curl and CA certificates must be available to run the installation command. The installer needs Internet access to download dependencies and FRP binaries. The kernel/provider must allow the selected GRE or FOU carrier. Service ports and the carrier must also be allowed by your server and provider firewalls; see the [firewall checklist](docs/OPERATIONS.md#firewall-and-provider-requirements).
 
 ## Create your first tunnel
 
@@ -63,10 +63,16 @@ NavaTunnel
 
 Read [upgrade notes](docs/OPERATIONS.md#upgrading-from-older-versions) if you used optional features in an older release. Ordinary GRE/FRP settings and counters are preserved during their retirement.
 
+## Move to another server
+
+Run **3 → 8 on the old server** to install NavaTunnel and restore its encrypted configuration backup on a destination over SSH. Both Iran and foreign sources are supported, including several Iran connections on one foreign. The public-IP prompt means the **new destination's own IP**. Opposite endpoints still need updating afterward; the source stays running. Your Xray/V2Ray panel, inbounds, users and database need a separate application migration. Follow the [Iran/foreign migration checklists](docs/OPERATIONS.md#migrate-over-ssh).
+
 ## Help
 
 - [Step-by-step tunnel guide](docs/USAGE.md)
 - [Traffic, security, backup, migration and troubleshooting](docs/OPERATIONS.md)
+- [Command reference and selected-connection examples](docs/CLI.md)
+- [Common questions: protocols, encryption, DNS and traffic](docs/FAQ.md)
 - [راهنمای فارسی](docs/USAGE.fa.md)
 - `NavaTunnel --help` lists command-line options.
 
